@@ -1,9 +1,11 @@
-mod threemf_reader;
+// mod threemf_reader;
+mod threemf;
+use threemf::threemf_reader;
 
 use std::{ffi::OsStr, fs, io::BufReader, path::PathBuf};
 
 use egui::{DroppedFile, FontId, RichText};
-use threemf_reader::load_threemf_get_root_model_file_as_string;
+// use threemf_reader::load_threemf_get_root_model_file_as_string;
 
 pub struct MyApp {
     name: String,
@@ -99,7 +101,7 @@ fn process_file_and_get_text(path: &PathBuf) -> String {
         Some("3mf") => {
             //do nothing
             if let Ok(file) = fs::File::open(path) {
-                return load_threemf_get_root_model_file_as_string(file).unwrap();
+                return threemf_reader::load_threemf_get_root_model_file_as_string(file).unwrap();
             }
             "3mf found".to_string()
         }

@@ -15,6 +15,9 @@ env_logger = { version = "0.11.5", default-features = false, features = [
     "humantime",
 ] }
 egui_code_editor = "0.2.8"
-threemf = "0.5.0"
+threemf = { version = "0.5.0", path = "..\\3mf-rs" }
 zip = "2.1.6"
 anyhow = "1.0.86"
+quick-xml = { version = "0.36.1", features = ["serialize"] }
+serde = "1.0.*"
+xml_dom = "0.2.8"
