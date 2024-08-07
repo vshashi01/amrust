@@ -3,7 +3,6 @@ use quick_xml::de::Deserializer;
 use serde::Deserialize;
 use std::io::{self, Read};
 use threemf::model::Model;
-use xml_dom::{level2::RefNode, parser::read_xml};
 
 use zip::ZipArchive;
 
@@ -32,16 +31,9 @@ pub fn get_model_from_3mf_model_file_string(xml_content: &String) -> Result<Mode
     Ok(model)
 }
 
-pub fn get_xml_dom_from_3mf_model_file_string(xml_content: &String) -> Result<RefNode> {
-    let dom = read_xml(xml_content)?;
-
-    Ok(dom)
-}
-
 #[cfg(test)]
 mod tests {
     use threemf::model::ObjectData;
-    use xml_dom::level2::Node;
 
     use super::*;
     use std::{
@@ -98,19 +90,5 @@ mod tests {
         } else {
             assert!(false, "Not a mesh data");
         }
-    }
-
-    #[test]
-    fn test_get_xml_dom_from_3mf_model_file_string() {
-        let file = open_file_from_test_resource("box.3mf");
-        let string = load_threemf_get_root_model_file_as_string(file).unwrap();
-
-        let dom = get_xml_dom_from_3mf_model_file_string(&string);
-        assert!(dom.is_ok(), "XML Dom generaated");
-        // println!("{}", &dom.as_ref().unwrap().child_nodes()[0].local_name());
-        assert!(
-            dom.unwrap().child_nodes()[0].local_name() == "model",
-            "3mf model is not found"
-        );
     }
 }

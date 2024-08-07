@@ -1,12 +1,13 @@
 // mod threemf_reader;
 mod threemf;
+mod widgets;
 use threemf::threemf_reader;
-use xml_dom::level2::{CharacterData, Node, NodeType, RefNode};
+use widgets::tree;
 
 use std::{ffi::OsStr, fs, path::PathBuf};
 
 use anyhow::{anyhow, Result};
-use egui::{CollapsingHeader, DroppedFile, FontId, RichText};
+use egui::{DroppedFile, FontId, RichText};
 
 pub struct MyApp {
     name: String,
@@ -14,7 +15,7 @@ pub struct MyApp {
     file_to_render: Option<String>,
     rendered_file_name: Option<String>,
     font_size: f32,
-    trees: Option<Vec<Tree>>,
+    trees: Option<Vec<tree::Tree>>,
     show_log: bool,
 }
 
@@ -53,7 +54,7 @@ impl eframe::App for MyApp {
                     egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
                         let mut count = 1;
                         for tree in trees {
-                            tree.ui_impl(ui, 0, &format!("{} - {}", tree.name, count));
+                            tree.ui(ui, 0, &format!("{} - {}", tree.name, count));
                             count += 1;
                         }
                     });
@@ -153,7 +154,7 @@ impl MyApp {
                 let file = fs::File::open(path)?;
                 let file_to_render =
                     threemf_reader::load_threemf_get_root_model_file_as_string(file)?;
-                let result = Tree::new_trees_from_xml_string(&file_to_render);
+                let result = tree::Tree::new_trees_from_xml_string(&file_to_render);
                 match result {
                     Ok(trees) => {
                         let trees = Some(trees);
@@ -172,7 +173,7 @@ impl MyApp {
             }
             Some("xml") => {
                 let file_to_render = fs::read_to_string(path)?;
-                let result = Tree::new_trees_from_xml_string(&file_to_render);
+                let result = tree::Tree::new_trees_from_xml_string(&file_to_render);
                 match result {
                     Ok(trees) => {
                         let trees = Some(trees);
@@ -261,122 +262,4 @@ impl MyApp {
         self.trees = None;
         self.rendered_file_name = None;
     }
-}
-
-#[derive(Debug)]
-struct Tree {
-    name: String,
-    content: Option<String>,
-    attributes: Option<Vec<(String, String)>>,
-    childs: Option<Vec<Tree>>,
-}
-
-impl Tree {
-    fn new_trees_from_xml_string(xml_string: &String) -> Result<Vec<Self>> {
-        let dom = threemf_reader::get_xml_dom_from_3mf_model_file_string(xml_string)?;
-        // println!("{:?}", dom);
-        let result = process_dom(dom);
-        if let Some(tree) = result.0 {
-            Ok(tree)
-        } else {
-            Err(anyhow!("No tree was generated"))
-        }
-    }
-}
-
-impl Tree {
-    fn ui_impl(&self, ui: &mut egui::Ui, depth: usize, unique_id: &str) {
-        let name = if let Some(content) = &self.content {
-            format!("{} - {}", self.name, content)
-        } else {
-            self.name.clone()
-        };
-        CollapsingHeader::new(name)
-            .default_open(depth < 1)
-            .id_source(unique_id)
-            .show(ui, |ui| {
-                if let Some(attributes) = &self.attributes {
-                    for attribute in attributes {
-                        ui.label(format!("{} - {}", attribute.0, attribute.1));
-                    }
-                }
-
-                self.children_ui(ui, depth)
-            });
-    }
-
-    fn children_ui(&self, ui: &mut egui::Ui, depth: usize) {
-        if let Some(trees) = &self.childs {
-            let mut count = 0;
-            for tree in trees {
-                tree.ui_impl(ui, depth + 1, &format!("{} - {}", tree.name, count));
-                count += 1;
-            }
-        }
-    }
-}
-
-fn process_dom(ref_node: RefNode) -> (Option<Vec<Tree>>, Option<String>) {
-    let mut sub_trees = Vec::new();
-    let mut sub_content = String::new();
-    for node in ref_node.child_nodes() {
-        let name = node.local_name();
-        let mut attributes: Vec<(String, String)> = Vec::new();
-
-        if node.node_type() == NodeType::Element {
-            let attributes_map = node.attributes();
-
-            for entry in attributes_map {
-                if entry.1.node_type() == NodeType::Attribute {
-                    let attribute_name = entry.0.local_name().to_string();
-                    let mut attribute_value = String::new();
-
-                    if let Some(value) = entry.1.data() {
-                        attribute_value.push_str(&value);
-                    } else {
-                        for attribute_child_node in entry.1.child_nodes() {
-                            if let Some(value) = attribute_child_node.data() {
-                                attribute_value.push_str(&value);
-                                // break;
-                            }
-                        }
-                    };
-                    attributes.push((attribute_name, attribute_value));
-                }
-            }
-
-            let (childs, entry) = if node.has_child_nodes() {
-                process_dom(node)
-            } else {
-                (None, None)
-            };
-
-            sub_trees.push(Tree {
-                name,
-                content: entry,
-                attributes: Some(attributes),
-                childs,
-            });
-        } else {
-            // if not an Element then there is highly likely it
-            // contains some data that belongs to the Element item itself
-            if let Some(data) = node.data() {
-                sub_content.push_str(&data);
-            }
-        }
-    }
-
-    let trees = if sub_trees.len() >= 1 {
-        Some(sub_trees)
-    } else {
-        None
-    };
-
-    let content = if sub_content.len() >= 1 {
-        Some(sub_content)
-    } else {
-        None
-    };
-
-    (trees, content)
 }
