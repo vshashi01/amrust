@@ -1,13 +1,12 @@
 // mod threemf_reader;
 mod threemf;
-use quick_xml::events::attributes;
 use threemf::threemf_reader;
-use xml_dom::level2::{ext::Namespaced, CharacterData, Document, Element, Node, NodeType, RefNode};
+use xml_dom::level2::{CharacterData, Node, NodeType, RefNode};
 
-use std::{ffi::OsStr, fmt::format, fs, path::PathBuf};
+use std::{ffi::OsStr, fs, path::PathBuf};
 
-use anyhow::Result;
-use egui::{ahash::HashMap, CollapsingHeader, DroppedFile, FontId, RichText};
+use anyhow::{anyhow, Result};
+use egui::{CollapsingHeader, DroppedFile, FontId, RichText};
 
 pub struct MyApp {
     name: String,
@@ -57,8 +56,7 @@ impl eframe::App for MyApp {
                             self.font_size -= 1.0;
                         }
                         if ui.button("Clear content").clicked() {
-                            self.file_to_render = None;
-                            self.trees = None;
+                            self.clear_state();
                         }
                     });
 
@@ -88,31 +86,28 @@ impl eframe::App for MyApp {
 
             if !self.dropped_files.is_empty() {
                 for i in 0..self.dropped_files.len() {
-                    let file = &self.dropped_files[i];
+                    let file = self.dropped_files[i].clone();
                     if let Some(path) = &file.path {
-                        if can_process_file(path.to_path_buf()) {
-                            self.file_to_render = Some(process_file_and_get_text(path));
-                            if process_file_if_extension_matches(path, "3mf")
-                                && self.file_to_render.is_some()
-                            {
-                                let result = generate_tree_from_3mf_xml_dom(
-                                    &self.file_to_render.as_ref().unwrap(),
-                                );
-
-                                match result {
-                                    Ok(trees) => self.trees = Some(trees),
-                                    Err(e) => println!("{:?}", e),
+                        let processed = self.processed_file_and_update_app(path);
+                        match processed {
+                            Ok(success) => {
+                                if success {
+                                    println!("All went well");
+                                    //only the first successful file is processed
+                                    break;
+                                } else {
+                                    let ext = path.extension();
+                                    println!("File format of type {:?} not supported", ext);
                                 }
                             }
-
-                            break;
+                            Err(e) => println!("{:?}", e),
                         }
                     }
                 }
             }
 
             self.dropped_files.clear();
-            preview_files_being_dropped(ctx);
+            self.preview_files_being_dropped(ctx);
             ctx.input(|i| {
                 if !i.raw.dropped_files.is_empty() {
                     self.dropped_files.clone_from(&i.raw.dropped_files);
@@ -122,78 +117,106 @@ impl eframe::App for MyApp {
     }
 }
 
-fn process_file_and_get_text(path: &PathBuf) -> String {
-    let text_string = match path.extension().and_then(OsStr::to_str) {
-        Some("3mf") => {
-            if let Ok(file) = fs::File::open(path) {
-                return threemf_reader::load_threemf_get_root_model_file_as_string(file).unwrap();
-            }
-            "3mf found".to_string()
-        }
-        Some("txt") => fs::read_to_string(path).unwrap(),
-        Some("obj") => fs::read_to_string(path).unwrap(),
-        _ => "Nothing found".to_string(),
-    };
-
-    text_string
-}
-
-fn process_file_if_extension_matches(path: &PathBuf, target_ext: &str) -> bool {
-    path.extension().unwrap().to_str().unwrap() == target_ext
-}
-
-// Preview hovering files:
-fn preview_files_being_dropped(ctx: &egui::Context) {
-    use egui::*;
-    use std::fmt::Write as _;
-
-    let mut is_unsupported_file_exist = false;
-
-    if !ctx.input(|i| i.raw.hovered_files.is_empty()) {
-        let text = ctx.input(|i| {
-            let mut text = "Dropping files:\n".to_owned();
-            for file in &i.raw.hovered_files {
-                if let Some(path) = &file.path {
-                    write!(text, "\n{}", path.display()).ok();
-                    if !can_process_file(path.to_path_buf()) {
-                        is_unsupported_file_exist = true;
+impl MyApp {
+    fn processed_file_and_update_app(&mut self, path: &PathBuf) -> Result<bool> {
+        let processed_file_and_tree = match path.extension().and_then(OsStr::to_str) {
+            Some("3mf") => {
+                let file = fs::File::open(path)?;
+                let file_to_render = Some(
+                    threemf_reader::load_threemf_get_root_model_file_as_string(file)?,
+                );
+                let result =
+                    Tree::new_trees_from_xml_string(&self.file_to_render.as_ref().unwrap());
+                match result {
+                    Ok(trees) => {
+                        let trees = Some(trees);
+                        Ok((file_to_render, trees))
                     }
-                } else {
-                    text += "\n???";
+                    Err(e) => return Err(e),
                 }
             }
-            text
-        });
+            Some("txt") => {
+                let file_to_render = Some(fs::read_to_string(path)?);
+                Ok((file_to_render, None))
+            }
+            Some("obj") => {
+                let file_to_render = Some(fs::read_to_string(path)?);
+                Ok((file_to_render, None))
+            }
+            _ => Err(anyhow!("File format not supported")),
+        };
 
-        let painter =
-            ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("file_drop_target")));
+        let status = match processed_file_and_tree {
+            Ok((file_to_render, trees)) => {
+                self.clear_state();
+                self.file_to_render = file_to_render;
+                self.trees = trees;
+                Ok(true)
+            }
+            Err(e) => Err(e),
+        };
 
-        let screen_rect = ctx.screen_rect();
-        painter.rect_filled(screen_rect, 0.0, Color32::from_black_alpha(192));
-        painter.text(
-            screen_rect.center(),
-            Align2::CENTER_CENTER,
-            text,
-            TextStyle::Heading.resolve(&ctx.style()),
-            Color32::WHITE,
-        );
-        let mut stroke = (20.0, Color32::DARK_GREEN);
-        if is_unsupported_file_exist {
-            stroke = (20.0, Color32::DARK_RED)
-        }
-        painter.rect_stroke(screen_rect, 0.0, stroke);
+        status
     }
-}
 
-fn can_process_file(path: PathBuf) -> bool {
-    let result = match path.extension().and_then(OsStr::to_str) {
-        Some("txt") => true,
-        Some("obj") => true,
-        Some("3mf") => true,
-        _ => false,
-    };
+    // Preview hovering files:
+    fn preview_files_being_dropped(&self, ctx: &egui::Context) {
+        use egui::*;
+        use std::fmt::Write as _;
 
-    result
+        let mut is_unsupported_file_exist = false;
+
+        if !ctx.input(|i| i.raw.hovered_files.is_empty()) {
+            let text = ctx.input(|i| {
+                let mut text = "Dropping files:\n".to_owned();
+                for file in &i.raw.hovered_files {
+                    if let Some(path) = &file.path {
+                        write!(text, "\n{}", path.display()).ok();
+                        if !self.can_process_file(path.to_path_buf()) {
+                            is_unsupported_file_exist = true;
+                        }
+                    } else {
+                        text += "\n???";
+                    }
+                }
+                text
+            });
+
+            let painter =
+                ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("file_drop_target")));
+
+            let screen_rect = ctx.screen_rect();
+            painter.rect_filled(screen_rect, 0.0, Color32::from_black_alpha(192));
+            painter.text(
+                screen_rect.center(),
+                Align2::CENTER_CENTER,
+                text,
+                TextStyle::Heading.resolve(&ctx.style()),
+                Color32::WHITE,
+            );
+            let mut stroke = (20.0, Color32::DARK_GREEN);
+            if is_unsupported_file_exist {
+                stroke = (20.0, Color32::DARK_RED)
+            }
+            painter.rect_stroke(screen_rect, 0.0, stroke);
+        }
+    }
+
+    fn can_process_file(&self, path: PathBuf) -> bool {
+        let result = match path.extension().and_then(OsStr::to_str) {
+            Some("txt") => true,
+            Some("obj") => true,
+            Some("3mf") => true,
+            _ => false,
+        };
+
+        result
+    }
+
+    fn clear_state(&mut self) {
+        self.file_to_render = None;
+        self.trees = None;
+    }
 }
 
 #[derive(Debug)]
@@ -202,6 +225,19 @@ struct Tree {
     content: Option<String>,
     attributes: Option<Vec<(String, String)>>,
     childs: Option<Vec<Tree>>,
+}
+
+impl Tree {
+    fn new_trees_from_xml_string(xml_string: &String) -> Result<Vec<Self>> {
+        let dom = threemf_reader::get_xml_dom_from_3mf_model_file_string(xml_string)?;
+        println!("{:?}", dom);
+        let result = process_dom(dom);
+        if let Some(tree) = result.0 {
+            Ok(tree)
+        } else {
+            Err(anyhow!("No tree was generated"))
+        }
+    }
 }
 
 impl Tree {
@@ -234,15 +270,6 @@ impl Tree {
             }
         }
     }
-}
-
-fn generate_tree_from_3mf_xml_dom(xml_content: &String) -> Result<Vec<Tree>> {
-    let dom = threemf_reader::get_xml_dom_from_3mf_model_file_string(xml_content)?;
-    println!("{:?}", dom);
-    let trees = process_dom(dom);
-    // println!("{:?}", trees);
-
-    Ok(trees.0.unwrap())
 }
 
 fn process_dom(ref_node: RefNode) -> (Option<Vec<Tree>>, Option<String>) {
@@ -287,6 +314,8 @@ fn process_dom(ref_node: RefNode) -> (Option<Vec<Tree>>, Option<String>) {
                 childs,
             });
         } else {
+            // if not an Element then there is highly likely it
+            // contains some data that belongs to the Element item itself
             if let Some(data) = node.data() {
                 sub_content.push_str(&data);
             }
