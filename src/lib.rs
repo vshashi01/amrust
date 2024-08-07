@@ -166,6 +166,17 @@ impl MyApp {
                 let file_to_render = Some(fs::read_to_string(path)?);
                 Ok((file_to_render, None))
             }
+            Some("xml") => {
+                let file_to_render = fs::read_to_string(path)?;
+                let result = Tree::new_trees_from_xml_string(&file_to_render);
+                match result {
+                    Ok(trees) => {
+                        let trees = Some(trees);
+                        Ok((Some(file_to_render), trees))
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
             _ => Err(anyhow!("File format not supported")),
         };
 
@@ -230,6 +241,7 @@ impl MyApp {
             Some("txt") => true,
             Some("obj") => true,
             Some("3mf") => true,
+            Some("xml") => true,
             _ => false,
         };
 
