@@ -21,3 +21,5 @@ anyhow = "1.0.86"
 quick-xml = { version = "0.36.1", features = ["serialize"] }
 serde = "1.0.*"
 xml_dom = "0.2.8"
+egui_logger = "0.5.0"
+log = "0.4.22"

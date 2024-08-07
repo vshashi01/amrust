@@ -14,6 +14,7 @@ pub struct MyApp {
     file_to_render: Option<String>,
     font_size: f32,
     trees: Option<Vec<Tree>>,
+    show_log: bool,
 }
 
 impl Default for MyApp {
@@ -24,12 +25,24 @@ impl Default for MyApp {
             file_to_render: None,
             font_size: 14.0,
             trees: None,
+            show_log: false,
         }
     }
 }
 
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::TopBottomPanel::top("top panel")
+            .resizable(false)
+            .show(ctx, |ui| {
+                egui::menu::bar(ui, |ui| {
+                    ui.menu_button("View", |ui| {
+                        if ui.button("Show Log").clicked() {
+                            self.show_log = !self.show_log;
+                        }
+                    })
+                });
+            });
         if let Some(trees) = &self.trees {
             egui::SidePanel::left("left_panel")
                 .resizable(true)
@@ -42,6 +55,18 @@ impl eframe::App for MyApp {
                             count += 1;
                         }
                     });
+                });
+        }
+
+        if self.show_log {
+            egui::TopBottomPanel::bottom("bottom_panel")
+                .default_height(50.0)
+                .resizable(true)
+                .show_separator_line(true)
+                .show(ctx, |ui| {
+                    egui_logger::LoggerUi::default()
+                        .enable_regex(false)
+                        .show(ui);
                 });
         }
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -92,15 +117,15 @@ impl eframe::App for MyApp {
                         match processed {
                             Ok(success) => {
                                 if success {
-                                    println!("All went well");
+                                    log::debug!("All went well");
                                     //only the first successful file is processed
-                                    break;
+                                    // break;
                                 } else {
                                     let ext = path.extension();
-                                    println!("File format of type {:?} not supported", ext);
+                                    log::error!("File format of type {:?} not supported", ext);
                                 }
                             }
-                            Err(e) => println!("{:?}", e),
+                            Err(e) => log::error!("{:?}", e),
                         }
                     }
                 }
@@ -122,15 +147,13 @@ impl MyApp {
         let processed_file_and_tree = match path.extension().and_then(OsStr::to_str) {
             Some("3mf") => {
                 let file = fs::File::open(path)?;
-                let file_to_render = Some(
-                    threemf_reader::load_threemf_get_root_model_file_as_string(file)?,
-                );
-                let result =
-                    Tree::new_trees_from_xml_string(&self.file_to_render.as_ref().unwrap());
+                let file_to_render =
+                    threemf_reader::load_threemf_get_root_model_file_as_string(file)?;
+                let result = Tree::new_trees_from_xml_string(&file_to_render);
                 match result {
                     Ok(trees) => {
                         let trees = Some(trees);
-                        Ok((file_to_render, trees))
+                        Ok((Some(file_to_render), trees))
                     }
                     Err(e) => return Err(e),
                 }
@@ -230,7 +253,7 @@ struct Tree {
 impl Tree {
     fn new_trees_from_xml_string(xml_string: &String) -> Result<Vec<Self>> {
         let dom = threemf_reader::get_xml_dom_from_3mf_model_file_string(xml_string)?;
-        println!("{:?}", dom);
+        // println!("{:?}", dom);
         let result = process_dom(dom);
         if let Some(tree) = result.0 {
             Ok(tree)

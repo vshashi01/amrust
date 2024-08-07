@@ -148,7 +148,9 @@ dependencies = [
  "egui",
  "egui_code_editor",
  "egui_extras",
+ "egui_logger",
  "env_logger",
+ "log",
  "quick-xml 0.36.1",
  "serde",
  "threemf",
@@ -1201,6 +1203,17 @@ dependencies = [
  "wasm-bindgen",
  "web-sys",
  "winit",
+]
+
+[[package]]
+name = "egui_logger"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4840dbe6c56eb6d15bf386a628a6b497045c7ba23a6819011bd85bfc34e66d58"
+dependencies = [
+ "egui",
+ "log",
+ "regex",
 ]
 
 [[package]]
