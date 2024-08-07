@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 use xml_dom::level2::{CharacterData, Node, NodeType, RefNode};
 use xml_dom::parser::read_xml;
 
+/// A tree structure widget with expandable dropdowns
 #[derive(Debug)]
 pub struct Tree {
     pub name: String,
@@ -11,6 +12,8 @@ pub struct Tree {
 }
 
 impl Tree {
+    /// Creates a new Tree struct from a XML string structure.
+    /// Returns error if the string is an malformed XML string
     pub fn new_trees_from_xml_string(xml_string: &String) -> Result<Vec<Self>> {
         let dom = read_xml(xml_string)?;
         // println!("{:?}", dom);
@@ -22,11 +25,13 @@ impl Tree {
         }
     }
 
+    /// Draws the ui
     pub fn ui(&self, ui: &mut egui::Ui, depth: usize, unique_id: &str) {
         self.ui_impl(ui, depth, unique_id);
     }
 }
 
+//private implementation
 impl Tree {
     fn ui_impl(&self, ui: &mut egui::Ui, depth: usize, unique_id: &str) {
         let name = if let Some(content) = &self.content {
@@ -125,7 +130,8 @@ fn process_dom(ref_node: RefNode) -> (Option<Vec<Tree>>, Option<String>) {
 }
 
 mod tests {
-    use super::*;
+
+    use crate::widgets::tree;
     use std::{
         env::{self},
         fs::{self},
@@ -145,7 +151,7 @@ mod tests {
     #[test]
     fn test_a_valid_tree_generated_from_valid_xml() {
         let file = get_file_as_string_from_test_resource("test-xml.xml");
-        let result = Tree::new_trees_from_xml_string(&file);
+        let result = tree::Tree::new_trees_from_xml_string(&file);
 
         assert!(
             result.is_ok(),
@@ -156,7 +162,7 @@ mod tests {
     #[test]
     fn test_error_returned_when_invalid_xml() {
         let file = get_file_as_string_from_test_resource("fake-xml.xml");
-        let result = Tree::new_trees_from_xml_string(&file);
+        let result = tree::Tree::new_trees_from_xml_string(&file);
 
         assert!(
             result.is_err(),
