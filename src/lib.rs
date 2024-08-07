@@ -12,6 +12,7 @@ pub struct MyApp {
     name: String,
     dropped_files: Vec<DroppedFile>,
     file_to_render: Option<String>,
+    rendered_file_name: Option<String>,
     font_size: f32,
     trees: Option<Vec<Tree>>,
     show_log: bool,
@@ -23,6 +24,7 @@ impl Default for MyApp {
             name: "AMRUST".to_owned(),
             dropped_files: Vec::new(),
             file_to_render: None,
+            rendered_file_name: None,
             font_size: 14.0,
             trees: None,
             show_log: false,
@@ -60,13 +62,11 @@ impl eframe::App for MyApp {
 
         if self.show_log {
             egui::TopBottomPanel::bottom("bottom_panel")
-                .default_height(50.0)
+                // .default_height(50.0)
                 .resizable(true)
                 .show_separator_line(true)
                 .show(ctx, |ui| {
-                    egui_logger::LoggerUi::default()
-                        .enable_regex(false)
-                        .show(ui);
+                    egui_logger::LoggerUi::default().enable_regex(true).show(ui);
                 });
         }
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -74,6 +74,10 @@ impl eframe::App for MyApp {
                 let text_to_display = string.clone();
                 ui.vertical(|ui| {
                     ui.horizontal_top(|ui| {
+                        if let Some(file_name) = &self.rendered_file_name {
+                            ui.label(file_name);
+                        }
+
                         if ui.button("+").clicked() {
                             self.font_size += 1.0;
                         }
@@ -185,6 +189,10 @@ impl MyApp {
                 self.clear_state();
                 self.file_to_render = file_to_render;
                 self.trees = trees;
+                self.rendered_file_name = match path.file_name().and_then(OsStr::to_str) {
+                    Some(file_name) => Some(file_name.to_string()),
+                    None => None,
+                };
                 Ok(true)
             }
             Err(e) => Err(e),
@@ -251,6 +259,7 @@ impl MyApp {
     fn clear_state(&mut self) {
         self.file_to_render = None;
         self.trees = None;
+        self.rendered_file_name = None;
     }
 }
 
