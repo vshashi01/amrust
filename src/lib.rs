@@ -1,13 +1,14 @@
 // mod threemf_reader;
 mod threemf;
 mod widgets;
+use egui_code_editor::{CodeEditor, Syntax};
 use threemf::threemf_reader;
 use widgets::tree;
 
 use std::{ffi::OsStr, fs, path::PathBuf};
 
 use anyhow::{anyhow, Result};
-use egui::{DroppedFile, FontId, RichText};
+use egui::{DroppedFile, Layout};
 
 pub struct MyApp {
     name: String,
@@ -72,22 +73,24 @@ impl eframe::App for MyApp {
         }
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(string) = &self.file_to_render {
-                let text_to_display = string.clone();
+                let mut text_to_display = string.clone();
                 ui.vertical(|ui| {
                     ui.horizontal_top(|ui| {
                         if let Some(file_name) = &self.rendered_file_name {
                             ui.label(file_name);
                         }
 
-                        if ui.button("+").clicked() {
-                            self.font_size += 1.0;
-                        }
-                        if ui.button("-").clicked() {
-                            self.font_size -= 1.0;
-                        }
-                        if ui.button("Clear content").clicked() {
-                            self.clear_state();
-                        }
+                        ui.with_layout(Layout::right_to_left(egui::Align::Min), |ui| {
+                            if ui.button("Clear content").clicked() {
+                                self.clear_state();
+                            }
+                            ui.add(
+                                egui::Slider::new(&mut self.font_size, 1.0..=120.0)
+                                    .fixed_decimals(0)
+                                    .integer()
+                                    .step_by(1.0),
+                            );
+                        });
                     });
 
                     ui.add(
@@ -96,16 +99,19 @@ impl eframe::App for MyApp {
                             .shrink(4.0)
                             .spacing(10.0),
                     );
+
                     egui::ScrollArea::both()
                         .auto_shrink(false)
                         .scroll_bar_visibility(
                             egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
                         )
                         .show(ui, |ui| {
-                            ui.label(
-                                RichText::new(text_to_display)
-                                    .font(FontId::monospace(self.font_size)),
-                            );
+                            CodeEditor::default()
+                                .with_fontsize(self.font_size)
+                                .with_syntax(Syntax::simple("xml"))
+                                .auto_shrink(false)
+                                .with_numlines(false)
+                                .show(ui, &mut text_to_display);
                         });
                 });
             } else {
