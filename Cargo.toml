@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-eframe = { version = "0.28.1", features = ["default"] }
+eframe = { version = "0.28.1", features = ["default", "wgpu"] }
 egui = "0.28.1"
 
 # For image support:
@@ -23,3 +23,5 @@ serde = "1.0.*"
 xml_dom = "0.2.8"
 egui_logger = "0.5.0"
 log = "0.4.22"
+bytemuck = "1.16.3"
+wgpu = "*"
