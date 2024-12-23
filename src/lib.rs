@@ -1,20 +1,27 @@
 // mod threemf_reader;
+mod renderer;
 mod threemf;
 mod widgets;
-use eframe::egui_wgpu::{self, wgpu::util::DeviceExt};
+// use bevy_egui::egui as bevy;
+use eframe::egui_wgpu::{
+    self, wgpu, wgpu::util::DeviceExt, wgpu::ColorTargetState, wgpu::ColorWrites, Renderer,
+};
 use egui_code_editor::{CodeEditor, Syntax};
+use egui_logger::LoggerUi;
+use renderer::egui_viewport_3d::EViewport3d;
 use threemf::threemf_reader;
-use wgpu::{self, ColorTargetState, ColorWrites};
+// use wgpu::{self, ColorTargetState, ColorWrites};
 use widgets::tree;
 
 use std::{ffi::OsStr, fs, path::PathBuf};
 
 use anyhow::{anyhow, Result};
-use egui::{DroppedFile, Layout};
+use egui::{DroppedFile, Layout, Ui};
 
 pub struct MyApp {
     name: String,
     dropped_files: Vec<DroppedFile>,
+    bevy_dropped_files: Vec<egui::DroppedFile>,
     file_to_render: Option<String>,
     rendered_file_name: Option<String>,
     font_size: f32,
@@ -22,6 +29,7 @@ pub struct MyApp {
     show_log: bool,
     show_viewport: bool,
     render: Option<Custom3d>,
+    render_new: Option<EViewport3d>,
 }
 
 impl Default for MyApp {
@@ -29,6 +37,7 @@ impl Default for MyApp {
         Self {
             name: "AMRUST".to_owned(),
             dropped_files: Vec::new(),
+            bevy_dropped_files: Vec::new(),
             file_to_render: None,
             rendered_file_name: None,
             font_size: 14.0,
@@ -36,6 +45,7 @@ impl Default for MyApp {
             show_log: false,
             show_viewport: false,
             render: None,
+            render_new: None,
         }
     }
 }
@@ -82,7 +92,8 @@ impl eframe::App for MyApp {
                 .resizable(true)
                 .show_separator_line(true)
                 .show(ctx, |ui| {
-                    egui_logger::LoggerUi::default().enable_regex(true).show(ui);
+                    //egui_logger::LoggerUi::default().enable_regex(true).show(ui);
+                    ui.label("Logger");
                 });
         }
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -138,7 +149,7 @@ impl eframe::App for MyApp {
                 for i in 0..self.dropped_files.len() {
                     let file = self.dropped_files[i].clone();
                     if let Some(path) = &file.path {
-                        let processed = self.processed_file_and_update_app(path, frame);
+                        let processed = self.processed_file_and_update_app(path);
                         match processed {
                             Ok(success) => {
                                 if success {
@@ -165,11 +176,18 @@ impl eframe::App for MyApp {
             });
 
             if self.show_viewport {
+                let mut height = 200.0;
+                let mut width = 300.0;
+
+                if let Some(viewport3d) = &self.render_new {
+                    height = viewport3d.height;
+                    width = viewport3d.width;
+                }
                 ctx.show_viewport_immediate(
                     egui::ViewportId::from_hash_of("immediate_viewport"),
                     egui::ViewportBuilder::default()
                         .with_title("Immediate Viewport")
-                        .with_inner_size([200.0, 100.0]),
+                        .with_inner_size([width + 10.0, height + 10.0]),
                     |ctx, class| {
                         assert!(
                             class == egui::ViewportClass::Immediate,
@@ -182,8 +200,11 @@ impl eframe::App for MyApp {
 
                                 egui::Frame::canvas(ui.style()).show(ui, |ui| {
                                     // self.custom_painting(ui);
-                                    if let Some(render_3d) = &self.render.as_ref() {
-                                        render_3d.custom_painting(ui, 45.0);
+                                    // if let Some(render_3d) = &self.render.as_ref() {
+                                    //     render_3d.custom_painting(ui, 45.0);
+                                    // }
+                                    if let Some(viewport3d) = &self.render_new {
+                                        viewport3d.custom_painting(ui);
                                     }
                                 });
                                 ui.label("Drag to rotate!");
@@ -201,10 +222,178 @@ impl eframe::App for MyApp {
 }
 
 impl MyApp {
+    pub fn create_ui(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::top("top panel")
+            .resizable(false)
+            .show(ctx, |ui| {
+                egui::menu::bar(ui, |ui| {
+                    ui.menu_button("View", |ui| {
+                        if ui.button("Show Log").clicked() {
+                            self.show_log = !self.show_log;
+                        }
+                        if ui
+                            .add_enabled(
+                                self.trees.is_some() && !self.show_viewport,
+                                egui::Button::new("Show Viewport"),
+                            )
+                            .clicked()
+                        {
+                            self.show_viewport = true;
+                        }
+                    })
+                });
+            });
+        if let Some(trees) = &self.trees {
+            egui::SidePanel::left("left_panel")
+                .resizable(true)
+                .default_width(100.0)
+                .show(ctx, |ui| {
+                    egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
+                        let mut count = 1;
+                        /* for tree in trees {
+                            tree.ui(ui, 0, &format!("{} - {}", tree.name, count));
+                            count += 1;
+                        } */
+                    });
+                });
+        }
+
+        if self.show_log {
+            egui::TopBottomPanel::bottom("bottom_panel")
+                .resizable(true)
+                .show_separator_line(true)
+                .show(ctx, |ui| {
+                    // egui_logger::LoggerUi::default().enable_regex(true).show(ui);
+                });
+        }
+        egui::CentralPanel::default().show(ctx, |ui| {
+            if let Some(string) = &self.file_to_render {
+                let mut text_to_display = string.clone();
+                ui.vertical(|ui| {
+                    ui.horizontal_top(|ui| {
+                        if let Some(file_name) = &self.rendered_file_name {
+                            ui.label(file_name);
+                        }
+
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                            if ui.button("Clear content").clicked() {
+                                self.clear_state();
+                            }
+                            ui.add(
+                                egui::Slider::new(&mut self.font_size, 1.0..=120.0)
+                                    .fixed_decimals(0)
+                                    .integer()
+                                    .step_by(1.0),
+                            );
+                        });
+                    });
+
+                    ui.add(
+                        egui::Separator::default()
+                            .horizontal()
+                            .shrink(4.0)
+                            .spacing(10.0),
+                    );
+
+                    egui::ScrollArea::both()
+                        .auto_shrink(false)
+                        .scroll_bar_visibility(
+                            egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
+                        )
+                        .show(ui, |ui| {
+                            /* CodeEditor::default()
+                            .with_fontsize(self.font_size)
+                            .with_syntax(Syntax::simple("xml"))
+                            .auto_shrink(false)
+                            .with_numlines(false)
+                            .show(ui, &mut text_to_display); */
+                        });
+                });
+            } else {
+                ui.centered_and_justified(|ui| {
+                    ui.image(egui::include_image!("../assets/ferris.png"));
+                });
+            }
+
+            if !self.dropped_files.is_empty() {
+                for i in 0..self.dropped_files.len() {
+                    let file = self.dropped_files[i].clone();
+                    if let Some(path) = &file.path {
+                        let processed = self.processed_file_and_update_app(path);
+                        match processed {
+                            Ok(success) => {
+                                if success {
+                                    log::debug!("All went well");
+                                    //only the first successful file is processed
+                                    // break;
+                                } else {
+                                    let ext = path.extension();
+                                    log::error!("File format of type {:?} not supported", ext);
+                                }
+                            }
+                            Err(e) => log::error!("{:?}", e),
+                        }
+                    }
+                }
+            }
+
+            self.dropped_files.clear();
+            self.bevy_preview_files_being_dropped(ctx);
+            ctx.input(|i| {
+                if !i.raw.dropped_files.is_empty() {
+                    self.bevy_dropped_files.clone_from(&i.raw.dropped_files);
+                }
+            });
+
+            if self.show_viewport {
+                let mut height = 200.0;
+                let mut width = 300.0;
+
+                if let Some(viewport3d) = &self.render_new {
+                    height = viewport3d.height;
+                    width = viewport3d.width;
+                }
+                ctx.show_viewport_immediate(
+                    egui::ViewportId::from_hash_of("immediate_viewport"),
+                    egui::ViewportBuilder::default()
+                        .with_title("Immediate Viewport")
+                        .with_inner_size([width + 10.0, height + 10.0]),
+                    |ctx, class| {
+                        // assert!(
+                        //     class == egui::ViewportClass::Immediate,
+                        //     "This egui backend doesn't support multiple viewports"
+                        // );
+
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            ui.vertical(|ui| {
+                                ui.label("Hello from immediate viewport");
+
+                                /* egui::Frame::canvas(ui.style()).show(ui, |ui| {
+                                    // self.custom_painting(ui);
+                                    // if let Some(render_3d) = &self.render.as_ref() {
+                                    //     render_3d.custom_painting(ui, 45.0);
+                                    // }
+                                    if let Some(viewport3d) = &self.render_new {
+                                        viewport3d.custom_painting(ui);
+                                    }
+                                });
+                                ui.label("Drag to rotate!"); */
+                            });
+                        });
+
+                        if ctx.input(|i| i.viewport().close_requested()) {
+                            self.show_viewport = false;
+                        }
+                    },
+                );
+            }
+        });
+    }
+
     fn processed_file_and_update_app(
         &mut self,
         path: &PathBuf,
-        frame: &eframe::Frame,
+        // frame: &eframe::Frame,
     ) -> Result<bool> {
         let processed_file_and_tree = match path.extension().and_then(OsStr::to_str) {
             Some("3mf") => {
@@ -215,7 +404,12 @@ impl MyApp {
                 match result {
                     Ok(trees) => {
                         let trees = Some(trees);
-                        self.render = Some(Custom3d::new(frame));
+                        // self.render = Some(Custom3d::new(frame));
+                        // let binding = frame.wgpu_render_state();
+                        // let render_state = binding.as_ref().expect("WGPU enabled");
+                        // self.render_new = Some(EViewport3d::new(render_state, (200.0, 600.0)));
+
+                        // let device = frame.
                         Ok((Some(file_to_render), trees))
                     }
                     Err(e) => return Err(e),
@@ -258,6 +452,50 @@ impl MyApp {
         };
 
         status
+    }
+
+    fn bevy_preview_files_being_dropped(&self, ctx: &egui::Context) {
+        use egui::*;
+        use std::fmt::Write as _;
+
+        let mut is_unsupported_file_exist = false;
+
+        if !ctx.input(|i| i.raw.hovered_files.is_empty()) {
+            let text = ctx.input(|i| {
+                let mut text = "Dropping files:\n".to_owned();
+                for file in &i.raw.hovered_files {
+                    if let Some(path) = &file.path {
+                        write!(text, "\n{}", path.display()).ok();
+                        if !self.can_process_file(path.to_path_buf()) {
+                            is_unsupported_file_exist = true;
+                        }
+                    } else {
+                        text += "\n???";
+                    }
+                }
+                text
+            });
+
+            let painter = ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("file_drop_target"),
+            ));
+
+            let screen_rect = ctx.screen_rect();
+            painter.rect_filled(screen_rect, 0.0, egui::Color32::from_black_alpha(192));
+            painter.text(
+                screen_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                text,
+                egui::TextStyle::Heading.resolve(&ctx.style()),
+                egui::Color32::WHITE,
+            );
+            let mut stroke = (20.0, egui::Color32::DARK_GREEN);
+            if is_unsupported_file_exist {
+                stroke = (20.0, egui::Color32::DARK_RED)
+            }
+            painter.rect_stroke(screen_rect, 0.0, stroke);
+        }
     }
 
     // Preview hovering files:
@@ -365,13 +603,13 @@ impl Custom3d {
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: "vs_main",
+                entry_point: Some("vs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 buffers: &[],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: "fs_main",
+                entry_point: Some("fs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &[Some(ColorTargetState {
                     format: render_state.target_format,
@@ -383,6 +621,7 @@ impl Custom3d {
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
+            cache: None,
         });
 
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -470,14 +709,14 @@ impl egui_wgpu::CallbackTrait for CustomTriangleCallback {
         Vec::new()
     }
 
-    fn paint<'a>(
+    fn paint(
         &self,
         _info: egui::PaintCallbackInfo,
-        render_pass: &mut wgpu::RenderPass<'a>,
-        resources: &'a egui_wgpu::CallbackResources,
+        render_pass: &mut wgpu::RenderPass<'static>,
+        resources: &egui_wgpu::CallbackResources,
     ) {
-        let resources: &TriangleRenderResources = resources.get().unwrap();
-        resources.paint(render_pass);
+        //let resources: &TriangleRenderResources = resources.get().unwrap();
+        //resources.paint(render_pass);
     }
 }
 

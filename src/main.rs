@@ -20,3 +20,28 @@ fn main() -> eframe::Result {
         }),
     )
 }
+
+/* use amrust::MyApp;
+use bevy::prelude::*;
+use bevy_egui::{egui, EguiContexts, EguiPlugin};
+
+fn main() {
+    App::new()
+        .add_plugins(DefaultPlugins)
+        .add_plugins(EguiPlugin)
+        .add_systems(Update, ui_example_sytem)
+        .run();
+}
+
+fn ui_example_sytem(mut contexts: EguiContexts) {
+    // egui::Window::new("hello").show(contexts.ctx_mut(), |ui| ui.label("world"));
+    let mut my_app = MyApp::default();
+
+    my_app.create_ui(contexts.ctx_mut());
+
+    /* egui::Window::new("test").show(contexts.ctx_for_entity_mut(enity), |_ui| {
+        let mut my_app = MyApp::default();
+
+        my_app.create_ui(contexts.ctx_mut());
+    }); */
+} */
