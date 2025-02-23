@@ -4,29 +4,29 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-eframe = { version = "0.30.0", features = ["default", "wgpu"] }
-egui = "0.30.0"
+eframe = { version = "0.31.0", features = ["default", "wgpu"] }
+egui = "0.31.0"
 
 # For image support:
-egui_extras = { version = "0.30.0", features = ["default", "image"] }
+egui_extras = { version = "0.31.0", features = ["default", "image"] }
 
 env_logger = { version = "0.11.5", default-features = false, features = [
     "auto-color",
     "humantime",
 ] }
-egui_code_editor = "0.2.8"
+egui_code_editor = "0.2.12"
 threemf = { version = "0.5.0", path = "..\\3mf-rs" }
 zip = "2.1.6"
 anyhow = "1.0.86"
-quick-xml = { version = "0.36.1", features = ["serialize"] }
+quick-xml = { version = "0.37.2", features = ["serialize"] }
 serde = "1.0.*"
 xml_dom = "0.2.8"
-egui_logger = "0.6.1"
+egui_logger = "0.6.2"
 log = "0.4.22"
 bytemuck = { version = "1.16.3", features = ["derive"] }
 # wgpu = "22.1.0"
-glam = "0.28.0"
+glam = "0.30.0"
 cgmath = "0.18.0"
 image = "0.25.0"
-bevy = "0.14"
-bevy_egui = "0.30"
+#bevy = "0.14"
+#bevy_egui = "0.30"
