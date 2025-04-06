@@ -41,7 +41,7 @@ impl Tree {
         };
         egui::CollapsingHeader::new(name)
             .default_open(depth < 1)
-            .id_source(unique_id)
+            .id_salt(unique_id)
             .show(ui, |ui| {
                 if let Some(attributes) = &self.attributes {
                     for attribute in attributes {
@@ -55,10 +55,8 @@ impl Tree {
 
     fn children_ui(&self, ui: &mut egui::Ui, depth: usize) {
         if let Some(trees) = &self.childs {
-            let mut count = 0;
-            for tree in trees {
+            for (count, tree) in trees.iter().enumerate() {
                 tree.ui_impl(ui, depth + 1, &format!("{} - {}", tree.name, count));
-                count += 1;
             }
         }
     }
@@ -114,13 +112,13 @@ fn process_dom(ref_node: RefNode) -> (Option<Vec<Tree>>, Option<String>) {
         }
     }
 
-    let trees = if sub_trees.len() >= 1 {
+    let trees = if !sub_trees.is_empty() {
         Some(sub_trees)
     } else {
         None
     };
 
-    let content = if sub_content.len() >= 1 {
+    let content = if !sub_content.is_empty() {
         Some(sub_content)
     } else {
         None
@@ -131,7 +129,7 @@ fn process_dom(ref_node: RefNode) -> (Option<Vec<Tree>>, Option<String>) {
 
 mod tests {
 
-    use crate::widgets::tree;
+    use crate::widgets::tree::Tree;
     use std::{
         env::{self},
         fs::{self},
@@ -151,7 +149,7 @@ mod tests {
     #[test]
     fn test_a_valid_tree_generated_from_valid_xml() {
         let file = get_file_as_string_from_test_resource("test-xml.xml");
-        let result = tree::Tree::new_trees_from_xml_string(&file);
+        let result = Tree::new_trees_from_xml_string(&file);
 
         assert!(
             result.is_ok(),
@@ -162,7 +160,7 @@ mod tests {
     #[test]
     fn test_error_returned_when_invalid_xml() {
         let file = get_file_as_string_from_test_resource("fake-xml.xml");
-        let result = tree::Tree::new_trees_from_xml_string(&file);
+        let result = Tree::new_trees_from_xml_string(&file);
 
         assert!(
             result.is_err(),

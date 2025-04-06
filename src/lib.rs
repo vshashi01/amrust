@@ -1,9 +1,6 @@
-// mod threemf_reader;
-mod renderer;
 mod threemf;
 mod widgets;
 use egui_code_editor::{CodeEditor, Syntax};
-use renderer::egui_viewport_3d::EViewport3d;
 use threemf::threemf_reader::{self, get_threemf_package};
 use widgets::tree;
 
@@ -21,7 +18,6 @@ pub struct MyApp {
     trees: Option<Vec<tree::Tree>>,
     show_log: bool,
     show_viewport: bool,
-    render_new: Option<EViewport3d>,
 }
 
 impl Default for MyApp {
@@ -35,13 +31,12 @@ impl Default for MyApp {
             trees: None,
             show_log: false,
             show_viewport: false,
-            render_new: None,
         }
     }
 }
 
 impl eframe::App for MyApp {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::TopBottomPanel::top("top panel")
             .resizable(false)
             .show(ctx, |ui| {
@@ -164,45 +159,6 @@ impl eframe::App for MyApp {
                     self.dropped_files.clone_from(&i.raw.dropped_files);
                 }
             });
-
-            if self.show_viewport {
-                let mut height = 200.0;
-                let mut width = 300.0;
-
-                if let Some(viewport3d) = &self.render_new {
-                    height = viewport3d.height;
-                    width = viewport3d.width;
-                }
-                ctx.show_viewport_immediate(
-                    egui::ViewportId::from_hash_of("immediate_viewport"),
-                    egui::ViewportBuilder::default()
-                        .with_title("Immediate Viewport")
-                        .with_inner_size([width + 10.0, height + 10.0]),
-                    |ctx, class| {
-                        assert!(
-                            class == egui::ViewportClass::Immediate,
-                            "This egui backend doesn't support multiple viewports"
-                        );
-
-                        egui::CentralPanel::default().show(ctx, |ui| {
-                            ui.vertical(|ui| {
-                                ui.label("Hello from immediate viewport");
-
-                                egui::Frame::canvas(ui.style()).show(ui, |ui| {
-                                    if let Some(viewport3d) = &self.render_new {
-                                        viewport3d.custom_painting(ui);
-                                    }
-                                });
-                                ui.label("Drag to rotate!");
-                            });
-                        });
-
-                        if ctx.input(|i| i.viewport().close_requested()) {
-                            self.show_viewport = false;
-                        }
-                    },
-                );
-            }
         });
     }
 }
@@ -309,15 +265,10 @@ impl MyApp {
     }
 
     fn can_process_file(&self, path: PathBuf) -> bool {
-        let result = match path.extension().and_then(OsStr::to_str) {
-            Some("txt") => true,
-            Some("obj") => true,
-            Some("3mf") => true,
-            Some("xml") => true,
-            _ => false,
-        };
-
-        result
+        matches!(
+            path.extension().and_then(OsStr::to_str),
+            Some("txt") | Some("obj") | Some("3mf") | Some("xml")
+        )
     }
 
     fn clear_state(&mut self) {
