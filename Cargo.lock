@@ -176,6 +176,7 @@ dependencies = [
  "env_logger",
  "glam",
  "image",
+ "instant-xml",
  "log",
  "quick-xml 0.37.2",
  "serde",
@@ -2094,6 +2095,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "instant-xml"
+version = "0.6.0"
+source = "git+https://github.com/djc/instant-xml.git#11bd885239fe18c7faf3c549e6e710cbdf61aad3"
+dependencies = [
+ "instant-xml-macros",
+ "thiserror 2.0.9",
+ "xmlparser",
+]
+
+[[package]]
+name = "instant-xml-macros"
+version = "0.6.0"
+source = "git+https://github.com/djc/instant-xml.git#11bd885239fe18c7faf3c549e6e710cbdf61aad3"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "interpolate_name"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3027,7 +3049,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f7649a7b4df05aed9ea7ec6f628c67c9953a43869b8bc50929569b2999d443fe"
 dependencies = [
  "memchr",
- "serde",
 ]
 
 [[package]]
@@ -3583,11 +3604,11 @@ dependencies = [
 
 [[package]]
 name = "threemf"
-version = "0.5.0"
+version = "0.8.0"
 dependencies = [
- "quick-xml 0.36.2",
- "serde",
- "thiserror 1.0.69",
+ "image",
+ "instant-xml",
+ "thiserror 2.0.9",
  "zip",
 ]
 
@@ -4636,9 +4657,9 @@ checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
 
 [[package]]
 name = "xml-rs"
-version = "0.8.24"
+version = "0.8.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea8b391c9a790b496184c29f7f93b9ed5b16abb306c05415b68bcc16e4d06432"
+checksum = "c5b940ebc25896e71dd073bad2dbaa2abfe97b0a391415e22ad1326d9c54e3c4"
 
 [[package]]
 name = "xml_dom"
@@ -4651,6 +4672,12 @@ dependencies = [
  "regex",
  "tracing",
 ]
+
+[[package]]
+name = "xmlparser"
+version = "0.13.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "66fee0b777b0f5ac1c69bb06d361268faafa61cd4682ae064a171c16c433e9e4"
 
 [[package]]
 name = "yoke"

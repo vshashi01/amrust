@@ -4,7 +4,7 @@ mod threemf;
 mod widgets;
 use egui_code_editor::{CodeEditor, Syntax};
 use renderer::egui_viewport_3d::EViewport3d;
-use threemf::threemf_reader;
+use threemf::threemf_reader::{self, get_threemf_package};
 use widgets::tree;
 
 use std::{ffi::OsStr, fs, path::PathBuf};
@@ -215,9 +215,8 @@ impl MyApp {
     ) -> Result<bool> {
         let processed_file_and_tree = match path.extension().and_then(OsStr::to_str) {
             Some("3mf") => {
-                let file = fs::File::open(path)?;
-                let file_to_render =
-                    threemf_reader::load_threemf_get_root_model_file_as_string(file)?;
+                let package = get_threemf_package(path)?;
+                let file_to_render = threemf_reader::get_root_model_file_as_string(&package)?;
                 let result = tree::Tree::new_trees_from_xml_string(&file_to_render);
                 match result {
                     Ok(trees) => {
@@ -254,10 +253,10 @@ impl MyApp {
                 self.clear_state();
                 self.file_to_render = file_to_render;
                 self.trees = trees;
-                self.rendered_file_name = match path.file_name().and_then(OsStr::to_str) {
-                    Some(file_name) => Some(file_name.to_string()),
-                    None => None,
-                };
+                self.rendered_file_name = path
+                    .file_name()
+                    .and_then(OsStr::to_str)
+                    .map(|file_name| file_name.to_string());
                 Ok(true)
             }
             Err(e) => Err(e),
