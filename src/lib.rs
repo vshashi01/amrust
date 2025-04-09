@@ -1,23 +1,25 @@
 mod threemf;
 mod widgets;
-use egui_code_editor::{CodeEditor, Syntax};
-use threemf::threemf_reader::{self, get_threemf_package};
-use widgets::tree;
+use threemf::threemf_reader::get_threemf_package;
+use widgets::tree::{self, Tree};
 
 use std::{ffi::OsStr, fs, path::PathBuf};
 
 use anyhow::{anyhow, Result};
-use egui::{DroppedFile, Layout};
+use egui::{
+    ahash::{HashMap, HashMapExt},
+    DroppedFile, Layout,
+};
 
 pub struct MyApp {
     name: String,
     dropped_files: Vec<DroppedFile>,
-    file_to_render: Option<String>,
+    current_selected_file: String,
+    cached_tree: HashMap<String, Vec<Tree>>,
     rendered_file_name: Option<String>,
-    font_size: f32,
-    trees: Option<Vec<tree::Tree>>,
+    current_trees_path: Option<String>,
+    file_tree: Option<tree::Tree>,
     show_log: bool,
-    show_viewport: bool,
 }
 
 impl Default for MyApp {
@@ -25,12 +27,12 @@ impl Default for MyApp {
         Self {
             name: "AMRUST".to_owned(),
             dropped_files: Vec::new(),
-            file_to_render: None,
+            current_selected_file: "".to_owned(),
+            cached_tree: HashMap::new(),
             rendered_file_name: None,
-            font_size: 14.0,
-            trees: None,
+            current_trees_path: None,
+            file_tree: None,
             show_log: false,
-            show_viewport: false,
         }
     }
 }
@@ -45,29 +47,35 @@ impl eframe::App for MyApp {
                         if ui.button("Show Log").clicked() {
                             self.show_log = !self.show_log;
                         }
-                        if ui
-                            .add_enabled(
-                                self.trees.is_some() && !self.show_viewport,
-                                egui::Button::new("Show Viewport"),
-                            )
-                            .clicked()
-                        {
-                            self.show_viewport = true;
-                        }
                     })
                 });
             });
-        if let Some(trees) = &self.trees {
+        if let Some(tree) = &self.file_tree {
             egui::SidePanel::left("left_panel")
                 .resizable(true)
                 .default_width(100.0)
                 .show(ctx, |ui| {
                     egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
-                        let mut count = 1;
-                        for tree in trees {
-                            tree.ui(ui, 0, &format!("{} - {}", tree.name, count));
-                            count += 1;
-                        }
+                        tree.ui_with_selectable_contents(
+                            ui,
+                            0,
+                            "ThreemfTest",
+                            &mut self.current_selected_file,
+                            &mut |path, content| {
+                                if self.cached_tree.contains_key(path) {
+                                    self.current_trees_path = Some(path.clone());
+                                } else {
+                                    let trees = tree::Tree::new_trees_from_xml_string(content);
+                                    match trees {
+                                        Ok(trees) => {
+                                            self.cached_tree.insert(path.clone(), trees);
+                                            self.current_trees_path = Some(path.clone());
+                                        }
+                                        Err(err) => println!("{:?}", err),
+                                    }
+                                }
+                            },
+                        );
                     });
                 });
         }
@@ -77,13 +85,11 @@ impl eframe::App for MyApp {
                 .resizable(true)
                 .show_separator_line(true)
                 .show(ctx, |ui| {
-                    //egui_logger::LoggerUi::default().enable_regex(true).show(ui);
-                    ui.label("Logger still does not work with egui 31");
+                    egui_logger::LoggerUi::default().enable_regex(true).show(ui);
                 });
         }
         egui::CentralPanel::default().show(ctx, |ui| {
-            if let Some(string) = &self.file_to_render {
-                let mut text_to_display = string.clone();
+            if self.current_trees_path.is_some() {
                 ui.vertical(|ui| {
                     ui.horizontal_top(|ui| {
                         if let Some(file_name) = &self.rendered_file_name {
@@ -94,12 +100,6 @@ impl eframe::App for MyApp {
                             if ui.button("Clear content").clicked() {
                                 self.clear_state();
                             }
-                            ui.add(
-                                egui::Slider::new(&mut self.font_size, 1.0..=120.0)
-                                    .fixed_decimals(0)
-                                    .integer()
-                                    .step_by(1.0),
-                            );
                         });
                     });
 
@@ -116,12 +116,14 @@ impl eframe::App for MyApp {
                             egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
                         )
                         .show(ui, |ui| {
-                            CodeEditor::default()
-                                .with_fontsize(self.font_size)
-                                .with_syntax(Syntax::simple("xml"))
-                                .auto_shrink(false)
-                                .with_numlines(false)
-                                .show(ui, &mut text_to_display);
+                            if let Some(path) = &self.current_trees_path {
+                                let tree = self.cached_tree.get(path);
+                                if let Some(trees) = tree {
+                                    for (count, tree) in trees.iter().enumerate() {
+                                        tree.ui(ui, 0, &format!("{} - {}", tree.name, count));
+                                    }
+                                }
+                            }
                         });
                 });
             } else {
@@ -164,31 +166,15 @@ impl eframe::App for MyApp {
 }
 
 impl MyApp {
-    fn processed_file_and_update_app(
-        &mut self,
-        path: &PathBuf,
-        // frame: &eframe::Frame,
-    ) -> Result<bool> {
+    fn processed_file_and_update_app(&mut self, path: &PathBuf) -> Result<bool> {
         let processed_file_and_tree = match path.extension().and_then(OsStr::to_str) {
             Some("3mf") => {
                 let package = get_threemf_package(path)?;
-                let file_to_render = threemf_reader::get_root_model_file_as_string(&package)?;
-                let result = tree::Tree::new_trees_from_xml_string(&file_to_render);
-                match result {
-                    Ok(trees) => {
-                        let trees = Some(trees);
-                        Ok((Some(file_to_render), trees))
-                    }
+                let file_tree = tree::Tree::new_trees_from_threemf(&package);
+                match file_tree {
+                    Ok(tree) => Ok((None, Some(tree))),
                     Err(e) => return Err(e),
                 }
-            }
-            Some("txt") => {
-                let file_to_render = Some(fs::read_to_string(path)?);
-                Ok((file_to_render, None))
-            }
-            Some("obj") => {
-                let file_to_render = Some(fs::read_to_string(path)?);
-                Ok((file_to_render, None))
             }
             Some("xml") => {
                 let file_to_render = fs::read_to_string(path)?;
@@ -196,7 +182,7 @@ impl MyApp {
                 match result {
                     Ok(trees) => {
                         let trees = Some(trees);
-                        Ok((Some(file_to_render), trees))
+                        Ok((trees, None))
                     }
                     Err(e) => return Err(e),
                 }
@@ -205,14 +191,18 @@ impl MyApp {
         };
 
         let status = match processed_file_and_tree {
-            Ok((file_to_render, trees)) => {
+            Ok((trees, file_tree)) => {
                 self.clear_state();
-                self.file_to_render = file_to_render;
-                self.trees = trees;
+                self.current_trees_path = None;
+                self.file_tree = file_tree;
                 self.rendered_file_name = path
                     .file_name()
                     .and_then(OsStr::to_str)
                     .map(|file_name| file_name.to_string());
+                if let Some(trees) = trees {
+                    self.cached_tree.insert("target".to_owned(), trees);
+                    self.current_trees_path = Some("target".to_owned());
+                }
                 Ok(true)
             }
             Err(e) => Err(e),
@@ -267,13 +257,14 @@ impl MyApp {
     fn can_process_file(&self, path: PathBuf) -> bool {
         matches!(
             path.extension().and_then(OsStr::to_str),
-            Some("txt") | Some("obj") | Some("3mf") | Some("xml")
+            Some("3mf") | Some("xml")
         )
     }
 
     fn clear_state(&mut self) {
-        self.file_to_render = None;
-        self.trees = None;
+        self.current_trees_path = None;
         self.rendered_file_name = None;
+        self.cached_tree = HashMap::new();
+        self.file_tree = None;
     }
 }

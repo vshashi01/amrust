@@ -1,4 +1,6 @@
 use anyhow::{anyhow, Result};
+use instant_xml::to_string;
+use threemf::io::threemf_package::ThreemfPackage;
 use xml_dom::level2::{CharacterData, Node, NodeType, RefNode};
 use xml_dom::parser::read_xml;
 
@@ -6,7 +8,6 @@ use xml_dom::parser::read_xml;
 #[derive(Debug)]
 pub struct Tree {
     pub name: String,
-    pub content: Option<String>,
     pub attributes: Option<Vec<(String, String)>>,
     pub childs: Option<Vec<Tree>>,
 }
@@ -25,21 +26,18 @@ impl Tree {
         }
     }
 
+    pub fn new_trees_from_threemf(package: &ThreemfPackage) -> Result<Self> {
+        let result = process_threemf_package(package);
+        if let Some(trees) = result {
+            Ok(trees)
+        } else {
+            Err(anyhow!("No tree was generated for threemf"))
+        }
+    }
+
     /// Draws the ui
     pub fn ui(&self, ui: &mut egui::Ui, depth: usize, unique_id: &str) {
-        self.ui_impl(ui, depth, unique_id);
-    }
-}
-
-//private implementation
-impl Tree {
-    fn ui_impl(&self, ui: &mut egui::Ui, depth: usize, unique_id: &str) {
-        let name = if let Some(content) = &self.content {
-            format!("{} - {}", self.name, content)
-        } else {
-            self.name.clone()
-        };
-        egui::CollapsingHeader::new(name)
+        egui::CollapsingHeader::new(&self.name)
             .default_open(depth < 1)
             .id_salt(unique_id)
             .show(ui, |ui| {
@@ -49,14 +47,66 @@ impl Tree {
                     }
                 }
 
-                self.children_ui(ui, depth)
+                self.children_ui_with_unselectable_label(ui, depth)
             });
     }
 
-    fn children_ui(&self, ui: &mut egui::Ui, depth: usize) {
+    pub fn ui_with_selectable_contents(
+        &self,
+        ui: &mut egui::Ui,
+        depth: usize,
+        unique_id: &str,
+        current_selected_value: &mut String,
+        on_clicked: &mut impl FnMut(&String, &String),
+    ) {
+        egui::CollapsingHeader::new(&self.name)
+            .default_open(depth < 1)
+            .id_salt(unique_id)
+            .show(ui, |ui| {
+                if let Some(attributes) = &self.attributes {
+                    attributes.iter().for_each(|(path, content)| {
+                        if ui
+                            .selectable_value(current_selected_value, path.clone(), path)
+                            .clicked()
+                        {
+                            on_clicked(path, content);
+                        }
+                    });
+                }
+
+                self.children_ui_with_selectable_content(
+                    ui,
+                    depth,
+                    current_selected_value,
+                    on_clicked,
+                )
+            });
+    }
+
+    fn children_ui_with_unselectable_label(&self, ui: &mut egui::Ui, depth: usize) {
         if let Some(trees) = &self.childs {
             for (count, tree) in trees.iter().enumerate() {
-                tree.ui_impl(ui, depth + 1, &format!("{} - {}", tree.name, count));
+                tree.ui(ui, depth + 1, &format!("{} - {}", tree.name, count));
+            }
+        }
+    }
+
+    fn children_ui_with_selectable_content(
+        &self,
+        ui: &mut egui::Ui,
+        depth: usize,
+        current_selected_value: &mut String,
+        on_clicked: &mut impl FnMut(&String, &String),
+    ) {
+        if let Some(trees) = &self.childs {
+            for (count, tree) in trees.iter().enumerate() {
+                tree.ui_with_selectable_contents(
+                    ui,
+                    depth + 1,
+                    &format!("{} - {}", tree.name, count),
+                    current_selected_value,
+                    on_clicked,
+                );
             }
         }
     }
@@ -66,7 +116,7 @@ fn process_dom(ref_node: RefNode) -> (Option<Vec<Tree>>, Option<String>) {
     let mut sub_trees = Vec::new();
     let mut sub_content = String::new();
     for node in ref_node.child_nodes() {
-        let name = node.local_name();
+        let mut name = node.local_name();
         let mut attributes: Vec<(String, String)> = Vec::new();
 
         if node.node_type() == NodeType::Element {
@@ -83,7 +133,6 @@ fn process_dom(ref_node: RefNode) -> (Option<Vec<Tree>>, Option<String>) {
                         for attribute_child_node in entry.1.child_nodes() {
                             if let Some(value) = attribute_child_node.data() {
                                 attribute_value.push_str(&value);
-                                // break;
                             }
                         }
                     };
@@ -97,14 +146,18 @@ fn process_dom(ref_node: RefNode) -> (Option<Vec<Tree>>, Option<String>) {
                 (None, None)
             };
 
+            if let Some(content) = entry {
+                name.push_str(" - ");
+                name.push_str(&content);
+            }
+
             sub_trees.push(Tree {
                 name,
-                content: entry,
                 attributes: Some(attributes),
                 childs,
             });
         } else {
-            // if not an Element then there is highly likely it
+            // if not an Element then its highly likely it
             // contains some data that belongs to the Element item itself
             if let Some(data) = node.data() {
                 sub_content.push_str(&data);
@@ -127,24 +180,73 @@ fn process_dom(ref_node: RefNode) -> (Option<Vec<Tree>>, Option<String>) {
     (trees, content)
 }
 
-mod tests {
+fn process_threemf_package(package: &ThreemfPackage) -> Option<Tree> {
+    let mut sub_trees = Vec::new();
 
-    use crate::widgets::tree::Tree;
+    let content_xml_string = to_string(&package.content_types).unwrap();
+    let content_types = ("[Content_Types].xml".to_owned(), content_xml_string);
+
+    let root_xml_string = to_string(&package.root).unwrap();
+    let root_model = ("Root Model".to_owned(), root_xml_string);
+
+    let mut relationships = Vec::new();
+    for (name, relationship) in &package.relationships {
+        let xml_string = to_string(relationship).unwrap();
+        relationships.push((name.clone(), xml_string));
+    }
+    sub_trees.push(Tree {
+        name: "Relationships".to_owned(),
+        // content: None,
+        attributes: Some(relationships),
+        childs: None,
+    });
+
+    let mut sub_models = Vec::new();
+    for (name, model) in &package.sub_models {
+        let xml_string = to_string(model).unwrap();
+        sub_models.push((name.clone(), xml_string));
+    }
+    sub_trees.push(Tree {
+        name: "Sub Models".to_owned(),
+        attributes: Some(sub_models),
+        childs: None,
+    });
+
+    let mut thumbnails = Vec::new();
+    for name in package.thumbnails.keys() {
+        thumbnails.push((name.clone(), "".to_owned()));
+    }
+    sub_trees.push(Tree {
+        name: "Thumbnails".to_owned(),
+        attributes: Some(thumbnails),
+        childs: None,
+    });
+
+    let mut unknown_datas = Vec::new();
+    for name in package.unknown_parts.keys() {
+        unknown_datas.push((name.clone(), "".to_owned()));
+    }
+    sub_trees.push(Tree {
+        name: "Unknown Parts".to_owned(),
+        attributes: Some(unknown_datas),
+        childs: None,
+    });
+
+    Some(Tree {
+        name: "Threemf".to_owned(),
+        attributes: Some(vec![content_types, root_model]),
+        childs: Some(sub_trees),
+    })
+}
+
+pub mod tests {
+
+    use super::Tree;
     use std::{
         env::{self},
         fs::{self},
         path::PathBuf,
     };
-
-    fn get_file_as_string_from_test_resource(file_name: &str) -> String {
-        let root_dir = &env::var("CARGO_MANIFEST_DIR").expect("$CARGO_MANIFEST_DIR");
-        let mut test_file_path = PathBuf::from(root_dir);
-        test_file_path.push("test_resources\\");
-        test_file_path.push(file_name);
-        // println!("{:?}", test_file_path);
-
-        fs::read_to_string(test_file_path).unwrap()
-    }
 
     #[test]
     fn test_a_valid_tree_generated_from_valid_xml() {
@@ -166,5 +268,15 @@ mod tests {
             result.is_err(),
             "Operation did not return en error when given invalid xml"
         );
+    }
+
+    fn get_file_as_string_from_test_resource(file_name: &str) -> String {
+        let root_dir = &env::var("CARGO_MANIFEST_DIR").expect("$CARGO_MANIFEST_DIR");
+        let mut test_file_path = PathBuf::from(root_dir);
+        test_file_path.push("test_resources\\");
+        test_file_path.push(file_name);
+        // println!("{:?}", test_file_path);
+
+        fs::read_to_string(test_file_path).unwrap()
     }
 }
