@@ -1,24 +1,25 @@
-mod threemf;
+use anyhow::{anyhow, Result};
+use egui::{DroppedFile, Layout};
+
+mod controllers;
 mod widgets;
-use threemf::threemf_reader::get_threemf_package;
-use widgets::tree::{self, Tree};
+use controllers::{
+    threemf_view_controller::ThreemfViewController,
+    xml_content_view_controller::XmlContentViewController, StandardFileViewModel,
+};
 
 use std::{ffi::OsStr, fs, path::PathBuf};
 
-use anyhow::{anyhow, Result};
-use egui::{
-    ahash::{HashMap, HashMapExt},
-    DroppedFile, Layout,
-};
+enum ViewModel {
+    Threemf(Box<ThreemfViewController>),
+    Xml(Box<XmlContentViewController>),
+}
 
 pub struct MyApp {
     name: String,
     dropped_files: Vec<DroppedFile>,
-    current_selected_file: String,
-    cached_tree: HashMap<String, Vec<Tree>>,
+    view_model: Option<ViewModel>,
     rendered_file_name: Option<String>,
-    current_trees_path: Option<String>,
-    file_tree: Option<tree::Tree>,
     show_log: bool,
 }
 
@@ -27,11 +28,8 @@ impl Default for MyApp {
         Self {
             name: "AMRUST".to_owned(),
             dropped_files: Vec::new(),
-            current_selected_file: "".to_owned(),
-            cached_tree: HashMap::new(),
+            view_model: None,
             rendered_file_name: None,
-            current_trees_path: None,
-            file_tree: None,
             show_log: false,
         }
     }
@@ -42,40 +40,47 @@ impl eframe::App for MyApp {
         egui::TopBottomPanel::top("top panel")
             .resizable(false)
             .show(ctx, |ui| {
-                egui::menu::bar(ui, |ui| {
-                    ui.menu_button("View", |ui| {
-                        if ui.button("Show Log").clicked() {
-                            self.show_log = !self.show_log;
-                        }
-                    })
+                ui.vertical(|ui| {
+                    egui::menu::bar(ui, |ui| {
+                        ui.menu_button("View", |ui| {
+                            if ui.button("Show Log").clicked() {
+                                self.show_log = !self.show_log;
+                            }
+                        })
+                    });
+
+                    if let Some(file_name) = self.rendered_file_name.clone() {
+                        ui.add(
+                            egui::Separator::default()
+                                .horizontal()
+                                .shrink(4.0)
+                                .spacing(10.0),
+                        );
+
+                        ui.horizontal_top(|ui| {
+                            ui.label(file_name);
+
+                            ui.with_layout(Layout::right_to_left(egui::Align::Min), |ui| {
+                                if ui.button("Clear content").clicked() {
+                                    self.clear_state();
+                                }
+                            });
+                        });
+                    }
                 });
             });
-        if let Some(tree) = &self.file_tree {
+        if self.view_model.is_some() {
             egui::SidePanel::left("left_panel")
                 .resizable(true)
                 .default_width(100.0)
                 .show(ctx, |ui| {
                     egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
-                        tree.ui_with_selectable_contents(
-                            ui,
-                            0,
-                            "ThreemfTest",
-                            &mut self.current_selected_file,
-                            &mut |path, content| {
-                                if self.cached_tree.contains_key(path) {
-                                    self.current_trees_path = Some(path.clone());
-                                } else {
-                                    let trees = tree::Tree::new_trees_from_xml_string(content);
-                                    match trees {
-                                        Ok(trees) => {
-                                            self.cached_tree.insert(path.clone(), trees);
-                                            self.current_trees_path = Some(path.clone());
-                                        }
-                                        Err(err) => println!("{:?}", err),
-                                    }
-                                }
-                            },
-                        );
+                        if let Some(model) = &mut self.view_model {
+                            match model {
+                                ViewModel::Threemf(model) => model.file_tree_ui(ui),
+                                ViewModel::Xml(model) => model.file_tree_ui(ui),
+                            }
+                        }
                     });
                 });
         }
@@ -89,39 +94,18 @@ impl eframe::App for MyApp {
                 });
         }
         egui::CentralPanel::default().show(ctx, |ui| {
-            if self.current_trees_path.is_some() {
+            if self.view_model.is_some() {
                 ui.vertical(|ui| {
-                    ui.horizontal_top(|ui| {
-                        if let Some(file_name) = &self.rendered_file_name {
-                            ui.label(file_name);
-                        }
-
-                        ui.with_layout(Layout::right_to_left(egui::Align::Min), |ui| {
-                            if ui.button("Clear content").clicked() {
-                                self.clear_state();
-                            }
-                        });
-                    });
-
-                    ui.add(
-                        egui::Separator::default()
-                            .horizontal()
-                            .shrink(4.0)
-                            .spacing(10.0),
-                    );
-
                     egui::ScrollArea::both()
                         .auto_shrink(false)
                         .scroll_bar_visibility(
                             egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
                         )
                         .show(ui, |ui| {
-                            if let Some(path) = &self.current_trees_path {
-                                let tree = self.cached_tree.get(path);
-                                if let Some(trees) = tree {
-                                    for (count, tree) in trees.iter().enumerate() {
-                                        tree.ui(ui, 0, &format!("{} - {}", tree.name, count));
-                                    }
+                            if let Some(threemf) = &self.view_model {
+                                match threemf {
+                                    ViewModel::Threemf(model) => model.content_ui(ui),
+                                    ViewModel::Xml(model) => model.content_ui(ui),
                                 }
                             }
                         });
@@ -140,7 +124,7 @@ impl eframe::App for MyApp {
                         match processed {
                             Ok(success) => {
                                 if success {
-                                    log::debug!("All went well");
+                                    log::info!("All went well");
                                     //only the first successful file is processed
                                     // break;
                                 } else {
@@ -167,48 +151,32 @@ impl eframe::App for MyApp {
 
 impl MyApp {
     fn processed_file_and_update_app(&mut self, path: &PathBuf) -> Result<bool> {
-        let processed_file_and_tree = match path.extension().and_then(OsStr::to_str) {
+        let view_model = match path.extension().and_then(OsStr::to_str) {
             Some("3mf") => {
-                let package = get_threemf_package(path)?;
-                let file_tree = tree::Tree::new_trees_from_threemf(&package);
-                match file_tree {
-                    Ok(tree) => Ok((None, Some(tree))),
-                    Err(e) => return Err(e),
+                log::info!("This is the 3mf path: {:?}", path);
+                let threemf_model = ThreemfViewController::from_file(path);
+                match threemf_model {
+                    Ok(model) => ViewModel::Threemf(Box::new(model)),
+                    Err(err) => return Err(err),
                 }
             }
             Some("xml") => {
-                let file_to_render = fs::read_to_string(path)?;
-                let result = tree::Tree::new_trees_from_xml_string(&file_to_render);
-                match result {
-                    Ok(trees) => {
-                        let trees = Some(trees);
-                        Ok((trees, None))
-                    }
-                    Err(e) => return Err(e),
+                log::info!("This is the xml path: {:?}", path);
+                let xml_string = fs::read_to_string(path)?;
+                let xml_model = XmlContentViewController::from_xml(&xml_string);
+                match xml_model {
+                    Ok(model) => ViewModel::Xml(Box::new(model)),
+                    Err(err) => return Err(err),
                 }
             }
-            _ => Err(anyhow!("File format not supported")),
+            _ => return Err(anyhow!("File format not supported")),
         };
 
-        let status = match processed_file_and_tree {
-            Ok((trees, file_tree)) => {
-                self.clear_state();
-                self.current_trees_path = None;
-                self.file_tree = file_tree;
-                self.rendered_file_name = path
-                    .file_name()
-                    .and_then(OsStr::to_str)
-                    .map(|file_name| file_name.to_string());
-                if let Some(trees) = trees {
-                    self.cached_tree.insert("target".to_owned(), trees);
-                    self.current_trees_path = Some("target".to_owned());
-                }
-                Ok(true)
-            }
-            Err(e) => Err(e),
-        };
+        self.clear_state();
+        self.view_model = Some(view_model);
+        self.rendered_file_name = Some("file_name".to_owned());
 
-        status
+        Ok(true)
     }
 
     // Preview hovering files:
@@ -262,9 +230,7 @@ impl MyApp {
     }
 
     fn clear_state(&mut self) {
-        self.current_trees_path = None;
         self.rendered_file_name = None;
-        self.cached_tree = HashMap::new();
-        self.file_tree = None;
+        self.view_model = None;
     }
 }

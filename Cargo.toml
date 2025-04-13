@@ -20,6 +20,7 @@ instant-xml = { version = "0.6.0" }
 zip = "2.1.6"
 anyhow = "1.0.86"
 xml_dom = "0.2.8"
+roxmltree = "0.20.0"
 egui_logger = "0.6.3"
 log = "0.4.22"
 image = "0.25.0"
