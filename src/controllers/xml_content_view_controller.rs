@@ -3,7 +3,7 @@ use roxmltree::Document;
 
 use crate::widgets::xml_content_tree::XmlContentTree;
 
-use super::StandardFileViewModel;
+use super::StandardFileViewController;
 
 pub struct XmlContentViewController {
     tree: XmlContentTree,
@@ -20,8 +20,10 @@ impl XmlContentViewController {
     }
 }
 
-impl StandardFileViewModel for XmlContentViewController {
-    const IMPLEMENTS_FILE_TREE: bool = false;
+impl StandardFileViewController for XmlContentViewController {
+    fn has_file_tree(&self) -> bool {
+        false
+    }
 
     fn content_ui(&self, ui: &mut egui::Ui) {
         self.tree.ui(ui, 5, "XmlContentTree");

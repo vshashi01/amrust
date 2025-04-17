@@ -4,7 +4,7 @@ use threemf::io::threemf_package::ThreemfPackage;
 
 use crate::widgets::file_tree::FileTree;
 
-use super::{xml_content_view_controller::XmlContentViewController, StandardFileViewModel};
+use super::{xml_content_view_controller::XmlContentViewController, StandardFileViewController};
 
 use std::{collections::HashMap, fs::File, path::PathBuf};
 
@@ -32,8 +32,10 @@ impl ThreemfViewController {
     }
 }
 
-impl StandardFileViewModel for ThreemfViewController {
-    const IMPLEMENTS_FILE_TREE: bool = true;
+impl StandardFileViewController for ThreemfViewController {
+    fn has_file_tree(&self) -> bool {
+        true
+    }
 
     fn file_tree_ui(&mut self, ui: &mut egui::Ui) {
         self.file_tree.ui(
