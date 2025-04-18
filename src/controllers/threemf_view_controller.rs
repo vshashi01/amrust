@@ -72,7 +72,7 @@ impl StandardFileViewController for ThreemfViewController {
 
 pub fn get_threemf_package(path: &PathBuf) -> Result<ThreemfPackage> {
     let file = File::open(path).unwrap();
-    let package = ThreemfPackage::from_reader(file, false);
+    let package = ThreemfPackage::from_reader(file, true);
 
     Ok(package.unwrap())
 }

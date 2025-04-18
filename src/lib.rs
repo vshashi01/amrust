@@ -22,14 +22,12 @@ impl Default for MyApp {
 
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         egui::TopBottomPanel::top("top panel")
             .resizable(false)
             .show(ctx, |ui| {
                 egui::menu::bar(ui, |ui| {
                     ui.menu_button("File", |ui| {
                         if ui.button("Close File").clicked() {
-                            // self.default_view_controller.clear_state();
                             self.clear_state(ctx);
                         }
                     });
