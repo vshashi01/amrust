@@ -48,7 +48,7 @@ impl StandardFileViewController for ThreemfViewController {
                         ("[Content_Types].xml", _) => Some(&self.unpacked.content_types),
                         ("Root Model", _) => Some(&self.unpacked.root),
                         (path, "Relationships") => self.unpacked.relationships.get(path),
-                        (path, "Sub Models") => self.unpacked.relationships.get(path),
+                        (path, "Sub Models") => self.unpacked.sub_models.get(path),
                         _ => None,
                     };
                     if let Some(xml_string) = xml_string {

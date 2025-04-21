@@ -16,7 +16,7 @@ impl XmlContentTree {
                 .show(ui, |ui| {
                     if let Some(attributes) = &self.attributes {
                         for attribute in attributes {
-                            ui.label(format!("{} - {}", attribute.0, attribute.1));
+                            ui.label(format!("{} = {}", attribute.0, attribute.1));
                         }
                     }
 

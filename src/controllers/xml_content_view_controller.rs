@@ -44,10 +44,6 @@ fn process_doc_tree(
     }
 }
 
-// fn process_doc(doc: roxmltree::Document<'_>, max_depth: usize) -> Option<XmlContentTree> {
-//     process_node(doc.root_element(), max_depth)
-// }
-
 fn process_node(
     node: roxmltree::Node<'_, '_>,
     max_depth: usize,
@@ -62,13 +58,21 @@ fn process_node(
     let mut childs: Vec<XmlContentTree> = vec![];
 
     if node.is_element() {
-        let prefix = get_prefix(&node, node.tag_name().namespace().unwrap_or(""));
+        //if its the element below root then extract all the namespaces
+        if let Some(parent_node) = node.parent() {
+            if parent_node.is_root() {
+                for ns in node.namespaces() {
+                    let prefix = match ns.name() {
+                        Some(prefix) => format!(":{}", prefix),
+                        None => String::new(),
+                    };
+                    let ns_attribute = (format!("xmlns{}", prefix), ns.uri().to_owned());
+                    attributes.push(ns_attribute);
+                }
+            }
+        }
 
-        log::error!(
-            "Namespace is {:?} for node: {}",
-            prefix,
-            node.tag_name().name()
-        );
+        let prefix = get_prefix(&node, node.tag_name().namespace().unwrap_or(""));
         name.push_str(&format!("{}{}", prefix, node.tag_name().name()));
 
         for attribute in node.attributes() {
@@ -102,7 +106,14 @@ fn process_node(
         }
 
         if let Some(content) = node.text() {
-            attributes.push((content.to_owned(), "".to_owned()));
+            //todo: fix the bug with empty new line content strings
+            if !content.is_empty() || !content.trim().is_empty() {
+                childs.push(XmlContentTree {
+                    name: content.to_owned(),
+                    attributes: None,
+                    childs: None,
+                });
+            }
         }
     }
 
