@@ -20,14 +20,14 @@ impl XmlContentTree {
                         }
                     }
 
-                    self.children_ui_with_unselectable_label(ui, depth)
+                    self.children_ui(ui, depth)
                 });
         } else {
             ui.label(&self.name);
         }
     }
 
-    fn children_ui_with_unselectable_label(&self, ui: &mut egui::Ui, depth: usize) {
+    fn children_ui(&self, ui: &mut egui::Ui, depth: usize) {
         if let Some(trees) = &self.childs {
             for (count, tree) in trees.iter().enumerate() {
                 tree.ui(ui, depth + 1, &format!("{} - {}", tree.name, count));

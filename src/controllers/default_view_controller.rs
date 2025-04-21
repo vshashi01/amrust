@@ -41,7 +41,7 @@ impl DefaultViewController {
                 Some("xml") => {
                     log::info!("This is the xml path: {:?}", path);
                     let xml_string = fs::read_to_string(path).unwrap_or_default();
-                    let xml_model = XmlContentViewController::from_xml(&xml_string);
+                    let xml_model = XmlContentViewController::from_xml(&xml_string, &vec![]);
                     if let Ok(model) = xml_model {
                         self.current_view_model = Some(Box::new(model))
                     }

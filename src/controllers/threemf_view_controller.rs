@@ -52,7 +52,10 @@ impl StandardFileViewController for ThreemfViewController {
                         _ => None,
                     };
                     if let Some(xml_string) = xml_string {
-                        let trees = XmlContentViewController::from_xml(xml_string);
+                        let trees = XmlContentViewController::from_xml(
+                            xml_string,
+                            &vec!["vertices", "triangles", "beams"],
+                        );
                         match trees {
                             Ok(trees) => {
                                 self.cached_xml.insert(path.clone(), trees);
