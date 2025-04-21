@@ -9,7 +9,7 @@ pub struct XmlContentTree {
 impl XmlContentTree {
     /// Draws the ui
     pub fn ui(&self, ui: &mut egui::Ui, depth: usize, unique_id: &str) {
-        if self.childs.is_some() {
+        if self.childs.is_some() || self.attributes.is_some() {
             egui::CollapsingHeader::new(&self.name)
                 .default_open(depth < 1)
                 .id_salt(unique_id)

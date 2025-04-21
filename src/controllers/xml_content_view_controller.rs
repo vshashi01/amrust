@@ -76,40 +76,31 @@ fn process_node(
         name.push_str(&format!("{}{}", prefix, node.tag_name().name()));
 
         for attribute in node.attributes() {
-            //make attributes the same line as the element name.
             let prefix = get_prefix(&node, attribute.namespace().unwrap_or(""));
-            let attr_string = format!(
-                " < {}{} = {} > ",
-                prefix,
-                attribute.name(),
-                attribute.value()
-            );
-            name.push_str(&attr_string);
+            attributes.push((
+                format!("{}{}", prefix, attribute.name()),
+                attribute.value().to_owned(),
+            ));
         }
 
-        if node.has_children() {
-            if !collections_to_skip.contains(&node.tag_name().name()) {
-                for child in node.children() {
-                    let processed = process_node(child, max_depth - 1, collections_to_skip);
-                    if let Some(child_tree) = processed {
-                        childs.push(child_tree);
-                    }
+        //process the children
+        if !collections_to_skip.contains(&node.tag_name().name()) {
+            for child in node.children().filter(|c| c.is_element()) {
+                let processed = process_node(child, max_depth - 1, collections_to_skip);
+                if let Some(child_tree) = processed {
+                    childs.push(child_tree);
                 }
-            } else {
-                let count = node.children().count();
-                childs.push(XmlContentTree {
-                    name: node.tag_name().name().to_owned(),
-                    attributes: Some(vec![("Child Count".to_string(), count.to_string())]),
-                    childs: None,
-                });
             }
+        } else {
+            //when we skip processing a collection just write the child count instead as additional info
+            let count = node.children().count();
+            attributes.push(("Child count".to_owned(), count.to_string()));
         }
 
         if let Some(content) = node.text() {
-            //todo: fix the bug with empty new line content strings
-            if !content.is_empty() || !content.trim().is_empty() {
+            if !content.is_empty() && !content.trim().is_empty() {
                 childs.push(XmlContentTree {
-                    name: content.to_owned(),
+                    name: content.trim().to_owned(),
                     attributes: None,
                     childs: None,
                 });
