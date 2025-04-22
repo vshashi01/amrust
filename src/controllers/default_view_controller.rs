@@ -65,8 +65,8 @@ impl DefaultViewController {
         self.file_name = None;
     }
 
-    pub fn content_ui(&self, ui: &mut egui::Ui) {
-        match &self.current_view_model {
+    pub fn content_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        match &mut self.current_view_model {
             Some(model) => {
                 ui.vertical(|ui| {
                     egui::ScrollArea::both()
@@ -75,9 +75,10 @@ impl DefaultViewController {
                             egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
                         )
                         .show(ui, |ui| {
-                            model.content_ui(ui);
+                            model.content_ui(ui, ctx);
                         });
                 });
+                // model.content_ui(ui, ctx);
             }
             None => start_page::start_page(ui),
         }
@@ -98,7 +99,7 @@ impl DefaultViewController {
                     .default_width(100.0)
                     .show(ctx, |ui| {
                         egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
-                            view_model.file_tree_ui(ui);
+                            view_model.file_tree_ui(ui, ctx);
                         });
                     });
             }

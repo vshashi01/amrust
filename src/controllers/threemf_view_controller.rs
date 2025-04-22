@@ -1,7 +1,8 @@
 use anyhow::{anyhow, Result};
+use egui::{ColorImage, TextureHandle};
 use threemf::io::threemf_unpacked::ThreemfUnpacked;
 
-use crate::widgets::file_tree::FileTree;
+use crate::widgets::{file_tree::FileTree, start_page::start_page};
 
 use super::{xml_content_view_controller::XmlContentViewController, StandardFileViewController};
 
@@ -9,9 +10,18 @@ use std::{collections::HashMap, fs::File, path::PathBuf};
 
 pub struct ThreemfViewController {
     unpacked: ThreemfUnpacked,
+    current_content_state: ContentState,
     cached_xml: HashMap<String, XmlContentViewController>,
+    cached_image_texture: HashMap<String, TextureHandle>,
     current_selected: String,
     file_tree: FileTree,
+}
+
+pub enum ContentState {
+    Empty,
+    XmlContent(String),
+    Image(String),
+    UnknownData(String),
 }
 
 impl ThreemfViewController {
@@ -21,7 +31,9 @@ impl ThreemfViewController {
         if let Some(file_tree) = result {
             Ok(ThreemfViewController {
                 unpacked,
+                current_content_state: ContentState::Empty,
                 cached_xml: HashMap::new(),
+                cached_image_texture: HashMap::new(),
                 current_selected: String::new(),
                 file_tree,
             })
@@ -29,6 +41,7 @@ impl ThreemfViewController {
             Err(anyhow!("No tree was generated for threemf"))
         }
     }
+
 }
 
 impl StandardFileViewController for ThreemfViewController {
@@ -36,48 +49,134 @@ impl StandardFileViewController for ThreemfViewController {
         true
     }
 
-    fn file_tree_ui(&mut self, ui: &mut egui::Ui) {
+    fn file_tree_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         self.file_tree.ui(
             ui,
             5,
             "Threemf",
             &mut self.current_selected,
             &mut |(path, parent_name)| {
-                if !self.cached_xml.contains_key(path) {
-                    let xml_string = match (path.as_str(), parent_name.as_str()) {
-                        ("[Content_Types].xml", _) => Some(&self.unpacked.content_types),
-                        ("Root Model", _) => Some(&self.unpacked.root),
-                        (path, "Relationships") => self.unpacked.relationships.get(path),
-                        (path, "Sub Models") => self.unpacked.sub_models.get(path),
-                        _ => None,
-                    };
-                    if let Some(xml_string) = xml_string {
-                        let trees = XmlContentViewController::from_xml(
-                            xml_string,
-                            &vec!["vertices", "triangles", "beams"],
-                        );
-                        match trees {
-                            Ok(trees) => {
-                                self.cached_xml.insert(path.clone(), trees);
+                match (path.as_str(), parent_name.as_str()) {
+                    ("[Content_Types].xml", _)
+                    | ("Root Model", _)
+                    | (_, "Relationships")
+                    | (_, "Sub Models") => {
+                        if !self.cached_xml.contains_key(path) {
+                            let xml_string = match (path.as_str(), parent_name.as_str()) {
+                                ("[Content_Types].xml", _) => Some(&self.unpacked.content_types),
+                                ("Root Model", _) => Some(&self.unpacked.root),
+                                (path, "Relationships") => self.unpacked.relationships.get(path),
+                                (path, "Sub Models") => self.unpacked.sub_models.get(path),
+                                _ => None,
+                            };
+
+                            if let Some(xml_string) = xml_string {
+                                let trees = XmlContentViewController::from_xml(
+                                    xml_string,
+                                    &vec!["vertices", "triangles", "beams"],
+                                );
+                                match trees {
+                                    Ok(trees) => {
+                                        self.cached_xml.insert(path.to_owned(), trees);
+                                        self.current_content_state =
+                                        ContentState::XmlContent(path.to_owned());
+        
+                                        ctx.request_repaint();
+                                    }
+                                    Err(err) => {
+                                        log::error!("Failed to extract XML content with path {} on parent {}, with error {:?}", path, parent_name, err);
+                                        self.current_content_state = ContentState::Empty;
+                                    }
+                                }
                             }
-                            Err(err) => {
-                                println!("{:?}", err);
-                            }
+
                         }
                     }
-                }
+                    (path, "Thumbnails") => {
+                    let bytes = self.unpacked.thumbnails.get(path);
+                    match bytes {
+                        Some(bytes) => {
+                            let thumbnail = image::load_from_memory(bytes);
+                            match thumbnail {
+                                Ok(thumbnail) => {
+                                    let size =
+                                        [thumbnail.width() as usize, thumbnail.height() as usize];
+                                    let image_buffer = thumbnail.to_rgba8();
+                                    let pixels = image_buffer.as_flat_samples();
+                                    let color_image =
+                                        ColorImage::from_rgba_unmultiplied(size, pixels.as_slice());
+
+                                    let handle = ctx.load_texture(
+                                        path,
+                                        color_image,
+                                        egui::TextureOptions::default(),
+                                    );
+                                    self.cached_image_texture.insert(path.to_owned(), handle);
+                                    self.current_content_state = ContentState::Image(path.to_owned());
+
+                                    ctx.request_repaint();
+                                }
+                                Err(err) => {
+                                    log::error!("Failed to load thumbnail from bytes in path {} with error {:?}", path, err);
+                                    self.current_content_state = ContentState::Empty;
+                                }
+                            }
+                        }
+                        None => log::error!("Failed to extract image"),
+                    }
+
+                    }
+                    (path, "Unknown Parts") => {
+                        self.current_content_state = ContentState::UnknownData(path.to_owned());
+                    }
+                    _ => {
+                        self.current_content_state = ContentState::Empty;
+                    }
+                };
             },
         );
     }
 
-    fn content_ui(&self, ui: &mut egui::Ui) {
-        if self.cached_xml.contains_key(&self.current_selected) {
-            let xml_content = self.cached_xml.get(&self.current_selected);
-            match xml_content {
-                Some(content) => content.content_ui(ui),
-                None => log::error!("No cached xml"),
+    fn content_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        match &self.current_content_state {
+            ContentState::Empty => {
+                start_page(ui);
             }
-        }
+            ContentState::XmlContent(path) => {
+                let xml_content = self.cached_xml.get_mut(path);
+                match xml_content {
+                    Some(content) => {
+                        content.content_ui(ui, ctx);
+                    }
+                    None => {
+                        log::error!("No cached xml");
+                    }
+                }
+            }
+            ContentState::Image(path) => {
+                let texture_handle = self.cached_image_texture.get(path);
+                match texture_handle {
+                    Some(texture_handle) => {
+                        let size = texture_handle.size_vec2();
+                        ui.image((texture_handle.id(), size));
+                    }
+                    None => {
+                        log::error!("No cached image");
+                    }
+                }
+            }
+            ContentState::UnknownData(path) => {
+                let bytes = self.unpacked.unknown_parts.get(path);
+                match bytes {
+                    Some(bytes) => {
+                        ui.label(format!("Unknown data is {} bytes", bytes.len()));
+                    }
+                    None => {
+                        log::error!("No unknown data bytes found");
+                    }
+                }
+            }
+        };
     }
 }
 

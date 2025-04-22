@@ -61,7 +61,7 @@ impl eframe::App for MyApp {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            self.default_view_controller.content_ui(ui);
+            self.default_view_controller.content_ui(ui, ctx);
             self.default_view_controller.run_dropped_files(ctx);
         });
     }

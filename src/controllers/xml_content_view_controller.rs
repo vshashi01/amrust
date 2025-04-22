@@ -25,11 +25,11 @@ impl StandardFileViewController for XmlContentViewController {
         false
     }
 
-    fn content_ui(&self, ui: &mut egui::Ui) {
+    fn content_ui(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context) {
         self.tree.ui(ui, 5, "XmlContentTree");
     }
 
-    fn file_tree_ui(&mut self, ui: &mut egui::Ui) {
+    fn file_tree_ui(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context) {
         ui.label("Nothing to show");
     }
 }
