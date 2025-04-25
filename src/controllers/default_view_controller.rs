@@ -10,7 +10,7 @@ use super::{
 use std::{ffi::OsStr, fs, path::PathBuf};
 
 pub struct DefaultViewController {
-    current_view_model: Option<Box<dyn StandardFileViewController>>,
+    current_controller: Option<Box<dyn StandardFileViewController>>,
     pub file_name: Option<String>,
     dropped_files: DroppedFilesWidget,
 }
@@ -19,7 +19,7 @@ impl DefaultViewController {
     pub fn new() -> Self {
         Self {
             file_name: None,
-            current_view_model: None,
+            current_controller: None,
             dropped_files: DroppedFilesWidget::new(),
         }
     }
@@ -35,7 +35,7 @@ impl DefaultViewController {
                     log::info!("This is the 3mf path: {:?}", path);
                     let threemf_model = ThreemfViewController::from_file(path);
                     if let Ok(model) = threemf_model {
-                        self.current_view_model = Some(Box::new(model))
+                        self.current_controller = Some(Box::new(model))
                     }
                 }
                 Some("xml") => {
@@ -43,13 +43,13 @@ impl DefaultViewController {
                     let xml_string = fs::read_to_string(path).unwrap_or_default();
                     let xml_model = XmlContentViewController::from_xml(&xml_string, &vec![]);
                     if let Ok(model) = xml_model {
-                        self.current_view_model = Some(Box::new(model))
+                        self.current_controller = Some(Box::new(model))
                     }
                 }
                 _ => {}
             };
 
-            if self.current_view_model.is_some() {
+            if self.current_controller.is_some() {
                 self.file_name = Some(path.to_string_lossy().to_string());
                 break;
             }
@@ -57,28 +57,18 @@ impl DefaultViewController {
     }
 
     pub fn has_data(&self) -> bool {
-        self.current_view_model.is_some()
+        self.current_controller.is_some()
     }
 
     pub fn clear_state(&mut self) {
-        self.current_view_model = None;
+        self.current_controller = None;
         self.file_name = None;
     }
 
     pub fn content_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        match &mut self.current_view_model {
-            Some(model) => {
-                ui.vertical(|ui| {
-                    egui::ScrollArea::both()
-                        .auto_shrink(false)
-                        .scroll_bar_visibility(
-                            egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
-                        )
-                        .show(ui, |ui| {
-                            model.content_ui(ui, ctx);
-                        });
-                });
-                // model.content_ui(ui, ctx);
+        match &mut self.current_controller {
+            Some(controller) => {
+                controller.content_ui(ui, ctx);
             }
             None => start_page::start_page(ui),
         }
@@ -91,17 +81,18 @@ impl DefaultViewController {
         self.process_dropped_files(&files);
     }
 
-    pub fn file_tree_ui(&mut self, ctx: &egui::Context) {
-        if let Some(view_model) = &mut self.current_view_model {
-            if view_model.has_file_tree() {
-                egui::SidePanel::left("left_panel")
-                    .resizable(true)
-                    .default_width(100.0)
-                    .show(ctx, |ui| {
-                        egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
-                            view_model.file_tree_ui(ui, ctx);
-                        });
-                    });
+    pub fn has_side_panel(&self) -> bool {
+        if let Some(controller) = &self.current_controller {
+            controller.has_file_tree()
+        } else {
+            false
+        }
+    }
+
+    pub fn file_tree_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        if let Some(controller) = &mut self.current_controller {
+            if controller.has_file_tree() {
+                controller.file_tree_ui(ui, ctx);
             }
         }
     }
@@ -111,5 +102,11 @@ impl DefaultViewController {
             path.extension().and_then(OsStr::to_str),
             Some("3mf") | Some("xml")
         )
+    }
+
+    pub fn add_menu_button(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        if let Some(controller) = &mut self.current_controller {
+            controller.add_menu_button(ui, ctx);
+        }
     }
 }

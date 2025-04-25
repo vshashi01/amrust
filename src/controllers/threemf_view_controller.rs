@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use egui::{ColorImage, TextureHandle};
+use roxmltree::{Document, NodeId};
 use threemf::io::threemf_unpacked::ThreemfUnpacked;
 
 use crate::widgets::{file_tree::FileTree, start_page::start_page};
@@ -20,6 +21,7 @@ pub struct ThreemfViewController {
 pub enum ContentState {
     Empty,
     XmlContent(String),
+    ThreemfModelContent(String),
     Image(String),
     UnknownData(String),
 }
@@ -42,6 +44,53 @@ impl ThreemfViewController {
         }
     }
 
+    fn check_for_duplicate_uuids(&mut self, _ui: &mut egui::Ui, _ctx: &egui::Context) {
+        if let ContentState::ThreemfModelContent(path) = &self.current_content_state {
+            let model_string = match path.as_str() {
+                "Root Model" => Some(&self.unpacked.root),
+                sub_model_path => self.unpacked.sub_models.get(sub_model_path),
+            };
+
+            if let Some(model_string) = model_string {
+                let xml_document = Document::parse(model_string);
+                match xml_document {
+                    Ok(doc) => {
+                        let mut all_uuid_items: Vec<(NodeId, String, String)> = vec![];
+                        for node in doc.descendants().filter(|n| {
+                            n.tag_name().name().to_lowercase() == "item"
+                                || n.tag_name().name().to_lowercase() == "object"
+                                || n.tag_name().name().to_lowercase() == "build"
+                        }) {
+                            let uuid =
+                                node.attribute((threemf::threemf_namespaces::PROD_NS, "UUID"));
+                            if let Some(uuid) = uuid {
+                                all_uuid_items.push((
+                                    node.id(),
+                                    node.tag_name().name().to_owned(),
+                                    uuid.to_owned(),
+                                ));
+                            }
+                        }
+
+                        if !all_uuid_items.is_empty() {
+                            let ids = all_uuid_items
+                                .iter()
+                                .map(|(node_id, _, _)| node_id.get_usize())
+                                .collect::<Vec<usize>>();
+
+                            if let Some(controller) = self.cached_xml.get_mut(path) {
+                                controller.add_highlight_ids(ids);
+                                _ctx.request_repaint();
+                            }
+                        }
+                        log::info!("{:?}", all_uuid_items);
+                        log::info!("Number of UUIDs {:?}", all_uuid_items.len());
+                    }
+                    Err(_) => todo!(),
+                }
+            }
+        }
+    }
 }
 
 impl StandardFileViewController for ThreemfViewController {
@@ -58,38 +107,61 @@ impl StandardFileViewController for ThreemfViewController {
             &mut |(path, parent_name)| {
                 match (path.as_str(), parent_name.as_str()) {
                     ("[Content_Types].xml", _)
-                    | ("Root Model", _)
-                    | (_, "Relationships")
-                    | (_, "Sub Models") => {
+                    | (_, "Relationships") => {
                         if !self.cached_xml.contains_key(path) {
                             let xml_string = match (path.as_str(), parent_name.as_str()) {
                                 ("[Content_Types].xml", _) => Some(&self.unpacked.content_types),
-                                ("Root Model", _) => Some(&self.unpacked.root),
                                 (path, "Relationships") => self.unpacked.relationships.get(path),
-                                (path, "Sub Models") => self.unpacked.sub_models.get(path),
                                 _ => None,
                             };
 
                             if let Some(xml_string) = xml_string {
-                                let trees = XmlContentViewController::from_xml(
+                                let xml_controller = XmlContentViewController::from_xml(
                                     xml_string,
-                                    &vec!["vertices", "triangles", "beams"],
+                                    &vec![],
                                 );
-                                match trees {
-                                    Ok(trees) => {
-                                        self.cached_xml.insert(path.to_owned(), trees);
+                                match xml_controller {
+                                    Ok(xml_controller) => {
+                                        self.cached_xml.insert(path.to_owned(), xml_controller);
                                         self.current_content_state =
                                         ContentState::XmlContent(path.to_owned());
-        
-                                        ctx.request_repaint();
                                     }
                                     Err(err) => {
                                         log::error!("Failed to extract XML content with path {} on parent {}, with error {:?}", path, parent_name, err);
                                         self.current_content_state = ContentState::Empty;
                                     }
                                 }
+                                ctx.request_repaint();
                             }
 
+                        }
+                    }
+                    ("Root Model", _) | (_, "Sub Models")=> {
+                        if !self.cached_xml.contains_key(path) {
+                            let xml_string = match (path.as_str(), parent_name.as_str()) {
+                                ("Root Model", _) => Some(&self.unpacked.root),
+                                (path, "Sub Models") => self.unpacked.sub_models.get(path),
+                                _ => None,
+                            };
+
+                            if let Some(xml_string) = xml_string {
+                                let xml_controller = XmlContentViewController::from_xml(
+                                    xml_string,
+                                    &vec!["vertices", "triangles", "beams"],
+                                );
+                                match xml_controller {
+                                    Ok(xml_controller) => {
+                                        self.cached_xml.insert(path.to_owned(), xml_controller);
+                                        self.current_content_state =
+                                        ContentState::ThreemfModelContent(path.to_owned());
+                                    }
+                                    Err(err) => {
+                                        log::error!("Failed to extract XML content with path {} on parent {}, with error {:?}", path, parent_name, err);
+                                        self.current_content_state = ContentState::Empty;
+                                    }
+                                }
+                                ctx.request_repaint();
+                            }
                         }
                     }
                     (path, "Thumbnails") => {
@@ -99,18 +171,7 @@ impl StandardFileViewController for ThreemfViewController {
                             let thumbnail = image::load_from_memory(bytes);
                             match thumbnail {
                                 Ok(thumbnail) => {
-                                    let size =
-                                        [thumbnail.width() as usize, thumbnail.height() as usize];
-                                    let image_buffer = thumbnail.to_rgba8();
-                                    let pixels = image_buffer.as_flat_samples();
-                                    let color_image =
-                                        ColorImage::from_rgba_unmultiplied(size, pixels.as_slice());
-
-                                    let handle = ctx.load_texture(
-                                        path,
-                                        color_image,
-                                        egui::TextureOptions::default(),
-                                    );
+                                    let handle = create_texturehandle_from_image(ctx, path, thumbnail);
                                     self.cached_image_texture.insert(path.to_owned(), handle);
                                     self.current_content_state = ContentState::Image(path.to_owned());
 
@@ -142,7 +203,7 @@ impl StandardFileViewController for ThreemfViewController {
             ContentState::Empty => {
                 start_page(ui);
             }
-            ContentState::XmlContent(path) => {
+            ContentState::XmlContent(path) | ContentState::ThreemfModelContent(path) => {
                 let xml_content = self.cached_xml.get_mut(path);
                 match xml_content {
                     Some(content) => {
@@ -178,6 +239,35 @@ impl StandardFileViewController for ThreemfViewController {
             }
         };
     }
+
+    fn add_menu_button(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        match &self.current_content_state {
+            ContentState::Empty => {}
+            ContentState::XmlContent(_) => {}
+            ContentState::ThreemfModelContent(_) => {
+                ui.menu_button("Process 3mf", |ui| {
+                    if ui.button("Check for Duplicate UUIDs").clicked() {
+                        self.check_for_duplicate_uuids(ui, ctx);
+                    }
+                });
+            }
+            ContentState::Image(_) => {}
+            ContentState::UnknownData(_) => {}
+        }
+    }
+}
+
+fn create_texturehandle_from_image(
+    ctx: &egui::Context,
+    path: &str,
+    thumbnail: image::DynamicImage,
+) -> TextureHandle {
+    let size = [thumbnail.width() as usize, thumbnail.height() as usize];
+    let image_buffer = thumbnail.to_rgba8();
+    let pixels = image_buffer.as_flat_samples();
+    let color_image = ColorImage::from_rgba_unmultiplied(size, pixels.as_slice());
+
+    ctx.load_texture(path, color_image, egui::TextureOptions::default())
 }
 
 pub fn get_threemf_unpacked(path: &PathBuf) -> Result<ThreemfUnpacked> {

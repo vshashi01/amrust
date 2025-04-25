@@ -35,7 +35,8 @@ impl eframe::App for MyApp {
                         if ui.button("Show Log").clicked() {
                             self.show_log = !self.show_log;
                         }
-                    })
+                    });
+                    self.default_view_controller.add_menu_button(ui, ctx);
                 });
             });
 
@@ -49,7 +50,16 @@ impl eframe::App for MyApp {
             self.append_window_header_with_file_name(ctx, &file_name);
         }
 
-        self.default_view_controller.file_tree_ui(ctx);
+        if self.default_view_controller.has_side_panel() {
+            egui::SidePanel::left("left_panel")
+                .resizable(true)
+                .default_width(100.0)
+                .show(ctx, |ui| {
+                    egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
+                        self.default_view_controller.file_tree_ui(ui, ctx);
+                    });
+                });
+        }
 
         if self.show_log {
             egui::TopBottomPanel::bottom("bottom_panel")

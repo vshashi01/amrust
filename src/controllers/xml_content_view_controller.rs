@@ -7,6 +7,7 @@ use super::StandardFileViewController;
 
 pub struct XmlContentViewController {
     tree: XmlContentTree,
+    highlight_ids: Option<Vec<usize>>,
 }
 
 impl XmlContentViewController {
@@ -14,8 +15,17 @@ impl XmlContentViewController {
         let doc_tree = Document::parse(xml_string);
         let processed = process_doc_tree(doc_tree, collections_to_skip);
         match processed {
-            Some(tree) => Ok(XmlContentViewController { tree }),
+            Some(tree) => Ok(XmlContentViewController {
+                tree,
+                highlight_ids: None,
+            }),
             None => Err(anyhow!("No tree was generated")),
+        }
+    }
+
+    pub fn add_highlight_ids(&mut self, highlight_ids: Vec<usize>) {
+        if !highlight_ids.is_empty() {
+            self.highlight_ids = Some(highlight_ids);
         }
     }
 }
@@ -26,7 +36,11 @@ impl StandardFileViewController for XmlContentViewController {
     }
 
     fn content_ui(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context) {
-        self.tree.ui(ui, 5, "XmlContentTree");
+        let ids = match &self.highlight_ids {
+            Some(ids) => ids,
+            None => &vec![],
+        };
+        self.tree.ui(ui, 5, "XmlContentTree", ids);
     }
 
     fn file_tree_ui(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context) {
@@ -100,6 +114,7 @@ fn process_node(
         if let Some(content) = node.text() {
             if !content.is_empty() && !content.trim().is_empty() {
                 childs.push(XmlContentTree {
+                    id: node.id().get_usize(),
                     name: content.trim().to_owned(),
                     attributes: None,
                     childs: None,
@@ -122,6 +137,7 @@ fn process_node(
 
     if attributes.is_some() || childs.is_some() || !name.is_empty() {
         return Some(XmlContentTree {
+            id: node.id().get_usize(),
             name,
             attributes,
             childs,
