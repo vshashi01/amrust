@@ -4,8 +4,8 @@ use egui::DroppedFile;
 use crate::widgets::{dropped_files::DroppedFilesWidget, start_page};
 
 use super::{
-    threemf_view_controller::ThreemfViewController,
-    xml_content_view_controller::XmlContentViewController, StandardFileViewController,
+    StandardFileViewController, threemf_view_controller::ThreemfViewController,
+    xml_content_view_controller::XmlContentViewController,
 };
 
 use std::{ffi::OsStr, fs, path::PathBuf};
@@ -16,14 +16,24 @@ pub struct DefaultViewController {
     dropped_files: DroppedFilesWidget,
 }
 
-impl DefaultViewController {
-    pub fn new() -> Self {
+impl Default for DefaultViewController {
+    fn default() -> Self {
         Self {
-            file_name: None,
-            current_controller: None,
+            current_controller: Default::default(),
+            file_name: Default::default(),
             dropped_files: DroppedFilesWidget::new(),
         }
     }
+}
+
+impl DefaultViewController {
+    // pub fn new() -> Self {
+    //     Self {
+    //         file_name: None,
+    //         current_controller: None,
+    //         dropped_files: DroppedFilesWidget::new(),
+    //     }
+    // }
 
     fn process_dropped_files(&mut self, files: &Vec<DroppedFile>) {
         for file in files {

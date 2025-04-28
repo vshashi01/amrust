@@ -1,0 +1,20 @@
+[package]
+name = "amrust"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "AMRUST"
+path = "src/main.rs"
+
+[dependencies]
+amrust_lib = { path = "../amrust_lib" }
+eframe = { version = "0.31.1", features = ["default", "wgpu"] }
+egui = "0.31.1"
+
+# For image support:
+egui_extras = { version = "0.31.0", features = ["default", "image"] }
+
+# For logging stuff
+egui_logger = "0.6.3"
+log = "0.4.22"
