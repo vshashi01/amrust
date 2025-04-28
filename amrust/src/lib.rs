@@ -1,8 +1,5 @@
+use amrust_lib::default_view_controller::DefaultViewController;
 use egui::ViewportCommand;
-
-mod controllers;
-mod widgets;
-use controllers::default_view_controller::DefaultViewController;
 
 pub struct MyApp {
     name: String,
@@ -14,7 +11,7 @@ impl Default for MyApp {
     fn default() -> Self {
         Self {
             name: "AMRUST".to_owned(),
-            default_view_controller: DefaultViewController::new(),
+            default_view_controller: DefaultViewController::default(),
             show_log: false,
         }
     }
