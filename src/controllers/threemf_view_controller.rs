@@ -74,6 +74,8 @@ impl ThreemfViewController {
                     if let Some(uuid) = uuid {
                         if !uuid_map.contains_key(uuid) {
                             uuid_map.insert(uuid.to_owned(), node.id());
+                            //for state update testing purposes.
+                            //duplicated_node_ids.push((node.id(), uuid.to_owned()));
                         } else {
                             let node_id = uuid_map.get(uuid).unwrap();
                             duplicated_node_ids.push((*node_id, uuid.to_owned()));
@@ -407,6 +409,14 @@ impl StandardFileViewController for ThreemfViewController {
                             path: path.to_owned(),
                             parent: parent.to_owned(),
                             to_highlight: true,
+                        });
+                    }
+
+                    if *to_highlight && ui.button("Clear Highlights").clicked() {
+                        self.next_state = Some(ContentState::ThreemfModelContent {
+                            path: path.to_owned(),
+                            parent: parent.to_owned(),
+                            to_highlight: false,
                         });
                     }
                 });

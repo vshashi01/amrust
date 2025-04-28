@@ -9,8 +9,7 @@ pub trait StandardFileViewController {
     fn file_tree_ui(&mut self, _ui: &mut egui::Ui, _ctx: &egui::Context) {}
     fn add_menu_button(&mut self, _ui: &mut egui::Ui, _ctx: &egui::Context) {}
 
+    //avoid updating or mutating too much on self inside Ui code use update_state instead
     fn content_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context);
-    fn update_state(&mut self, _ctx: &egui::Context) -> Result<()> {
-        Ok(())
-    }
+    fn update_state(&mut self, ctx: &egui::Context) -> Result<()>;
 }
