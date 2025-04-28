@@ -11,17 +11,26 @@ use std::{collections::HashMap, fs::File, path::PathBuf};
 
 pub struct ThreemfViewController {
     unpacked: ThreemfUnpacked,
-    current_content_state: ContentState,
+    curr_state: ContentState,
+    next_state: Option<ContentState>,
     cached_xml: HashMap<String, XmlContentViewController>,
     cached_image_texture: HashMap<String, TextureHandle>,
     current_selected: String,
     file_tree: FileTree,
 }
 
+#[derive(Debug, Clone)]
 pub enum ContentState {
     Empty,
-    XmlContent(String),
-    ThreemfModelContent(String),
+    XmlContent {
+        path: String,
+        parent: String,
+    },
+    ThreemfModelContent {
+        path: String,
+        parent: String,
+        to_highlight: bool,
+    },
     Image(String),
     UnknownData(String),
 }
@@ -33,7 +42,8 @@ impl ThreemfViewController {
         if let Some(file_tree) = result {
             Ok(ThreemfViewController {
                 unpacked,
-                current_content_state: ContentState::Empty,
+                curr_state: ContentState::Empty,
+                next_state: None,
                 cached_xml: HashMap::new(),
                 cached_image_texture: HashMap::new(),
                 current_selected: String::new(),
@@ -44,52 +54,246 @@ impl ThreemfViewController {
         }
     }
 
-    fn check_for_duplicate_uuids(&mut self, _ui: &mut egui::Ui, _ctx: &egui::Context) {
-        if let ContentState::ThreemfModelContent(path) = &self.current_content_state {
-            let model_string = match path.as_str() {
-                "Root Model" => Some(&self.unpacked.root),
-                sub_model_path => self.unpacked.sub_models.get(sub_model_path),
-            };
+    fn check_for_duplicate_uuids(&self, path: &str) -> Result<Option<Vec<(usize, String)>>> {
+        let model_string = match path {
+            "Root Model" => Some(&self.unpacked.root),
+            sub_model_path => self.unpacked.sub_models.get(sub_model_path),
+        };
 
-            if let Some(model_string) = model_string {
-                let xml_document = Document::parse(model_string);
-                match xml_document {
-                    Ok(doc) => {
-                        let mut all_uuid_items: Vec<(NodeId, String, String)> = vec![];
-                        for node in doc.descendants().filter(|n| {
-                            n.tag_name().name().to_lowercase() == "item"
-                                || n.tag_name().name().to_lowercase() == "object"
-                                || n.tag_name().name().to_lowercase() == "build"
-                        }) {
-                            let uuid =
-                                node.attribute((threemf::threemf_namespaces::PROD_NS, "UUID"));
-                            if let Some(uuid) = uuid {
-                                all_uuid_items.push((
-                                    node.id(),
-                                    node.tag_name().name().to_owned(),
-                                    uuid.to_owned(),
-                                ));
-                            }
+        match model_string {
+            Some(model_string) => {
+                let doc = Document::parse(model_string)?;
+                let mut duplicated_node_ids: Vec<(NodeId, String)> = vec![];
+                let mut uuid_map = HashMap::<String, NodeId>::new();
+                for node in doc.descendants().filter(|n| {
+                    n.tag_name().name().to_lowercase() == "item"
+                        || n.tag_name().name().to_lowercase() == "object"
+                        || n.tag_name().name().to_lowercase() == "build"
+                }) {
+                    let uuid = node.attribute((threemf::threemf_namespaces::PROD_NS, "UUID"));
+                    if let Some(uuid) = uuid {
+                        if !uuid_map.contains_key(uuid) {
+                            uuid_map.insert(uuid.to_owned(), node.id());
+                        } else {
+                            let node_id = uuid_map.get(uuid).unwrap();
+                            duplicated_node_ids.push((*node_id, uuid.to_owned()));
+                            duplicated_node_ids.push((node.id(), uuid.to_owned()));
                         }
-
-                        if !all_uuid_items.is_empty() {
-                            let ids = all_uuid_items
-                                .iter()
-                                .map(|(node_id, _, _)| node_id.get_usize())
-                                .collect::<Vec<usize>>();
-
-                            if let Some(controller) = self.cached_xml.get_mut(path) {
-                                controller.add_highlight_ids(ids);
-                                _ctx.request_repaint();
-                            }
-                        }
-                        log::info!("{:?}", all_uuid_items);
-                        log::info!("Number of UUIDs {:?}", all_uuid_items.len());
                     }
-                    Err(_) => todo!(),
+                }
+                if !duplicated_node_ids.is_empty() {
+                    let ids = duplicated_node_ids
+                        .iter()
+                        .map(|(node_id, uuid)| (node_id.get_usize(), uuid.to_owned()))
+                        .collect::<Vec<(usize, String)>>();
+
+                    return Ok(Some(ids));
+                }
+                Ok(None)
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn process_generic_xml_paths(
+        &self,
+        path: &str,
+        parent_name: &str,
+    ) -> Option<XmlContentViewController> {
+        let xml_string = match (path, parent_name) {
+            ("[Content_Types].xml", _) => Some(&self.unpacked.content_types),
+            (path, "Relationships") => self.unpacked.relationships.get(path),
+            _ => None,
+        };
+
+        match xml_string {
+            Some(xml_string) => {
+                let xml_controller = XmlContentViewController::from_xml(xml_string, &vec![]);
+                match xml_controller {
+                    Ok(xml_controller) => Some(xml_controller),
+                    Err(err) => {
+                        log::error!(
+                            "Failed to extract XML content with path {} on parent {}, with error {:?}",
+                            path,
+                            parent_name,
+                            err
+                        );
+                        None
+                    }
+                }
+            }
+            None => None,
+        }
+    }
+
+    fn process_model_xml_paths(
+        &self,
+        path: &str,
+        parent_name: &str,
+    ) -> Option<XmlContentViewController> {
+        let xml_string = match (path, parent_name) {
+            ("Root Model", _) => Some(&self.unpacked.root),
+            (path, "Sub Models") => self.unpacked.sub_models.get(path),
+            _ => None,
+        };
+        match xml_string {
+            Some(xml_string) => {
+                let xml_controller = XmlContentViewController::from_xml(
+                    xml_string,
+                    &vec!["vertices", "triangles", "beams"],
+                );
+                match xml_controller {
+                    Ok(xml_controller) => Some(xml_controller),
+                    Err(err) => {
+                        log::error!(
+                                "Failed to extract XML content with path {} on parent {}, with error {:?}",
+                                path,
+                                parent_name,
+                                err
+                            );
+                        None
+                    }
+                }
+            }
+            None => None,
+        }
+    }
+
+    fn process_thumbnail_path(&self, path: &str, ctx: &egui::Context) -> Option<TextureHandle> {
+        let bytes = self.unpacked.thumbnails.get(path);
+        match bytes {
+            Some(bytes) => {
+                let thumbnail = image::load_from_memory(bytes);
+                match thumbnail {
+                    Ok(thumbnail) => Some(create_texturehandle_from_image(ctx, path, thumbnail)),
+                    Err(err) => {
+                        log::error!(
+                            "Failed to load thumbnail from bytes in path {} with error {:?}",
+                            path,
+                            err
+                        );
+                        None
+                    }
+                }
+            }
+            None => {
+                log::error!("Failed to extract image");
+                None
+            }
+        }
+    }
+
+    fn process_next_state(&mut self, ctx: &egui::Context) -> Result<()> {
+        let next_state = &self.next_state.take();
+        if let Some(state) = next_state {
+            match state {
+                ContentState::Empty => {
+                    self.curr_state = ContentState::Empty;
+                }
+                ContentState::XmlContent { path, parent } => {
+                    if !self.cached_xml.contains_key(path) {
+                        let processed = self.process_generic_xml_paths(path, parent);
+                        match processed {
+                            Some(mut controller) => {
+                                controller.update_state(ctx)?;
+                                self.cached_xml.insert(path.to_owned(), controller);
+                                self.curr_state = state.clone();
+                            }
+                            None => {
+                                log::error!("Unable to create XML view for xml in path {}", path);
+                            }
+                        }
+                    } else {
+                        let controller = self.cached_xml.get_mut(path).unwrap();
+                        controller.update_state(ctx)?;
+                        self.curr_state = state.clone();
+                    }
+                }
+                ContentState::ThreemfModelContent {
+                    path,
+                    parent,
+                    to_highlight: false,
+                } => {
+                    if !self.cached_xml.contains_key(path) {
+                        let processed = self.process_model_xml_paths(path, parent);
+                        match processed {
+                            Some(mut controller) => {
+                                controller.update_state(ctx)?;
+                                self.cached_xml.insert(path.to_owned(), controller);
+                                self.curr_state = state.clone();
+                            }
+                            None => {
+                                log::error!(
+                                    "Unable to generate the XML view from the Model in path {}",
+                                    path
+                                );
+                            }
+                        }
+                    } else {
+                        let controller = self.cached_xml.get_mut(path).unwrap();
+                        controller.clear_highlights();
+                        controller.update_state(ctx)?;
+                        self.curr_state = state.clone();
+                    }
+                }
+                ContentState::ThreemfModelContent {
+                    path: _,
+                    parent: _,
+                    to_highlight: true,
+                } => {
+                    if let ContentState::ThreemfModelContent {
+                        path,
+                        parent: _,
+                        to_highlight: _,
+                    } = &self.curr_state
+                    {
+                        let ids = self.check_for_duplicate_uuids(path)?;
+                        match ids {
+                            Some(duplicated_ids) => {
+                                let controller = self.cached_xml.get_mut(path);
+                                if let Some(controller) = controller {
+                                    let only_element_ids = duplicated_ids
+                                        .iter()
+                                        .map(|(node_id, _)| *node_id)
+                                        .collect::<Vec<usize>>();
+                                    controller.add_highlight_ids(only_element_ids);
+                                    controller.update_state(ctx)?;
+                                    self.curr_state = state.clone();
+                                }
+
+                                log::info!("Found duplicated IDs on {:?}", duplicated_ids);
+                            }
+                            None => {
+                                log::info!("No IDs found to be highlighted");
+                            }
+                        }
+                    }
+                }
+                ContentState::Image(path) => {
+                    if !self.cached_image_texture.contains_key(path) {
+                        let processed = self.process_thumbnail_path(path, ctx);
+                        match processed {
+                            Some(texture_handle) => {
+                                self.cached_image_texture
+                                    .insert(path.to_owned(), texture_handle);
+                                self.curr_state = state.clone();
+                            }
+                            None => {
+                                log::error!("Unable to generate the image texture");
+                                //never transition if the image texture is not generated
+                                //to do deal with this better
+                            }
+                        }
+                    } else {
+                        self.curr_state = state.clone();
+                    }
+                }
+                ContentState::UnknownData(_) => {
+                    self.curr_state = state.clone();
                 }
             }
         }
+        Ok(())
     }
 }
 
@@ -98,112 +302,54 @@ impl StandardFileViewController for ThreemfViewController {
         true
     }
 
-    fn file_tree_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+    fn file_tree_ui(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context) {
         self.file_tree.ui(
             ui,
             5,
             "Threemf",
             &mut self.current_selected,
             &mut |(path, parent_name)| {
-                match (path.as_str(), parent_name.as_str()) {
-                    ("[Content_Types].xml", _)
-                    | (_, "Relationships") => {
-                        if !self.cached_xml.contains_key(path) {
-                            let xml_string = match (path.as_str(), parent_name.as_str()) {
-                                ("[Content_Types].xml", _) => Some(&self.unpacked.content_types),
-                                (path, "Relationships") => self.unpacked.relationships.get(path),
-                                _ => None,
-                            };
-
-                            if let Some(xml_string) = xml_string {
-                                let xml_controller = XmlContentViewController::from_xml(
-                                    xml_string,
-                                    &vec![],
-                                );
-                                match xml_controller {
-                                    Ok(xml_controller) => {
-                                        self.cached_xml.insert(path.to_owned(), xml_controller);
-                                        self.current_content_state =
-                                        ContentState::XmlContent(path.to_owned());
-                                    }
-                                    Err(err) => {
-                                        log::error!("Failed to extract XML content with path {} on parent {}, with error {:?}", path, parent_name, err);
-                                        self.current_content_state = ContentState::Empty;
-                                    }
-                                }
-                                ctx.request_repaint();
-                            }
-
-                        }
-                    }
-                    ("Root Model", _) | (_, "Sub Models")=> {
-                        if !self.cached_xml.contains_key(path) {
-                            let xml_string = match (path.as_str(), parent_name.as_str()) {
-                                ("Root Model", _) => Some(&self.unpacked.root),
-                                (path, "Sub Models") => self.unpacked.sub_models.get(path),
-                                _ => None,
-                            };
-
-                            if let Some(xml_string) = xml_string {
-                                let xml_controller = XmlContentViewController::from_xml(
-                                    xml_string,
-                                    &vec!["vertices", "triangles", "beams"],
-                                );
-                                match xml_controller {
-                                    Ok(xml_controller) => {
-                                        self.cached_xml.insert(path.to_owned(), xml_controller);
-                                        self.current_content_state =
-                                        ContentState::ThreemfModelContent(path.to_owned());
-                                    }
-                                    Err(err) => {
-                                        log::error!("Failed to extract XML content with path {} on parent {}, with error {:?}", path, parent_name, err);
-                                        self.current_content_state = ContentState::Empty;
-                                    }
-                                }
-                                ctx.request_repaint();
-                            }
-                        }
-                    }
-                    (path, "Thumbnails") => {
-                    let bytes = self.unpacked.thumbnails.get(path);
-                    match bytes {
-                        Some(bytes) => {
-                            let thumbnail = image::load_from_memory(bytes);
-                            match thumbnail {
-                                Ok(thumbnail) => {
-                                    let handle = create_texturehandle_from_image(ctx, path, thumbnail);
-                                    self.cached_image_texture.insert(path.to_owned(), handle);
-                                    self.current_content_state = ContentState::Image(path.to_owned());
-
-                                    ctx.request_repaint();
-                                }
-                                Err(err) => {
-                                    log::error!("Failed to load thumbnail from bytes in path {} with error {:?}", path, err);
-                                    self.current_content_state = ContentState::Empty;
-                                }
-                            }
-                        }
-                        None => log::error!("Failed to extract image"),
-                    }
-
-                    }
-                    (path, "Unknown Parts") => {
-                        self.current_content_state = ContentState::UnknownData(path.to_owned());
-                    }
-                    _ => {
-                        self.current_content_state = ContentState::Empty;
-                    }
+                let next_state = match (path.as_str(), parent_name.as_str()) {
+                    ("[Content_Types].xml", _) | (_, "Relationships") => ContentState::XmlContent {
+                        path: path.to_owned(),
+                        parent: parent_name.to_owned(),
+                    },
+                    ("Root Model", _) | (_, "Sub Models") => ContentState::ThreemfModelContent {
+                        path: path.to_owned(),
+                        parent: parent_name.to_owned(),
+                        to_highlight: false,
+                    },
+                    (path, "Thumbnails") => ContentState::Image(path.to_owned()),
+                    (path, "Unknown Parts") => ContentState::UnknownData(path.to_owned()),
+                    _ => ContentState::Empty,
                 };
+
+                self.next_state = Some(next_state);
             },
         );
     }
 
     fn content_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        match &self.current_content_state {
+        match &self.curr_state {
             ContentState::Empty => {
                 start_page(ui);
             }
-            ContentState::XmlContent(path) | ContentState::ThreemfModelContent(path) => {
+            ContentState::XmlContent { path, parent: _ } => {
+                let xml_content = self.cached_xml.get_mut(path);
+                match xml_content {
+                    Some(content) => {
+                        content.content_ui(ui, ctx);
+                    }
+                    None => {
+                        log::error!("No cached xml");
+                    }
+                }
+            }
+            ContentState::ThreemfModelContent {
+                path,
+                parent: _,
+                to_highlight: _,
+            } => {
                 let xml_content = self.cached_xml.get_mut(path);
                 match xml_content {
                     Some(content) => {
@@ -240,20 +386,38 @@ impl StandardFileViewController for ThreemfViewController {
         };
     }
 
-    fn add_menu_button(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        match &self.current_content_state {
+    fn add_menu_button(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context) {
+        match &self.curr_state {
             ContentState::Empty => {}
-            ContentState::XmlContent(_) => {}
-            ContentState::ThreemfModelContent(_) => {
+            ContentState::XmlContent { path: _, parent: _ } => {}
+            ContentState::ThreemfModelContent {
+                path,
+                parent,
+                to_highlight,
+            } => {
                 ui.menu_button("Process 3mf", |ui| {
-                    if ui.button("Check for Duplicate UUIDs").clicked() {
-                        self.check_for_duplicate_uuids(ui, ctx);
+                    if ui
+                        .add_enabled(
+                            !to_highlight,
+                            egui::Button::new("Check for Duplicate UUIDs"),
+                        )
+                        .clicked()
+                    {
+                        self.next_state = Some(ContentState::ThreemfModelContent {
+                            path: path.to_owned(),
+                            parent: parent.to_owned(),
+                            to_highlight: true,
+                        });
                     }
                 });
             }
             ContentState::Image(_) => {}
             ContentState::UnknownData(_) => {}
         }
+    }
+
+    fn update_state(&mut self, ctx: &egui::Context) -> Result<()> {
+        self.process_next_state(ctx)
     }
 }
 

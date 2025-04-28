@@ -74,6 +74,11 @@ impl eframe::App for MyApp {
             self.default_view_controller.content_ui(ui, ctx);
             self.default_view_controller.run_dropped_files(ctx);
         });
+
+        match self.default_view_controller.update_state(ctx) {
+            Ok(_) => {}
+            Err(err) => log::error!("{:?}", err),
+        }
     }
 }
 

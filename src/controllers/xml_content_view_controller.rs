@@ -7,7 +7,15 @@ use super::StandardFileViewController;
 
 pub struct XmlContentViewController {
     tree: XmlContentTree,
-    highlight_ids: Option<Vec<usize>>,
+    curr_state: ContentState,
+    next_state: Option<ContentState>,
+    //highlight_ids: Option<Vec<usize>>,
+}
+
+#[derive(Debug, Clone)]
+enum ContentState {
+    Simple,
+    Highlighted(Vec<usize>),
 }
 
 impl XmlContentViewController {
@@ -17,16 +25,24 @@ impl XmlContentViewController {
         match processed {
             Some(tree) => Ok(XmlContentViewController {
                 tree,
-                highlight_ids: None,
+                curr_state: ContentState::Simple,
+                next_state: None,
+                //highlight_ids: None,
             }),
             None => Err(anyhow!("No tree was generated")),
         }
     }
 
     pub fn add_highlight_ids(&mut self, highlight_ids: Vec<usize>) {
-        if !highlight_ids.is_empty() {
-            self.highlight_ids = Some(highlight_ids);
-        }
+        // if !highlight_ids.is_empty() {
+        //     self.highlight_ids = Some(highlight_ids);
+        // }
+        self.next_state = Some(ContentState::Highlighted(highlight_ids));
+    }
+
+    pub fn clear_highlights(&mut self) {
+        // self.highlight_ids = None;
+        self.next_state = Some(ContentState::Simple);
     }
 }
 
@@ -36,15 +52,39 @@ impl StandardFileViewController for XmlContentViewController {
     }
 
     fn content_ui(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context) {
-        let ids = match &self.highlight_ids {
-            Some(ids) => ids,
-            None => &vec![],
+        let ids = match &self.curr_state {
+            ContentState::Simple => &vec![],
+            ContentState::Highlighted(items) => {
+                log::warn!("Highlighted was run");
+                items
+            }
         };
         self.tree.ui(ui, 5, "XmlContentTree", ids);
     }
 
     fn file_tree_ui(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context) {
         ui.label("Nothing to show");
+    }
+
+    fn add_menu_button(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context) {
+        match &self.curr_state {
+            ContentState::Simple => {}
+            ContentState::Highlighted(_) => {
+                ui.menu_button("XML Viewer", |ui| {
+                    if ui.button("Clear Highlights").clicked() {
+                        self.next_state = Some(ContentState::Simple);
+                    }
+                });
+            }
+        }
+    }
+    fn update_state(&mut self, _ctx: &egui::Context) -> Result<()> {
+        let next_state = self.next_state.take();
+        if let Some(state) = next_state {
+            self.curr_state = state;
+        }
+
+        Ok(())
     }
 }
 

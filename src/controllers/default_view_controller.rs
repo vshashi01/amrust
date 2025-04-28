@@ -1,3 +1,4 @@
+use anyhow::Result;
 use egui::DroppedFile;
 
 use crate::widgets::{dropped_files::DroppedFilesWidget, start_page};
@@ -72,6 +73,14 @@ impl DefaultViewController {
             }
             None => start_page::start_page(ui),
         }
+    }
+
+    pub fn update_state(&mut self, ctx: &egui::Context) -> Result<()> {
+        if let Some(controller) = &mut self.current_controller {
+            return controller.update_state(ctx);
+        }
+
+        Ok(())
     }
 
     pub fn run_dropped_files(&mut self, ctx: &egui::Context) {
