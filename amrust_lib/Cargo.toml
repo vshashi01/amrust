@@ -12,8 +12,10 @@ egui = { version = "0.31.1" }
 anyhow = "1.0.86"
 roxmltree = "0.20.0"
 log = "0.4.22"
-threemf = { version = "0.8.0", path = "../../3mf-rs/" }
+# threemf = { version = "0.8.0", path = "../../3mf-rs/" }
 image = "0.25.0"
 
 # For image support:
 egui_extras = { version = "0.31.0", features = ["default", "image"] }
+
+amrust_3mf = { path = "../amrust_3mf" }

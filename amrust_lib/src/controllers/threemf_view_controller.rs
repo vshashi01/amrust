@@ -1,11 +1,11 @@
-use anyhow::{anyhow, Result};
+use amrust_3mf::io::threemf_unpacked::ThreemfUnpacked;
+use anyhow::{Result, anyhow};
 use egui::{ColorImage, TextureHandle};
 use roxmltree::{Document, NodeId};
-use threemf::io::threemf_unpacked::ThreemfUnpacked;
 
 use crate::widgets::{file_tree::FileTree, start_page::start_page};
 
-use super::{xml_content_view_controller::XmlContentViewController, StandardFileViewController};
+use super::{StandardFileViewController, xml_content_view_controller::XmlContentViewController};
 
 use std::{collections::HashMap, fs::File, path::PathBuf};
 
@@ -70,7 +70,7 @@ impl ThreemfViewController {
                         || n.tag_name().name().to_lowercase() == "object"
                         || n.tag_name().name().to_lowercase() == "build"
                 }) {
-                    let uuid = node.attribute((threemf::threemf_namespaces::PROD_NS, "UUID"));
+                    let uuid = node.attribute((amrust_3mf::threemf_namespaces::PROD_NS, "UUID"));
                     if let Some(uuid) = uuid {
                         if !uuid_map.contains_key(uuid) {
                             uuid_map.insert(uuid.to_owned(), node.id());
@@ -148,11 +148,11 @@ impl ThreemfViewController {
                     Ok(xml_controller) => Some(xml_controller),
                     Err(err) => {
                         log::error!(
-                                "Failed to extract XML content with path {} on parent {}, with error {:?}",
-                                path,
-                                parent_name,
-                                err
-                            );
+                            "Failed to extract XML content with path {} on parent {}, with error {:?}",
+                            path,
+                            parent_name,
+                            err
+                        );
                         None
                     }
                 }
