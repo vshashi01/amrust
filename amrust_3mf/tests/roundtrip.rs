@@ -9,9 +9,9 @@ use amrust_3mf::{
         resources::Resources,
     },
     io::{
+        ThreemfPackage,
         content_types::{ContentTypes, DefaultContentTypeEnum, DefaultContentTypes},
         relationship::{Relationship, RelationshipType, Relationships},
-        threemf_package::ThreemfPackage,
     },
 };
 

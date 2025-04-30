@@ -8,7 +8,6 @@ name = "AMRUST"
 path = "src/main.rs"
 
 [dependencies]
-amrust_lib = { path = "../amrust_lib" }
 eframe = { version = "0.31.1", features = ["default", "wgpu"] }
 egui = "0.31.1"
 
@@ -18,3 +17,5 @@ egui_extras = { version = "0.31.0", features = ["default", "image"] }
 # For logging stuff
 egui_logger = "0.6.3"
 log = "0.4.22"
+
+amrust_lib = { path = "../amrust_lib" }

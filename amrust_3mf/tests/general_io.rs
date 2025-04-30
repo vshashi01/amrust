@@ -1,14 +1,12 @@
 use pretty_assertions::assert_eq;
 
-use amrust_3mf::io::threemf_package::ThreemfPackage;
+use amrust_3mf::io::ThreemfPackage;
 
 use std::{fs::File, path::PathBuf};
 
 #[test]
 fn read_threemf_package() {
-    let path = PathBuf::from(
-        "C:/Users/thara/Development/3mf-rs/tests/data/third-party/mgx-core-prod-beamlattice-material.3mf",
-    );
+    let path = PathBuf::from("./tests/data/third-party/mgx-core-prod-beamlattice-material.3mf");
     let reader = File::open(path).unwrap();
 
     let result = ThreemfPackage::from_reader(reader, true);

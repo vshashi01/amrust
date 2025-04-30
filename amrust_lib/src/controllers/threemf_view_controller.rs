@@ -1,4 +1,4 @@
-use amrust_3mf::io::threemf_unpacked::ThreemfUnpacked;
+use amrust_3mf::io::ThreemfUnpacked;
 use anyhow::{Result, anyhow};
 use egui::{ColorImage, TextureHandle};
 use roxmltree::{Document, NodeId};

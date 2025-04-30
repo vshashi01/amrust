@@ -2,8 +2,8 @@
 pub mod tests {
     use serde::*;
 
-    use amrust_3mf::io::threemf_package::ThreemfPackage;
-    use amrust_3mf::io::threemf_unpacked::ThreemfUnpacked;
+    use amrust_3mf::io::ThreemfPackage;
+    use amrust_3mf::io::ThreemfUnpacked;
 
     use std::fs::File;
     use std::path::PathBuf;

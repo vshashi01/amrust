@@ -1,5 +1,5 @@
-use image::{load_from_memory, DynamicImage};
-use instant_xml::{from_str, to_string, ToXml};
+use image::{DynamicImage, load_from_memory};
+use instant_xml::{ToXml, from_str, to_string};
 use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
@@ -47,7 +47,8 @@ pub struct ThreemfPackage {
     pub relationships: HashMap<String, Relationships>,
 
     /// A summary of all Default Content Types that exists in the current 3mf package.
-    /// The reader/writer will fail if an unsupported content type is found in the package.
+    /// The reader/writer will still read and write data not currently known to library as
+    /// unknown data.
     /// The extensions defined in the [ContentTypes.xml]
     ///  file should match the extensions of the parts in the package.
     pub content_types: ContentTypes,
@@ -145,7 +146,7 @@ impl ThreemfPackage {
                                     None => {
                                         return Err(Error::ReadError(
                                             "Failed to read the relationship file path".to_owned(),
-                                        ))
+                                        ));
                                     }
                                 }
                             }
@@ -370,12 +371,16 @@ pub mod tests {
                 assert!(threemf.sub_models.contains_key("/3D/midway.model"));
 
                 assert!(threemf.relationships.contains_key("_rels/.rels"));
-                assert!(threemf
-                    .relationships
-                    .contains_key("/3D/_rels/3dmodel.model.rels"));
-                assert!(threemf
-                    .thumbnails
-                    .contains_key("/Thumbnails/P_XPX_0702_02.png"))
+                assert!(
+                    threemf
+                        .relationships
+                        .contains_key("/3D/_rels/3dmodel.model.rels")
+                );
+                assert!(
+                    threemf
+                        .thumbnails
+                        .contains_key("/Thumbnails/P_XPX_0702_02.png")
+                )
             }
             Err(err) => panic!("{:?}", err),
         }

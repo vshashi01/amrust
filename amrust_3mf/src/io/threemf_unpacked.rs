@@ -42,7 +42,8 @@ pub struct ThreemfUnpacked {
     pub relationships: HashMap<String, String>,
 
     /// A summary of all Default Content Types that exists in the current 3mf package.
-    /// The reader/writer will fail if an unsupported content type is found in the package.
+    /// The reader/writer will still read and write data not currently known to library as
+    /// unknown data.
     /// The extensions defined in the [ContentTypes.xml]
     ///  file should match the extensions of the parts in the package.
     pub content_types: String,
@@ -141,7 +142,7 @@ impl ThreemfUnpacked {
                                     None => {
                                         return Err(Error::ReadError(
                                             "Failed to read the relationship file path".to_owned(),
-                                        ))
+                                        ));
                                     }
                                 }
                             }
@@ -260,19 +261,9 @@ fn try_strip_leading_slash(target: &str) -> &str {
 pub mod tests {
     use pretty_assertions::assert_eq;
 
-    use crate::{
-        core::{
-            build::Build,
-            model::{self, Model},
-            object::{Object, ObjectType},
-            resources::Resources,
-        },
-        io::{content_types::*, relationship::*},
-    };
-
     use super::ThreemfUnpacked;
 
-    use std::{collections::HashMap, io::Cursor};
+    use std::io::Cursor;
 
     #[test]
     pub fn from_reader_root_model_test() {
@@ -280,7 +271,6 @@ pub mod tests {
         let reader = Cursor::new(bytes);
 
         let result = ThreemfUnpacked::from_reader(reader, true);
-        // println!("{:?}", result);
 
         match result {
             Ok(threemf) => {
@@ -293,169 +283,18 @@ pub mod tests {
                 assert!(threemf.sub_models.contains_key("/3D/midway.model"));
 
                 assert!(threemf.relationships.contains_key("_rels/.rels"));
-                assert!(threemf
-                    .relationships
-                    .contains_key("/3D/_rels/3dmodel.model.rels"));
-                assert!(threemf
-                    .thumbnails
-                    .contains_key("/Thumbnails/P_XPX_0702_02.png"))
+                assert!(
+                    threemf
+                        .relationships
+                        .contains_key("/3D/_rels/3dmodel.model.rels")
+                );
+                assert!(
+                    threemf
+                        .thumbnails
+                        .contains_key("/Thumbnails/P_XPX_0702_02.png")
+                )
             }
             Err(err) => panic!("{:?}", err),
         }
     }
-
-    // #[test]
-    // pub fn io_unknown_content_test() {
-    //     let test_file_bytes = include_bytes!("../../tests/data/test.txt");
-    //     let mut writer = Cursor::new(Vec::<u8>::new());
-    //     let unknown_target = "/Metadata/test.txt";
-
-    //     let package = ThreemfUnpacked {
-    //         root: Model {
-    //             xmlns: None,
-    //             unit: Some(model::Unit::Millimeter),
-    //             requiredextensions: None,
-    //             recommendedextensions: None,
-    //             metadata: vec![],
-    //             resources: Resources {
-    //                 object: vec![],
-    //                 basematerials: vec![],
-    //             },
-    //             build: Build {
-    //                 uuid: None,
-    //                 item: vec![],
-    //             },
-    //         },
-    //         sub_models: HashMap::new(),
-    //         thumbnails: HashMap::new(),
-    //         unknown_parts: HashMap::from([(unknown_target.to_owned(), test_file_bytes.into())]),
-    //         relationships: HashMap::from([(
-    //             "_rels/.rels".to_owned(),
-    //             Relationships {
-    //                 relationships: vec![
-    //                     Relationship {
-    //                         id: "rel0".to_owned(),
-    //                         target: "3D/3Dmodel.model".to_owned(),
-    //                         relationship_type: RelationshipType::Model,
-    //                     },
-    //                     Relationship {
-    //                         id: "rel1".to_owned(),
-    //                         target: unknown_target.to_owned(),
-    //                         relationship_type: RelationshipType::Unknown(
-    //                             "Metadata/text".to_owned(),
-    //                         ),
-    //                     },
-    //                 ],
-    //             },
-    //         )]),
-    //         content_types: ContentTypes {
-    //             defaults: vec![
-    //                 DefaultContentTypes {
-    //                     content_type: DefaultContentTypeEnum::Relationship,
-    //                     extension: "rels".to_owned(),
-    //                 },
-    //                 DefaultContentTypes {
-    //                     content_type: DefaultContentTypeEnum::Unknown("Metadata/text".to_owned()),
-    //                     extension: "txt".to_owned(),
-    //                 },
-    //                 DefaultContentTypes {
-    //                     extension: "model".to_owned(),
-    //                     content_type: DefaultContentTypeEnum::Model,
-    //                 },
-    //             ],
-    //         },
-    //     };
-
-    //     let write_result = package.write(&mut writer);
-    //     assert!(write_result.is_ok());
-
-    //     let read_result = ThreemfUnpacked::from_reader(writer, false);
-
-    //     match read_result {
-    //         Ok(package) => {
-    //             assert!(package.unknown_parts.contains_key(unknown_target));
-    //             let read_unknown_bytes = package.unknown_parts.get(unknown_target).unwrap();
-    //             assert_eq!(read_unknown_bytes, test_file_bytes);
-    //         }
-    //         Err(_) => panic!("io unknown content test failed"),
-    //     }
-    // }
-
-    // #[test]
-    // pub fn io_thumbnail_content_test() {
-    //     let test_file_bytes = include_bytes!("../../tests/data/test_thumbnail.png");
-    //     let write_image = load_from_memory(test_file_bytes).unwrap();
-
-    //     let mut writer = Cursor::new(Vec::<u8>::new());
-    //     let thumbnail_target = "/Thumbnails/test_thumbnail.png";
-
-    //     let package = ThreemfUnpacked {
-    //         root: Model {
-    //             xmlns: None,
-    //             unit: Some(model::Unit::Millimeter),
-    //             requiredextensions: None,
-    //             recommendedextensions: None,
-    //             metadata: vec![],
-    //             resources: Resources {
-    //                 object: vec![],
-    //                 basematerials: vec![],
-    //             },
-    //             build: Build {
-    //                 uuid: None,
-    //                 item: vec![],
-    //             },
-    //         },
-    //         sub_models: HashMap::new(),
-    //         thumbnails: HashMap::from([(thumbnail_target.to_owned(), write_image)]),
-    //         unknown_parts: HashMap::new(),
-    //         relationships: HashMap::from([(
-    //             "_rels/.rels".to_owned(),
-    //             Relationships {
-    //                 relationships: vec![
-    //                     Relationship {
-    //                         id: "rel0".to_owned(),
-    //                         target: "3D/3Dmodel.model".to_owned(),
-    //                         relationship_type: RelationshipType::Model,
-    //                     },
-    //                     Relationship {
-    //                         id: "rel0x".to_owned(),
-    //                         target: thumbnail_target.to_owned(),
-    //                         relationship_type: RelationshipType::Thumbnail,
-    //                     },
-    //                 ],
-    //             },
-    //         )]),
-    //         content_types: ContentTypes {
-    //             defaults: vec![
-    //                 DefaultContentTypes {
-    //                     content_type: DefaultContentTypeEnum::Relationship,
-    //                     extension: "rels".to_owned(),
-    //                 },
-    //                 DefaultContentTypes {
-    //                     content_type: DefaultContentTypeEnum::ImagePng,
-    //                     extension: "png".to_owned(),
-    //                 },
-    //                 DefaultContentTypes {
-    //                     extension: "model".to_owned(),
-    //                     content_type: DefaultContentTypeEnum::Model,
-    //                 },
-    //             ],
-    //         },
-    //     };
-
-    //     let write_result = package.write(&mut writer);
-    //     assert!(write_result.is_ok());
-
-    //     let read_result = ThreemfUnpacked::from_reader(writer, false);
-
-    //     match read_result {
-    //         Ok(package) => {
-    //             assert!(package.thumbnails.contains_key(thumbnail_target));
-    //             let read_image = package.thumbnails.get(thumbnail_target).unwrap();
-    //             assert_eq!(read_image.height(), 300);
-    //             assert_eq!(read_image.width(), 300);
-    //         }
-    //         Err(_) => panic!("io thumbnail test failed"),
-    //     }
-    // }
 }
