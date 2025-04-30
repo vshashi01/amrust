@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["amrust", "amrust_lib"]
+members = ["amrust", "amrust_lib", "amrust_3mf"]
 
 # only because that current instant-xml is used like this in 3mf-rs
 [patch.crates-io]
