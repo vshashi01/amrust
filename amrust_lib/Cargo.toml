@@ -18,3 +18,4 @@ image = "0.25.0"
 egui_extras = { version = "0.31.0", features = ["default", "image"] }
 
 amrust_3mf = { path = "../amrust_3mf" }
+amrust_render = { path = "../amrust_render" }

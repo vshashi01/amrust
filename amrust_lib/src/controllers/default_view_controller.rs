@@ -1,3 +1,4 @@
+use amrust_render::State;
 use anyhow::Result;
 use egui::DroppedFile;
 
@@ -14,6 +15,7 @@ pub struct DefaultViewController {
     current_controller: Option<Box<dyn StandardFileViewController>>,
     pub file_name: Option<String>,
     dropped_files: DroppedFilesWidget,
+    make_render: bool,
 }
 
 impl Default for DefaultViewController {
@@ -22,6 +24,7 @@ impl Default for DefaultViewController {
             current_controller: Default::default(),
             file_name: Default::default(),
             dropped_files: DroppedFilesWidget::new(),
+            make_render: false,
         }
     }
 }
@@ -85,9 +88,17 @@ impl DefaultViewController {
         }
     }
 
-    pub fn update_state(&mut self, ctx: &egui::Context) -> Result<()> {
+    pub async fn update_state(&mut self, ctx: &egui::Context) -> Result<()> {
         if let Some(controller) = &mut self.current_controller {
             return controller.update_state(ctx);
+        }
+
+        if self.make_render {
+            self.make_render = false;
+
+            // let render_state = State::new().await?;
+            amrust_render::run().await;
+            //render_state.render().await;
         }
 
         Ok(())
@@ -127,5 +138,11 @@ impl DefaultViewController {
         if let Some(controller) = &mut self.current_controller {
             controller.add_menu_button(ui, ctx);
         }
+
+        ui.menu_button("Run Render", |ui| {
+            if ui.button("Render image").clicked() {
+                self.make_render = true;
+            }
+        });
     }
 }

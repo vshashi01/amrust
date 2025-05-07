@@ -72,10 +72,7 @@ impl eframe::App for MyApp {
             self.default_view_controller.run_dropped_files(ctx);
         });
 
-        match self.default_view_controller.update_state(ctx) {
-            Ok(_) => {}
-            Err(err) => log::error!("{:?}", err),
-        }
+        pollster::block_on(self.run_update(ctx));
     }
 }
 
@@ -94,5 +91,15 @@ impl MyApp {
 
         self.name = "AMRUST".to_owned();
         ctx.send_viewport_cmd(ViewportCommand::Title(self.name.clone()));
+    }
+
+    async fn run_update(&mut self, ctx: &egui::Context) {
+        match self.default_view_controller.update_state(ctx).await {
+            Ok(_) => {}
+            Err(err) => {
+                println!("{:?}", err);
+                log::error!("{:?}", err)
+            }
+        }
     }
 }
