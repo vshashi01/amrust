@@ -1,4 +1,3 @@
-use amrust_render::State;
 use anyhow::Result;
 use egui::DroppedFile;
 
@@ -95,10 +94,7 @@ impl DefaultViewController {
 
         if self.make_render {
             self.make_render = false;
-
-            // let render_state = State::new().await?;
             amrust_render::run().await;
-            //render_state.render().await;
         }
 
         Ok(())

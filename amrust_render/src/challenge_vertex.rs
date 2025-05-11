@@ -48,12 +48,12 @@ pub const VERTICES: &[ChallengeVertex] = &[
         tex_coords: [1.0, 0.0],
     }, // top left corner
     ChallengeVertex {
-        position: [1.5, -1.0, 0.0],
+        position: [1.0, -1.0, 0.0],
         color: [0.5, 0.0, 0.5],
         tex_coords: [0.0, 1.0],
     }, // bottom right corner
     ChallengeVertex {
-        position: [-1.5, -1.0, 0.0],
+        position: [-1.0, -1.0, 0.0],
         color: [0.5, 0.0, 0.5],
         tex_coords: [1.0, 1.0],
     }, // bottom left corner

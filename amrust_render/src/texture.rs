@@ -46,14 +46,27 @@ impl Texture {
         });
 
         queue.write_texture(
-            wgpu::ImageCopyTexture {
+            // wgpu::ImageCopyTexture {
+            //     texture: &texture,
+            //     origin: wgpu::Origin3d::ZERO,
+            //     mip_level: 0,
+            //     aspect: wgpu::TextureAspect::All,
+            // },
+            // &img_rgba8,
+            // wgpu::ImageDataLayout {
+            //     offset: 0,
+            //     bytes_per_row: Some(4 * dimensions.0),
+            //     rows_per_image: Some(dimensions.1),
+            // },
+            // size,
+            wgpu::TexelCopyTextureInfo {
                 texture: &texture,
                 origin: wgpu::Origin3d::ZERO,
                 mip_level: 0,
                 aspect: wgpu::TextureAspect::All,
             },
             &img_rgba8,
-            wgpu::ImageDataLayout {
+            wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(4 * dimensions.0),
                 rows_per_image: Some(dimensions.1),

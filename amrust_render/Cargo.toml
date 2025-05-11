@@ -8,13 +8,12 @@ futures-intrusive = { version = "0.5.0" }
 wgpu = { version = "25.0.0", features = ["spirv"] }
 log = { version = "0.4.27" }
 bytemuck = { version = "1.23.0", features = ["derive"] }
-cgmath = { version = "0.18.0" }
 glam = { version = "0.30.3" }
 image = { version = "0.25.6" }
 thiserror = { version = "2.0.11" }
 petgraph = { version = "0.8.1" }
-anyhow = { version = "*" }
+anyhow = { version = "1.0.98" }
 
 [dev-dependencies]
 pollster = { version = "0.4.0" }
-env_logger = { version = "*" }
+env_logger = { version = "0.11.8" }
