@@ -156,65 +156,18 @@ pub async fn run() {
     let instance_buffer_len = instance_data.len() as u32;
 
     let source = wgpu::ShaderSource::Wgsl((include_str!("challenge.wgsl")).into());
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("Test"),
+
+    let render_pipeline = generate_basic_render_pipeline(
+        &device,
+        "Render Pipeline",
         source,
-    });
-
-    let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("Render Pipeline Layout"),
-        bind_group_layouts: &[&camera_bind_group_layout, &basic_texture_bind_group_layout],
-        push_constant_ranges: &[],
-    });
-
-    let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("Render Pipeline"),
-        layout: Some(&render_pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
-            buffers: &[
-                challenge_vertex::ChallengeVertex::desc(),
-                instance::InstanceRaw::desc(),
-            ],
-            compilation_options: Default::default(),
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: texture_desc.format,
-                blend: Some(wgpu::BlendState {
-                    alpha: wgpu::BlendComponent::REPLACE,
-                    color: wgpu::BlendComponent::REPLACE,
-                }),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            compilation_options: Default::default(),
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            strip_index_format: None,
-            front_face: wgpu::FrontFace::Ccw,
-            cull_mode: Some(wgpu::Face::Back),
-            // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
-            polygon_mode: wgpu::PolygonMode::Fill,
-            // Requires Features::DEPTH_CLIP_CONTROL
-            unclipped_depth: false,
-            // Requires Features::CONSERVATIVE_RASTERIZATION
-            conservative: false,
-        },
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState {
-            count: 1,
-            mask: !0,
-            alpha_to_coverage_enabled: false,
-        },
-        // If the pipeline will be used with a multiview render pass, this
-        // indicates how many array layers the attachments will have.
-        multiview: None,
-        cache: None,
-    });
+        texture_desc.format,
+        &[
+            challenge_vertex::ChallengeVertex::desc(),
+            instance::InstanceRaw::desc(),
+        ],
+        &[&camera_bind_group_layout, &basic_texture_bind_group_layout],
+    );
 
     let mut encoder =
         device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -298,10 +251,9 @@ fn generate_basic_render_pipeline(
     device: &wgpu::Device,
     shader_name: &str,
     source: wgpu::ShaderSource,
-    texture_format: &wgpu::TextureFormat,
+    texture_format: wgpu::TextureFormat,
     buffers: &[wgpu::VertexBufferLayout<'static>],
     bind_group_layouts: &[&wgpu::BindGroupLayout],
-    need_depth_stencil: bool,
 ) -> wgpu::RenderPipeline {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(shader_name),
@@ -330,10 +282,10 @@ fn generate_basic_render_pipeline(
             module: &shader,
             entry_point: Some("fs_main"),
             targets: &[Some(wgpu::ColorTargetState {
-                format: *texture_format,
+                format: texture_format,
                 blend: Some(wgpu::BlendState {
-                    color: wgpu::BlendComponent::REPLACE,
                     alpha: wgpu::BlendComponent::REPLACE,
+                    color: wgpu::BlendComponent::REPLACE,
                 }),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
@@ -344,26 +296,21 @@ fn generate_basic_render_pipeline(
             strip_index_format: None,
             front_face: wgpu::FrontFace::Ccw,
             cull_mode: Some(wgpu::Face::Back),
-            unclipped_depth: false,
+            // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
             polygon_mode: wgpu::PolygonMode::Fill,
+            // Requires Features::DEPTH_CLIP_CONTROL
+            unclipped_depth: false,
+            // Requires Features::CONSERVATIVE_RASTERIZATION
             conservative: false,
         },
-        depth_stencil: if need_depth_stencil {
-            Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth16Unorm,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::LessEqual,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            })
-        } else {
-            None
-        },
+        depth_stencil: None,
         multisample: wgpu::MultisampleState {
             count: 1,
             mask: !0,
             alpha_to_coverage_enabled: false,
         },
+        // If the pipeline will be used with a multiview render pass, this
+        // indicates how many array layers the attachments will have.
         multiview: None,
         cache: None,
     })
