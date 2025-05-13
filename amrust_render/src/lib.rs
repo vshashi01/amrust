@@ -1,12 +1,12 @@
 mod camera;
-mod challenge_vertex;
 mod instance;
 mod texture;
+mod vertex;
 use camera::{Camera, OrthographicCameraData};
-use challenge_vertex::Vertex;
 use glam::{Mat4, Vec3};
 use texture::Texture;
 use thiserror::Error;
+use vertex::{Vertex, VertexPC};
 use wgpu::util::DeviceExt;
 
 #[derive(Debug, Error)]
@@ -66,21 +66,40 @@ pub async fn run() {
     let output_buffer = device.create_buffer(&output_buffer_desc);
 
     let camera_data = OrthographicCameraData::default()
-        .transform(camera::CameraTransform::Zoom(-0.25))
-        .transform(camera::CameraTransform::Pan(Vec3 {
-            x: -0.5,
-            y: -0.5,
-            z: 0.0,
-        }))
+        .transform(camera::CameraTransform::Zoom(-0.50))
+        // .transform(camera::CameraTransform::Pan(Vec3 {
+        //     x: -0.5,
+        //     y: -0.5,
+        //     z: 0.0,
+        // }))
         .transform(camera::CameraTransform::Rotate {
             pivot: Vec3 {
                 x: 0.0,
                 y: 0.0,
                 z: 0.0,
             },
-            rotation_axis: Vec3::Z,
-            angle: std::f32::consts::FRAC_1_PI,
+            rotation_axis: Vec3::X,
+            angle: std::f32::consts::FRAC_2_PI,
         });
+    // .transform(camera::CameraTransform::Rotate {
+    //     pivot: Vec3 {
+    //         x: 0.0,
+    //         y: 0.0,
+    //         z: 0.0,
+    //     },
+    //     rotation_axis: Vec3::Y,
+    //     angle: std::f32::consts::FRAC_2_SQRT_PI,
+    // })
+    // .transform(camera::CameraTransform::Rotate {
+    //     pivot: Vec3 {
+    //         x: 0.0,
+    //         y: 0.0,
+    //         z: 0.0,
+    //     },
+    //     rotation_axis: Vec3::X,
+    //     angle: std::f32::consts::FRAC_2_SQRT_PI,
+    // });
+
     let camera = Camera::new(&camera_data);
     let camera_uniform = camera.create_uniform();
 
@@ -130,13 +149,13 @@ pub async fn run() {
     //mesh buffer
     let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Vertex Buffer"),
-        contents: bytemuck::cast_slice(challenge_vertex::VERTICES),
+        contents: bytemuck::cast_slice(VERTICES),
         usage: wgpu::BufferUsages::VERTEX,
     });
 
     let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Index Buffer"),
-        contents: bytemuck::cast_slice(challenge_vertex::INDICES),
+        contents: bytemuck::cast_slice(INDICES),
         usage: wgpu::BufferUsages::INDEX,
     });
 
@@ -155,26 +174,37 @@ pub async fn run() {
 
     let instance_buffer_len = instance_data.len() as u32;
 
-    let source = wgpu::ShaderSource::Wgsl((include_str!("challenge.wgsl")).into());
+    let source = wgpu::ShaderSource::Wgsl((include_str!("vertex.wgsl")).into());
 
-    let render_pipeline = generate_basic_render_pipeline(
+    let surface_render_pipeline = generate_basic_render_pipeline(
         &device,
         "Render Pipeline",
         source,
         texture_desc.format,
-        &[
-            challenge_vertex::ChallengeVertex::desc(),
-            instance::InstanceRaw::desc(),
-        ],
+        &[vertex::VertexPC::desc(), instance::InstanceRaw::desc()],
         &[&camera_bind_group_layout, &basic_texture_bind_group_layout],
+        wgpu::PrimitiveTopology::TriangleList,
+    );
+
+    let wireframe_source = wgpu::ShaderSource::Wgsl((include_str!("wireframe.wgsl")).into());
+
+    let wireframe_render_pipeline = generate_basic_render_pipeline(
+        &device,
+        "Render Pipeline",
+        wireframe_source,
+        texture_desc.format,
+        &[vertex::VertexP::desc(), instance::InstanceRaw::desc()],
+        &[&camera_bind_group_layout, &basic_texture_bind_group_layout],
+        wgpu::PrimitiveTopology::LineList,
     );
 
     let mut encoder =
         device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
+    //surface render pass
     {
         let render_pass_desc = wgpu::RenderPassDescriptor {
-            label: Some("Render Pass"),
+            label: Some("Surface Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &texture_view,
                 resolve_target: None,
@@ -199,8 +229,35 @@ pub async fn run() {
         render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
         render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
         render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-        render_pass.set_pipeline(&render_pipeline);
-        render_pass.draw_indexed(0..6, 0, 0..instance_buffer_len);
+        render_pass.set_pipeline(&surface_render_pipeline);
+        render_pass.draw_indexed(0..INDICES.len() as u32, 0, 0..instance_buffer_len);
+    }
+
+    //wireframe render pass
+    {
+        let render_pass_desc = wgpu::RenderPassDescriptor {
+            label: Some("Wireframe Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &texture_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        };
+        let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
+
+        render_pass.set_bind_group(0, &camera_bind_group, &[]);
+        render_pass.set_bind_group(1, &basic_diffuse_bind_group, &[]);
+        render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+        render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
+        render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+        render_pass.set_pipeline(&wireframe_render_pipeline);
+        render_pass.draw_indexed(0..INDICES.len() as u32, 0, 0..instance_buffer_len);
     }
 
     encoder.copy_texture_to_buffer(
@@ -254,6 +311,7 @@ fn generate_basic_render_pipeline(
     texture_format: wgpu::TextureFormat,
     buffers: &[wgpu::VertexBufferLayout<'static>],
     bind_group_layouts: &[&wgpu::BindGroupLayout],
+    topology: wgpu::PrimitiveTopology,
 ) -> wgpu::RenderPipeline {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(shader_name),
@@ -292,7 +350,7 @@ fn generate_basic_render_pipeline(
             compilation_options: Default::default(),
         }),
         primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
+            topology,
             strip_index_format: None,
             front_face: wgpu::FrontFace::Ccw,
             cull_mode: Some(wgpu::Face::Back),
@@ -375,6 +433,66 @@ fn generate_instances() -> Vec<instance::Instance> {
         transformation: Mat4::IDENTITY,
     }]
 }
+
+pub const VERTICES: &[VertexPC] = &[
+    VertexPC {
+        position: [1.0, 1.0, 1.0],
+        color: [0.5, 0.0, 0.5],
+        tex_coords: [0.0, 0.0],
+    }, // top right front corner
+    VertexPC {
+        position: [-1.0, 1.0, 1.0],
+        color: [0.5, 0.0, 0.5],
+        tex_coords: [1.0, 0.0],
+    }, // top left front corner
+    VertexPC {
+        position: [1.0, -1.0, 1.0],
+        color: [0.5, 0.0, 0.5],
+        tex_coords: [0.0, 1.0],
+    }, // bottom right front corner
+    VertexPC {
+        position: [-1.0, -1.0, 1.0],
+        color: [0.5, 0.0, 0.5],
+        tex_coords: [1.0, 1.0],
+    }, // bottom left front corner
+    ///////////////////////////////// back faces
+    VertexPC {
+        position: [1.0, 1.0, -1.0],
+        color: [0.5, 0.0, 0.5],
+        tex_coords: [0.0, 0.0],
+    }, // top right back corner
+    VertexPC {
+        position: [-1.0, 1.0, -1.0],
+        color: [0.5, 0.0, 0.5],
+        tex_coords: [1.0, 0.0],
+    }, // top left back corner
+    VertexPC {
+        position: [1.0, -1.0, -1.0],
+        color: [0.5, 0.0, 0.5],
+        tex_coords: [0.0, 1.0],
+    }, // bottom right back corner
+    VertexPC {
+        position: [-1.0, -1.0, -1.0],
+        color: [0.5, 0.0, 0.5],
+        tex_coords: [1.0, 1.0],
+    }, // bottom left back corner
+];
+
+#[rustfmt::skip]
+pub const INDICES: &[u16] = &[
+    //front face
+    0, 1, 2, 1, 3, 2, 
+    //back face
+    4, 6, 5, 6, 7, 5,
+    //left face
+    1, 5, 3, 3, 7, 5,
+    //right face
+    0, 2, 4, 2, 6, 4,
+    //top face
+    0, 4, 1, 1, 5, 4,
+    //bottom face
+    2, 3, 6, 3, 7, 6,
+];
 
 #[cfg(test)]
 pub mod tests {

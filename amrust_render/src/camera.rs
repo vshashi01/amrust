@@ -92,15 +92,19 @@ impl OrthographicCameraData {
     ) -> (Vec3, Vec3, Vec3) {
         let rotation_matrix = Mat4::from_axis_angle(rotation_axis, angle);
 
+        //rotate the eye position relative to the pivot
         let relative_pos = self.eye_position - pivot;
+        let rotated_pos = rotation_matrix.transform_vector3(relative_pos);
+        let new_eye_position = pivot + rotated_pos;
 
+        //rotate the target position relative to the pivot
         let relative_target = self.target_position - pivot;
         let rotated_target = rotation_matrix.transform_vector3(relative_target);
         let new_target = pivot + rotated_target;
 
         let rotated_up_vector = rotation_matrix.transform_vector3(self.up_vector);
 
-        (relative_pos, new_target, rotated_up_vector)
+        (new_eye_position, new_target, rotated_up_vector)
     }
 }
 
