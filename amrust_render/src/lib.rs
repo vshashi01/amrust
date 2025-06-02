@@ -342,7 +342,7 @@ pub async fn run() {
         });
 
     let camera = Camera::new(&camera_data);
-    let (_, camera_bind_group, _) = camera.create_gpu_resources(&renderer.device);
+    let camera_bind_group = camera.create_bind_group(&renderer.device);
 
     //needs to be removed
     let basic_texture_bind_group_layout =

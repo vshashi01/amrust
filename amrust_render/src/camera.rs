@@ -32,17 +32,6 @@ impl Camera {
         self.projection_matrix * self.view_matrix
     }
 
-    pub fn create_gpu_resources(
-        &self,
-        device: &wgpu::Device,
-    ) -> (wgpu::BindGroupLayout, wgpu::BindGroup, wgpu::Buffer) {
-        let uniform_buffer = self.create_uniform_buffer(device);
-        let bind_group_layout = Self::create_bind_group_layout(device);
-        let bind_group = Self::create_bind_group(device, &bind_group_layout, &uniform_buffer);
-
-        (bind_group_layout, bind_group, uniform_buffer)
-    }
-
     fn create_uniform(&self) -> CameraUniform {
         CameraUniform {
             view_proj: self.view_projection_matrix().to_cols_array_2d(),
@@ -75,14 +64,12 @@ impl Camera {
         })
     }
 
-    fn create_bind_group(
-        device: &wgpu::Device,
-        layout: &wgpu::BindGroupLayout,
-        buffer: &wgpu::Buffer,
-    ) -> wgpu::BindGroup {
+    pub fn create_bind_group(&self, device: &wgpu::Device) -> wgpu::BindGroup {
+        let layout = Self::create_bind_group_layout(device);
+        let buffer = self.create_uniform_buffer(device);
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Camera bind group"),
-            layout,
+            layout: &layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: buffer.as_entire_binding(),

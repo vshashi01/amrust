@@ -1,5 +1,3 @@
-use std::ops::Range;
-
 use wgpu::{self, util::DeviceExt};
 
 use crate::instance::{Instance, InstanceRaw};
