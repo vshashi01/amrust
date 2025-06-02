@@ -13,6 +13,7 @@ image = { version = "0.25.6" }
 thiserror = { version = "2.0.11" }
 petgraph = { version = "0.8.1" }
 anyhow = { version = "1.0.98" }
+bitflags = { version = "2.9.1" }
 
 [dev-dependencies]
 pollster = { version = "0.4.0" }

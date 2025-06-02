@@ -1,13 +1,17 @@
 use glam::Mat4;
 
+use crate::material::Material;
+
 pub struct Instance {
     pub transformation: Mat4,
+    pub material: Material,
 }
 
 impl Instance {
     pub fn to_raw(&self) -> InstanceRaw {
         InstanceRaw {
             model: self.transformation.to_cols_array_2d(),
+            material: [self.material.red, self.material.green, self.material.blue],
         }
     }
 }
@@ -16,6 +20,7 @@ impl Instance {
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct InstanceRaw {
     model: [[f32; 4]; 4],
+    material: [f32; 3],
     //maybe need normal in the future for shading
     // pub normal: [[f32; 3]; 3],
 }
@@ -27,6 +32,7 @@ impl InstanceRaw {
             array_stride: mem::size_of::<InstanceRaw>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &[
+                // transformation attributes
                 wgpu::VertexAttribute {
                     offset: 0,
                     shader_location: 5,
@@ -46,6 +52,12 @@ impl InstanceRaw {
                     offset: mem::size_of::<[f32; 12]>() as wgpu::BufferAddress,
                     shader_location: 8,
                     format: wgpu::VertexFormat::Float32x4,
+                },
+                // material attributes
+                wgpu::VertexAttribute {
+                    offset: mem::size_of::<[f32; 16]>() as wgpu::BufferAddress,
+                    shader_location: 9,
+                    format: wgpu::VertexFormat::Float32x3,
                 },
                 //normal attributes
                 // wgpu::VertexAttribute {

@@ -59,7 +59,7 @@ impl Camera {
         camera_buffer
     }
 
-    fn create_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    pub fn create_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Camera bind group layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
