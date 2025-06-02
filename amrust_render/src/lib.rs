@@ -1,20 +1,23 @@
 mod camera;
+mod gpu_mesh;
 mod instance;
 mod material;
 mod normalized_box;
 mod object;
+mod renderables;
 mod texture;
 mod vertex;
 use camera::{Camera, OrthographicCameraData};
 use glam::{Mat4, Vec3};
+use gpu_mesh::GpuMesh;
 use image::{ImageBuffer, Rgba};
 use material::Material;
 use normalized_box::{INDICES, VERTICES};
-use object::{GpuMesh, Object, RenderModes, Renderables};
+use object::{Object, RenderModes};
+use renderables::Renderables;
 use texture::Texture;
 use thiserror::Error;
 use vertex::Vertex;
-use wgpu::util::DeviceExt;
 
 #[derive(Debug, Error)]
 pub enum WgpuError {
@@ -101,7 +104,7 @@ impl Renderer {
 
         let camera_bind_group_layout = Camera::create_bind_group_layout(&device);
         let basic_texture_bind_group_layout =
-            generate_texture_bind_group_layout(&device, "Texture Bind Group Layout", true);
+            texture::Texture::create_bind_group_layout(&device, "Basic Texture Bind Group Layout");
 
         let source = wgpu::ShaderSource::Wgsl((include_str!("vertex.wgsl")).into());
         let surface_render_pipeline = generate_basic_render_pipeline(
@@ -123,10 +126,7 @@ impl Renderer {
             wireframe_source,
             texture_desc.format,
             &[vertex::VertexP::desc(), instance::InstanceRaw::desc()],
-            &[
-                &camera_bind_group_layout,
-                // &wireframe_material_bind_group_layout,
-            ],
+            &[&camera_bind_group_layout],
             wgpu::PrimitiveTopology::LineList,
         );
 
@@ -344,10 +344,6 @@ pub async fn run() {
     let camera = Camera::new(&camera_data);
     let camera_bind_group = camera.create_bind_group(&renderer.device);
 
-    //needs to be removed
-    let basic_texture_bind_group_layout =
-        generate_texture_bind_group_layout(&renderer.device, "Texture Bind Group Layout", true);
-
     let happy_tree_bytes = include_bytes!("happy-tree.png");
     let basic_diffuse_texture = Texture::from_bytes(
         &renderer.device,
@@ -356,18 +352,13 @@ pub async fn run() {
         "Happy-tree.png",
     )
     .unwrap();
-
-    let basic_diffuse_bind_group = generate_basic_texture_bind_group(
-        &renderer.device,
-        basic_diffuse_texture,
-        &basic_texture_bind_group_layout,
-    );
-    renderer.add_local_bind_group(basic_diffuse_bind_group);
+    let happy_tree_bind_group = basic_diffuse_texture.create_bind_group(&renderer.device);
+    renderer.add_local_bind_group(happy_tree_bind_group);
 
     //indexed mesh
     let mesh = GpuMesh::new_indexed_mesh(
-        bytemuck::cast_slice(VERTICES),
-        bytemuck::cast_slice(INDICES),
+        VERTICES,
+        INDICES,
         INDICES.len() as u32,
         vec![(0, 1)],
         &renderer.device,
@@ -375,12 +366,7 @@ pub async fn run() {
     renderer.add_renderable(Renderables::IndexedMesh(mesh));
 
     // simple mesh
-    let simple_mesh = GpuMesh::new_mesh(
-        bytemuck::cast_slice(VERTICES),
-        VERTICES.len() as u32,
-        vec![],
-        &renderer.device,
-    );
+    let simple_mesh = GpuMesh::new_mesh(VERTICES, VERTICES.len() as u32, vec![], &renderer.device);
     renderer.add_renderable(Renderables::Mesh(simple_mesh));
 
     let indexed_solid_mesh_instances = Object::new(
@@ -499,60 +485,6 @@ fn generate_basic_render_pipeline(
         // indicates how many array layers the attachments will have.
         multiview: None,
         cache: None,
-    })
-}
-
-fn generate_basic_texture_bind_group(
-    device: &wgpu::Device,
-    texture: Texture,
-    layout: &wgpu::BindGroupLayout,
-) -> wgpu::BindGroup {
-    let bind_group_label = texture.label.clone() + "Bind Group";
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some(bind_group_label.as_str()),
-        layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&texture.view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(&texture.sampler),
-            },
-        ],
-    })
-}
-
-fn generate_texture_bind_group_layout(
-    device: &wgpu::Device,
-    label: &str,
-    filterable: bool,
-) -> wgpu::BindGroupLayout {
-    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(if filterable {
-                    wgpu::SamplerBindingType::Filtering
-                } else {
-                    wgpu::SamplerBindingType::NonFiltering
-                }),
-                count: None,
-            },
-        ],
-        label: Some(label),
     })
 }
 
