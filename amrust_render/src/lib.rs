@@ -18,6 +18,7 @@ use renderables::Renderables;
 use texture::Texture;
 use thiserror::Error;
 use vertex::Vertex;
+use wgpu::{DepthStencilState, RenderPassDepthStencilAttachment};
 
 #[derive(Debug, Error)]
 pub enum WgpuError {
@@ -38,6 +39,7 @@ pub struct Renderer {
     texture_format: wgpu::TextureFormat, //stored for future dynamic render pipeline creation
     texture: wgpu::Texture,
     texture_view: wgpu::TextureView,
+    depth_texture: texture::DepthTexture,
 
     // external rendering resources
     // consider splitting these to separate struct to be managed by the app
@@ -54,7 +56,7 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub async fn new_texture_based(width: u32, height: u32) -> Self {
+    pub async fn new_texture_based(width: u32, height: u32) -> Result<Self, WgpuError> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::VULKAN,
             ..Default::default()
@@ -106,8 +108,10 @@ impl Renderer {
         let basic_texture_bind_group_layout =
             texture::Texture::create_bind_group_layout(&device, "Basic Texture Bind Group Layout");
 
+        let depth_texture = texture::DepthTexture::create_depth_texture(&device, texture_size);
+
         let source = wgpu::ShaderSource::Wgsl((include_str!("vertex.wgsl")).into());
-        let surface_render_pipeline = generate_basic_render_pipeline(
+        let surface_render_pipeline = create_render_pipeline(
             &device,
             "Surface",
             source,
@@ -120,7 +124,7 @@ impl Renderer {
         let wireframe_source =
             wgpu::ShaderSource::Wgsl((include_str!("uniform_color_vertex.wgsl")).into());
 
-        let wireframe_render_pipeline = generate_basic_render_pipeline(
+        let wireframe_render_pipeline = create_render_pipeline(
             &device,
             "Wireframe",
             wireframe_source,
@@ -130,7 +134,7 @@ impl Renderer {
             wgpu::PrimitiveTopology::LineList,
         );
 
-        Renderer {
+        Ok(Renderer {
             device,
             queue,
             output_buffer,
@@ -138,13 +142,14 @@ impl Renderer {
             texture_format,
             texture,
             texture_view,
+            depth_texture,
             renderables: Vec::new(),
             objects: Vec::new(),
             local_bind_groups: Vec::new(),
             global_bind_groups: Vec::new(),
             surface_render_pipeline,
             wireframe_render_pipeline,
-        }
+        })
     }
 
     pub fn add_renderable(&mut self, renderable: Renderables) -> u32 {
@@ -195,7 +200,14 @@ impl Renderer {
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+                    view: &self.depth_texture.view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
                 occlusion_query_set: None,
                 timestamp_writes: None,
             };
@@ -249,7 +261,6 @@ impl Renderer {
         }
 
         let u32_size = std::mem::size_of::<u32>() as u32;
-
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
                 aspect: wgpu::TextureAspect::All,
@@ -294,7 +305,6 @@ impl Renderer {
                 data.to_vec(),
             )
             .unwrap()
-            //buffer.save("image.png").unwrap();
         };
         self.output_buffer.unmap();
 
@@ -303,8 +313,10 @@ impl Renderer {
 }
 
 pub async fn run() {
-    let texture_size = 256u32;
-    let mut renderer = Renderer::new_texture_based(texture_size, texture_size).await;
+    let texture_size = 512u32;
+    let mut renderer = Renderer::new_texture_based(texture_size, texture_size)
+        .await
+        .unwrap();
 
     let camera_data = OrthographicCameraData::default()
         .transform(camera::CameraTransform::Zoom(-0.80))
@@ -329,7 +341,7 @@ pub async fn run() {
                 z: 0.0,
             },
             rotation_axis: Vec3::NEG_Y,
-            angle: std::f32::consts::FRAC_2_SQRT_PI,
+            angle: -std::f32::consts::FRAC_2_SQRT_PI * 1.5,
         })
         .transform(camera::CameraTransform::Rotate {
             pivot: Vec3 {
@@ -418,7 +430,7 @@ pub async fn run() {
     image_buffer.save("image.png").unwrap();
 }
 
-fn generate_basic_render_pipeline(
+fn create_render_pipeline(
     device: &wgpu::Device,
     shader_name: &str,
     source: wgpu::ShaderSource,
@@ -475,7 +487,17 @@ fn generate_basic_render_pipeline(
             // Requires Features::CONSERVATIVE_RASTERIZATION
             conservative: false,
         },
-        depth_stencil: None,
+        depth_stencil: Some(DepthStencilState {
+            format: texture::DepthTexture::DEPTH_FORMAT,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState {
+                constant: 0,
+                slope_scale: 0.0,
+                clamp: 0.0,
+            },
+        }),
         multisample: wgpu::MultisampleState {
             count: 1,
             mask: !0,
