@@ -158,3 +158,48 @@ pub const INDICES: &[u16] = &[
     // Back face //done
     2,1,3,3,1,0,
 ];
+
+pub const ORDERED_POSITIONS: &[Position] = &[
+    // Front face
+    Position([-1.0, 1.0, 1.0]),  // 5
+    Position([-1.0, -1.0, 1.0]), // 4
+    Position([1.0, 1.0, 1.0]),   // 6
+    Position([1.0, 1.0, 1.0]),   // 6
+    Position([-1.0, -1.0, 1.0]), // 4
+    Position([1.0, -1.0, 1.0]),  // 7
+    // Left face
+    Position([-1.0, 1.0, -1.0]),  // 20
+    Position([-1.0, -1.0, -1.0]), // 21
+    Position([-1.0, 1.0, 1.0]),   // 22
+    Position([-1.0, 1.0, 1.0]),   // 22
+    Position([-1.0, -1.0, -1.0]), // 21
+    Position([-1.0, -1.0, 1.0]),  // 23
+    // Right face
+    Position([1.0, 1.0, 1.0]),   // 16
+    Position([1.0, -1.0, 1.0]),  // 17
+    Position([1.0, 1.0, -1.0]),  // 18
+    Position([1.0, 1.0, -1.0]),  // 18
+    Position([1.0, -1.0, 1.0]),  // 17
+    Position([1.0, -1.0, -1.0]), // 19
+    // Top face
+    Position([-1.0, 1.0, -1.0]), // 12
+    Position([-1.0, 1.0, 1.0]),  // 13
+    Position([1.0, 1.0, -1.0]),  // 14
+    Position([1.0, 1.0, -1.0]),  // 14
+    Position([-1.0, 1.0, 1.0]),  // 13
+    Position([1.0, 1.0, 1.0]),   // 15
+    // Bottom face
+    Position([-1.0, -1.0, 1.0]),  // 8
+    Position([-1.0, -1.0, -1.0]), // 9
+    Position([1.0, -1.0, 1.0]),   // 10
+    Position([1.0, -1.0, 1.0]),   // 10
+    Position([-1.0, -1.0, -1.0]), // 9
+    Position([1.0, -1.0, -1.0]),  // 11
+    // Back face
+    Position([1.0, 1.0, -1.0]),   // 2
+    Position([1.0, -1.0, -1.0]),  // 1
+    Position([-1.0, 1.0, -1.0]),  // 3
+    Position([-1.0, 1.0, -1.0]),  // 3
+    Position([1.0, -1.0, -1.0]),  // 1
+    Position([-1.0, -1.0, -1.0]), // 0
+];

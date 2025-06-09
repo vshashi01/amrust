@@ -24,7 +24,7 @@ use wgpu::{DepthStencilState, RenderPassDepthStencilAttachment};
 use crate::{
     gpu_mesh::{GpuMesh, MeshBuilder},
     instance::{InstanceDataBuilder, InstanceFieldDescriptor},
-    normalized_box::{COLORS, POSITIONS, TEX_COORDS, USE_TEXTURE},
+    normalized_box::{COLORS, ORDERED_POSITIONS, POSITIONS, TEX_COORDS, USE_TEXTURE},
     object::RenderObject,
     renderables::Renderable,
     transformation::Transformation,
@@ -612,7 +612,7 @@ pub async fn run() {
     let _colored_mesh_wireframe_object_id = renderer.add_object(colored_mesh_wireframe_object);
 
     let simple_mesh = MeshBuilder::new()
-        .add_vertex_stream(POSITIONS)
+        .add_vertex_stream(ORDERED_POSITIONS)
         .build(&renderer.device);
 
     let simple_mesh_id = renderer.add_mesh(simple_mesh);
