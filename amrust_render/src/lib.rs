@@ -119,7 +119,8 @@ impl Renderer {
 
         let depth_texture = texture::DepthTexture::create_depth_texture(&device, texture_size);
 
-        let source = wgpu::ShaderSource::Wgsl((include_str!("textured_vertex.wgsl")).into());
+        let source =
+            wgpu::ShaderSource::Wgsl((include_str!("shaders/textured_vertex.wgsl")).into());
         let texture_surface_render_pipeline = create_render_pipeline(
             &device,
             "Textured Surface",
@@ -137,7 +138,7 @@ impl Renderer {
             wgpu::PrimitiveTopology::TriangleList,
         );
 
-        let source = wgpu::ShaderSource::Wgsl((include_str!("colored_vertex.wgsl")).into());
+        let source = wgpu::ShaderSource::Wgsl((include_str!("shaders/colored_vertex.wgsl")).into());
         let colored_surface_render_pipeline = create_render_pipeline(
             &device,
             "Colored Surface",
@@ -154,7 +155,7 @@ impl Renderer {
         );
 
         let solid_source =
-            wgpu::ShaderSource::Wgsl((include_str!("uniform_color_vertex.wgsl")).into());
+            wgpu::ShaderSource::Wgsl((include_str!("shaders/uniform_color_vertex.wgsl")).into());
 
         let solid_render_pipeline = create_render_pipeline(
             &device,
@@ -171,7 +172,7 @@ impl Renderer {
         );
 
         let wireframe_source =
-            wgpu::ShaderSource::Wgsl((include_str!("uniform_color_vertex.wgsl")).into());
+            wgpu::ShaderSource::Wgsl((include_str!("shaders/uniform_color_vertex.wgsl")).into());
 
         let wireframe_render_pipeline = create_render_pipeline(
             &device,

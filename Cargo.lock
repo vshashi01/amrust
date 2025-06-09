@@ -196,14 +196,12 @@ name = "amrust_render"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bitflags 2.9.1",
  "bytemuck",
  "env_logger",
  "futures-intrusive",
  "glam",
  "image",
  "log",
- "petgraph",
  "pollster",
  "thiserror 2.0.12",
  "wgpu 25.0.0",
