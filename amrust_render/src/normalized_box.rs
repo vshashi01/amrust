@@ -1,4 +1,4 @@
-use crate::vertex::VertexPC;
+use crate::vertex::{Color, Position, TexCoords, UseTexture};
 
 //
 //
@@ -38,133 +38,109 @@ use crate::vertex::VertexPC;
 //          | /   |
 //          0-----1
 //
-pub const VERTICES: &[VertexPC] = &[
+
+pub const POSITIONS: &[Position] = &[
     // back face
-    VertexPC {
-        position: [-1.0, -1.0, -1.0],
-        color: [0.5, 0.0, 0.5],
-        tex_coords: [1.0, 1.0], // 0
-    },
-    VertexPC {
-        position: [1.0, -1.0, -1.0],
-        color: [0.5, 0.0, 0.5],
-        tex_coords: [0.0, 1.0], // 1
-    },
-    VertexPC {
-        position: [1.0, 1.0, -1.0],
-        color: [0.5, 0.0, 0.5],
-        tex_coords: [0.0, 0.0], // 2
-    },
-    VertexPC {
-        position: [-1.0, 1.0, -1.0],
-        color: [0.5, 0.0, 0.5],
-        tex_coords: [1.0, 0.0], // 3
-    },
+    Position([-1.0, -1.0, -1.0]),
+    Position([1.0, -1.0, -1.0]),
+    Position([1.0, 1.0, -1.0]),
+    Position([-1.0, 1.0, -1.0]),
     // front face
-    VertexPC {
-        position: [-1.0, -1.0, 1.0],
-        color: [0.5, 0.0, 0.5],
-        tex_coords: [0.0, 1.0], // 4
-    },
-    VertexPC {
-        position: [-1.0, 1.0, 1.0],
-        color: [0.5, 0.0, 0.5],
-        tex_coords: [0.0, 0.0], // 5
-    },
-    VertexPC {
-        position: [1.0, 1.0, 1.0],
-        color: [0.5, 0.0, 0.5],
-        tex_coords: [1.0, 0.0], // 6
-    },
-    VertexPC {
-        position: [1.0, -1.0, 1.0],
-        color: [0.5, 0.0, 0.5],
-        tex_coords: [1.0, 1.0], // 7
-    },
-    //bottom face
-    VertexPC {
-        position: [-1.0, -1.0, 1.0],
-        color: [0.5, 0.0, 0.5],
-        tex_coords: [0.0, 0.0], // 8
-    }, //4' bottom face
-    VertexPC {
-        position: [-1.0, -1.0, -1.0],
-        color: [0.5, 0.0, 0.5],
-        tex_coords: [0.0, 1.0], // 9
-    }, // 0' bottom face
-    VertexPC {
-        position: [1.0, -1.0, 1.0],
-        color: [0.5, 0.0, 0.5],
-        tex_coords: [1.0, 0.0], // 10
-    }, // 7' bottom face
-    VertexPC {
-        position: [1.0, -1.0, -1.0],
-        color: [0.5, 0.0, 0.5],
-        tex_coords: [1.0, 1.0], // 11
-    }, // 1' bottom face
+    Position([-1.0, -1.0, 1.0]),
+    Position([-1.0, 1.0, 1.0]),
+    Position([1.0, 1.0, 1.0]),
+    Position([1.0, -1.0, 1.0]),
+    // bottom face
+    Position([-1.0, -1.0, 1.0]),
+    Position([-1.0, -1.0, -1.0]),
+    Position([1.0, -1.0, 1.0]),
+    Position([1.0, -1.0, -1.0]),
     // top face
-    VertexPC {
-        position: [-1.0, 1.0, -1.0],
-        color: [0.5, 0.0, 0.5],
-        tex_coords: [0.0, 0.0], // 12
-    }, // 3' top face
-    VertexPC {
-        position: [-1.0, 1.0, 1.0],
-        color: [0.5, 0.0, 0.5],
-        tex_coords: [0.0, 1.0], // 13
-    }, // 5' top face
-    VertexPC {
-        position: [1.0, 1.0, -1.0],
-        color: [0.5, 0.0, 0.5],
-        tex_coords: [1.0, 0.0], // 14
-    }, // 2' top face
-    VertexPC {
-        position: [1.0, 1.0, 1.0],
-        color: [0.5, 0.0, 0.5],
-        tex_coords: [1.0, 1.0], // 15
-    }, // 6' top face
+    Position([-1.0, 1.0, -1.0]),
+    Position([-1.0, 1.0, 1.0]),
+    Position([1.0, 1.0, -1.0]),
+    Position([1.0, 1.0, 1.0]),
     // right face
-    VertexPC {
-        position: [1.0, 1.0, 1.0],
-        color: [0.5, 0.0, 0.5],
-        tex_coords: [0.0, 0.0], // 16
-    }, // 6' top face
-    VertexPC {
-        position: [1.0, -1.0, 1.0],
-        color: [0.5, 0.0, 0.5],
-        tex_coords: [0.0, 1.0], // 17
-    }, // 7' right face
-    VertexPC {
-        position: [1.0, 1.0, -1.0],
-        color: [0.5, 0.0, 0.5],
-        tex_coords: [1.0, 0.0], // 18
-    }, // 2' right face
-    VertexPC {
-        position: [1.0, -1.0, -1.0],
-        color: [0.5, 0.0, 0.5],
-        tex_coords: [1.0, 1.0], // 19
-    }, // 1' right face
+    Position([1.0, 1.0, 1.0]),
+    Position([1.0, -1.0, 1.0]),
+    Position([1.0, 1.0, -1.0]),
+    Position([1.0, -1.0, -1.0]),
     // left face
-    VertexPC {
-        position: [-1.0, 1.0, -1.0],
-        color: [0.5, 0.0, 0.5],
-        tex_coords: [0.0, 0.0], // 20
-    }, // 3' left face
-    VertexPC {
-        position: [-1.0, -1.0, -1.0],
-        color: [0.5, 0.0, 0.5],
-        tex_coords: [0.0, 1.0], // 21
-    }, // 0' left face
-    VertexPC {
-        position: [-1.0, 1.0, 1.0],
-        color: [0.5, 0.0, 0.5],
-        tex_coords: [1.0, 0.0], // 22
-    }, // 5' left face
-    VertexPC {
-        position: [-1.0, -1.0, 1.0],
-        color: [0.5, 0.0, 0.5],
-        tex_coords: [1.0, 1.0], // 23
-    }, // 4' left face
+    Position([-1.0, 1.0, -1.0]),
+    Position([-1.0, -1.0, -1.0]),
+    Position([-1.0, 1.0, 1.0]),
+    Position([-1.0, -1.0, 1.0]),
+];
+
+pub const COLORS: &[Color] = &[
+    // All faces use the same color
+    Color([0.5, 0.0, 0.5]); 24
+];
+
+pub const TEX_COORDS: &[TexCoords] = &[
+    // back face
+    TexCoords([1.0, 1.0]),
+    TexCoords([0.0, 1.0]),
+    TexCoords([0.0, 0.0]),
+    TexCoords([1.0, 0.0]),
+    // front face
+    TexCoords([0.0, 1.0]),
+    TexCoords([0.0, 0.0]),
+    TexCoords([1.0, 0.0]),
+    TexCoords([1.0, 1.0]),
+    // bottom face
+    TexCoords([0.0, 0.0]),
+    TexCoords([0.0, 1.0]),
+    TexCoords([1.0, 0.0]),
+    TexCoords([1.0, 1.0]),
+    // top face
+    TexCoords([0.0, 0.0]),
+    TexCoords([0.0, 1.0]),
+    TexCoords([1.0, 0.0]),
+    TexCoords([1.0, 1.0]),
+    // right face
+    TexCoords([0.0, 0.0]),
+    TexCoords([0.0, 1.0]),
+    TexCoords([1.0, 0.0]),
+    TexCoords([1.0, 1.0]),
+    // left face
+    TexCoords([0.0, 0.0]),
+    TexCoords([0.0, 1.0]),
+    TexCoords([1.0, 0.0]),
+    TexCoords([1.0, 1.0]),
+];
+
+pub const USE_TEXTURE: &[UseTexture] = &[
+    // back face
+    UseTexture::new(true),
+    UseTexture::new(true),
+    UseTexture::new(true),
+    UseTexture::new(true),
+    // front face
+    UseTexture::new(true),
+    UseTexture::new(true),
+    UseTexture::new(true),
+    UseTexture::new(true),
+    // bottom face
+    UseTexture::new(true),
+    UseTexture::new(true),
+    UseTexture::new(true),
+    UseTexture::new(true),
+    // top face
+    UseTexture::new(true),
+    UseTexture::new(true),
+    UseTexture::new(true),
+    UseTexture::new(true),
+    // right face
+    UseTexture::new(false),
+    UseTexture::new(false),
+    UseTexture::new(false),
+    UseTexture::new(false),
+    // left face
+    UseTexture::new(true),
+    UseTexture::new(true),
+    UseTexture::new(true),
+    UseTexture::new(true),
 ];
 
 #[rustfmt::skip]

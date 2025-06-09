@@ -4,21 +4,31 @@ mod instance;
 mod material;
 mod normalized_box;
 mod object;
+mod render_pass;
 mod renderables;
 mod texture;
+mod transformation;
 mod vertex;
+use std::collections::HashMap;
+
 use camera::{Camera, OrthographicCameraData};
 use glam::{Mat4, Vec3};
-use gpu_mesh::GpuMesh;
 use image::{ImageBuffer, Rgba};
 use material::Material;
-use normalized_box::{INDICES, VERTICES};
-use object::{Object, RenderModes};
-use renderables::Renderables;
+use normalized_box::INDICES;
 use texture::Texture;
 use thiserror::Error;
-use vertex::Vertex;
+use vertex::VertexDescriptor;
 use wgpu::{DepthStencilState, RenderPassDepthStencilAttachment};
+
+use crate::{
+    gpu_mesh::{GpuMesh, MeshBuilder},
+    instance::{InstanceDataBuilder, InstanceFieldDescriptor},
+    normalized_box::{COLORS, POSITIONS, TEX_COORDS, USE_TEXTURE},
+    object::RenderObject,
+    renderables::Renderable,
+    transformation::Transformation,
+};
 
 #[derive(Debug, Error)]
 pub enum WgpuError {
@@ -43,16 +53,15 @@ pub struct Renderer {
 
     // external rendering resources
     // consider splitting these to separate struct to be managed by the app
-    renderables: Vec<Renderables>,
-    objects: Vec<Object>,
+    meshes: Vec<GpuMesh>,
+    objects: Vec<RenderObject>,
     local_bind_groups: Vec<wgpu::BindGroup>,
 
     // internal rendering resources
     global_bind_groups: Vec<wgpu::BindGroup>,
 
     // render pipelines
-    surface_render_pipeline: wgpu::RenderPipeline,
-    wireframe_render_pipeline: wgpu::RenderPipeline,
+    render_pipeline_cache: HashMap<String, wgpu::RenderPipeline>,
 }
 
 impl Renderer {
@@ -110,14 +119,54 @@ impl Renderer {
 
         let depth_texture = texture::DepthTexture::create_depth_texture(&device, texture_size);
 
-        let source = wgpu::ShaderSource::Wgsl((include_str!("vertex.wgsl")).into());
-        let surface_render_pipeline = create_render_pipeline(
+        let source = wgpu::ShaderSource::Wgsl((include_str!("textured_vertex.wgsl")).into());
+        let texture_surface_render_pipeline = create_render_pipeline(
             &device,
-            "Surface",
+            "Textured Surface",
             source,
             texture_desc.format,
-            &[vertex::VertexPC::desc(), instance::InstanceRaw::desc()],
+            &[
+                vertex::Position::layout::<0>(),
+                vertex::Color::layout::<1>(),
+                vertex::TexCoords::layout::<2>(),
+                vertex::UseTexture::layout::<3>(),
+                transformation::TransformationData::layout::<5>(),
+                material::RgbMaterialData::layout::<9>(),
+            ],
             &[&camera_bind_group_layout, &basic_texture_bind_group_layout],
+            wgpu::PrimitiveTopology::TriangleList,
+        );
+
+        let source = wgpu::ShaderSource::Wgsl((include_str!("colored_vertex.wgsl")).into());
+        let colored_surface_render_pipeline = create_render_pipeline(
+            &device,
+            "Colored Surface",
+            source,
+            texture_desc.format,
+            &[
+                vertex::Position::layout::<0>(),
+                vertex::Color::layout::<1>(),
+                transformation::TransformationData::layout::<5>(),
+                material::RgbMaterialData::layout::<9>(),
+            ],
+            &[&camera_bind_group_layout],
+            wgpu::PrimitiveTopology::TriangleList,
+        );
+
+        let solid_source =
+            wgpu::ShaderSource::Wgsl((include_str!("uniform_color_vertex.wgsl")).into());
+
+        let solid_render_pipeline = create_render_pipeline(
+            &device,
+            "Solid uniform",
+            solid_source,
+            texture_desc.format,
+            &[
+                vertex::Position::layout::<0>(),
+                transformation::TransformationData::layout::<5>(),
+                material::RgbMaterialData::layout::<9>(),
+            ],
+            &[&camera_bind_group_layout],
             wgpu::PrimitiveTopology::TriangleList,
         );
 
@@ -129,10 +178,26 @@ impl Renderer {
             "Wireframe",
             wireframe_source,
             texture_desc.format,
-            &[vertex::VertexP::desc(), instance::InstanceRaw::desc()],
+            &[
+                vertex::Position::layout::<0>(),
+                transformation::TransformationData::layout::<5>(),
+                material::RgbMaterialData::layout::<9>(),
+            ],
             &[&camera_bind_group_layout],
             wgpu::PrimitiveTopology::LineList,
         );
+
+        let mut render_pipeline_cache = HashMap::new();
+        render_pipeline_cache.insert(
+            "Textured Surface".to_string(),
+            texture_surface_render_pipeline,
+        );
+        render_pipeline_cache.insert("Wireframe".to_string(), wireframe_render_pipeline);
+        render_pipeline_cache.insert(
+            "Colored Surface".to_string(),
+            colored_surface_render_pipeline,
+        );
+        render_pipeline_cache.insert("Uniform Solid Surface".to_string(), solid_render_pipeline);
 
         Ok(Renderer {
             device,
@@ -143,22 +208,21 @@ impl Renderer {
             texture,
             texture_view,
             depth_texture,
-            renderables: Vec::new(),
+            meshes: Vec::new(),
             objects: Vec::new(),
             local_bind_groups: Vec::new(),
             global_bind_groups: Vec::new(),
-            surface_render_pipeline,
-            wireframe_render_pipeline,
+            render_pipeline_cache,
         })
     }
 
-    pub fn add_renderable(&mut self, renderable: Renderables) -> u32 {
-        self.renderables.push(renderable);
+    pub fn add_mesh(&mut self, mesh: GpuMesh) -> u32 {
+        self.meshes.push(mesh);
 
-        (self.renderables.len() - 1) as u32
+        (self.meshes.len() - 1) as u32
     }
 
-    pub fn add_object(&mut self, object: Object) -> u32 {
+    pub fn add_object(&mut self, object: RenderObject) -> u32 {
         self.objects.push(object);
 
         (self.objects.len() - 1) as u32
@@ -219,43 +283,150 @@ impl Renderer {
                 render_pass.set_bind_group((i + 1) as u32, bind_group, &[]);
             }
 
-            // surface render pipeline
-            let solid_objects = self
-                .objects
-                .iter()
-                .filter(|o| o.render_modes == RenderModes::Solid)
-                .collect::<Vec<_>>();
+            let textured_objects = self.objects.iter().filter_map(|o| {
+                if let Renderable::TexturedMesh(mesh_id, local_bind_groups_list) = &o.renderable {
+                    Some((mesh_id, &o.instance, local_bind_groups_list))
+                } else {
+                    None
+                }
+            });
 
-            for object in solid_objects {
-                render_pass.set_vertex_buffer(1, object.instance_buffer.slice(..));
-                render_pass.set_pipeline(&self.surface_render_pipeline);
+            for (mesh_id, instance, bind_groups_list) in textured_objects {
+                let mesh = self.meshes.get(*mesh_id as usize).unwrap();
+                render_pass
+                    .set_pipeline(self.render_pipeline_cache.get("Textured Surface").unwrap());
+                let position_buffer = mesh.vertex_slice::<vertex::Position>();
+                let color_buffer = mesh.vertex_slice::<vertex::Color>();
+                let tex_coord_buffer = mesh.vertex_slice::<vertex::TexCoords>();
+                let use_texture_buffer = mesh.vertex_slice::<vertex::UseTexture>();
 
-                if let Some(renderable) = self.renderables.get(object.renderable_id) {
-                    renderable.render(
-                        &mut render_pass,
-                        object.instances.len() as u32,
-                        &self.local_bind_groups,
+                let transformation_buffer =
+                    instance.vertex_slice::<transformation::TransformationData>();
+                let material_buffer = instance.vertex_slice::<material::RgbMaterialData>();
+
+                render_pass.set_vertex_buffer(0, position_buffer);
+                render_pass.set_vertex_buffer(1, color_buffer);
+                render_pass.set_vertex_buffer(2, tex_coord_buffer);
+                render_pass.set_vertex_buffer(3, use_texture_buffer);
+                render_pass.set_vertex_buffer(4, transformation_buffer);
+                render_pass.set_vertex_buffer(5, material_buffer);
+
+                for pair in bind_groups_list.iter() {
+                    let local_bind_group = self.local_bind_groups.get(pair.0 as usize).unwrap();
+                    render_pass.set_bind_group(pair.1, local_bind_group, &[]);
+                }
+
+                if let Some(index_stream) = &mesh.index_stream {
+                    let index_buffer = mesh.buffer.slice(index_stream.offset..index_stream.end);
+                    render_pass.set_index_buffer(index_buffer, index_stream.format);
+
+                    render_pass.draw_indexed(
+                        0..index_stream.index_count,
+                        0,
+                        0..instance.instance_count,
                     );
+                } else {
+                    panic!("Mesh does not have an index buffer");
                 }
             }
 
-            //wireframe render pipeline
-            let wireframe_objects = self
-                .objects
-                .iter()
-                .filter(|o| o.render_modes == RenderModes::Wireframe)
-                .collect::<Vec<_>>();
+            let colored_objects = self.objects.iter().filter_map(|o| {
+                if let Renderable::ColoredMesh(mesh_id) = &o.renderable {
+                    Some((mesh_id, &o.instance))
+                } else {
+                    None
+                }
+            });
 
-            for object in wireframe_objects {
-                render_pass.set_vertex_buffer(1, object.instance_buffer.slice(..));
-                render_pass.set_pipeline(&self.wireframe_render_pipeline);
+            for (mesh_id, instance) in colored_objects {
+                let mesh = self.meshes.get(*mesh_id as usize).unwrap();
+                render_pass
+                    .set_pipeline(self.render_pipeline_cache.get("Colored Surface").unwrap());
+                let position_buffer = mesh.vertex_slice::<vertex::Position>();
+                let color_buffer = mesh.vertex_slice::<vertex::Color>();
 
-                if let Some(renderable) = self.renderables.get(object.renderable_id) {
-                    renderable.render(
-                        &mut render_pass,
-                        object.instances.len() as u32,
-                        &self.local_bind_groups,
+                let transformation_buffer =
+                    instance.vertex_slice::<transformation::TransformationData>();
+                let material_buffer = instance.vertex_slice::<material::RgbMaterialData>();
+
+                render_pass.set_vertex_buffer(0, position_buffer);
+                render_pass.set_vertex_buffer(1, color_buffer);
+                render_pass.set_vertex_buffer(2, transformation_buffer);
+                render_pass.set_vertex_buffer(3, material_buffer);
+
+                if let Some(index_stream) = &mesh.index_stream {
+                    let index_buffer = mesh.buffer.slice(index_stream.offset..index_stream.end);
+                    render_pass.set_index_buffer(index_buffer, index_stream.format);
+
+                    render_pass.draw_indexed(
+                        0..index_stream.index_count,
+                        0,
+                        0..instance.instance_count,
                     );
+                } else {
+                    panic!("Mesh does not have an index buffer");
+                }
+            }
+
+            let simple_objects = self.objects.iter().filter_map(|o| {
+                if let Renderable::Mesh(mesh_id) = &o.renderable {
+                    Some((mesh_id, &o.instance))
+                } else {
+                    None
+                }
+            });
+
+            for (meshid, instance) in simple_objects {
+                let mesh = self.meshes.get(*meshid as usize).unwrap();
+                render_pass.set_pipeline(
+                    self.render_pipeline_cache
+                        .get("Uniform Solid Surface")
+                        .unwrap(),
+                );
+                let position_buffer = mesh.vertex_slice::<vertex::Position>();
+                let transformation_buffer =
+                    instance.vertex_slice::<transformation::TransformationData>();
+                let material_buffer = instance.vertex_slice::<material::RgbMaterialData>();
+
+                render_pass.set_vertex_buffer(0, position_buffer);
+                render_pass.set_vertex_buffer(1, transformation_buffer);
+                render_pass.set_vertex_buffer(2, material_buffer);
+
+                render_pass.draw(0..mesh.vertex_count, 0..instance.instance_count);
+            }
+
+            let wireframe_objects = self.objects.iter().filter_map(|o| {
+                if let Renderable::WireframeMesh(mesh_id) = &o.renderable {
+                    Some((mesh_id, &o.instance))
+                } else {
+                    None
+                }
+            });
+
+            for (mesh_id, instance) in wireframe_objects {
+                let mesh = self.meshes.get(*mesh_id as usize).unwrap();
+                render_pass.set_pipeline(self.render_pipeline_cache.get("Wireframe").unwrap());
+
+                let position_buffer = mesh.vertex_slice::<vertex::Position>();
+                let transformation_buffer =
+                    instance.vertex_slice::<transformation::TransformationData>();
+                let material_buffer = instance.vertex_slice::<material::RgbMaterialData>();
+
+                render_pass.set_vertex_buffer(0, position_buffer);
+                render_pass.set_vertex_buffer(1, transformation_buffer);
+                render_pass.set_vertex_buffer(2, material_buffer);
+
+                if let Some(index_stream) = &mesh.index_stream {
+                    let index_buffer = mesh.buffer.slice(index_stream.offset..index_stream.end);
+                    render_pass.set_index_buffer(index_buffer, index_stream.format);
+
+                    render_pass.draw_indexed(
+                        0..index_stream.index_count,
+                        0,
+                        0..instance.instance_count,
+                    );
+                } else {
+                    render_pass.draw(0..mesh.vertex_count, 0..instance.instance_count);
                 }
             }
         }
@@ -365,66 +536,110 @@ pub async fn run() {
     )
     .unwrap();
     let happy_tree_bind_group = basic_diffuse_texture.create_bind_group(&renderer.device);
-    renderer.add_local_bind_group(happy_tree_bind_group);
+    let happy_tree_bind_group_id = renderer.add_local_bind_group(happy_tree_bind_group);
 
-    //indexed mesh
-    let mesh = GpuMesh::new_indexed_mesh(
-        VERTICES,
-        INDICES,
-        INDICES.len() as u32,
-        vec![(0, 1)],
-        &renderer.device,
-    );
-    renderer.add_renderable(Renderables::IndexedMesh(mesh));
+    let tex_mesh = MeshBuilder::new()
+        .add_vertex_stream(POSITIONS)
+        .add_vertex_stream(COLORS)
+        .add_vertex_stream(TEX_COORDS)
+        .add_vertex_stream(USE_TEXTURE)
+        .add_index_stream(INDICES)
+        .build(&renderer.device);
+    let tex_mesh_id = renderer.add_mesh(tex_mesh);
 
-    // simple mesh
-    let simple_mesh = GpuMesh::new_mesh(VERTICES, VERTICES.len() as u32, vec![], &renderer.device);
-    renderer.add_renderable(Renderables::Mesh(simple_mesh));
+    let tex_mesh_instance_buffer = InstanceDataBuilder::new()
+        .add_instance_stream(&[
+            Transformation(Mat4::IDENTITY).to_data(),
+            Transformation(Mat4::from_translation((5.0, 0.0, 0.0).into())).to_data(),
+        ])
+        .add_instance_stream(&[
+            Material::new(1.0, 0.0, 0.0).to_data(),
+            Material::new(1.0, 0.0, 0.0).to_data(),
+        ])
+        .build(&renderer.device);
 
-    let indexed_solid_mesh_instances = Object::new(
-        0,
-        vec![
-            instance::Instance {
-                transformation: Mat4::IDENTITY,
-                material: Material::new(0.0, 0.0, 0.0),
-            },
-            instance::Instance {
-                transformation: Mat4::from_translation((5.0, 0.0, 0.0).into()),
-                material: Material::new(0.0, 0.0, 0.0),
-            },
-        ],
-        RenderModes::Solid,
-        &renderer.device,
-    );
-    renderer.add_object(indexed_solid_mesh_instances);
+    let tex_mesh_object = RenderObject {
+        renderable: Renderable::TexturedMesh(tex_mesh_id, vec![(happy_tree_bind_group_id, 1)]),
+        instance: tex_mesh_instance_buffer,
+    };
+    let _tex_mesh_object_id = renderer.add_object(tex_mesh_object);
 
-    let indexed_wireframe_mesh_instances = Object::new(
-        0,
-        vec![
-            instance::Instance {
-                transformation: Mat4::IDENTITY,
-                material: Material::new(0.0, 0.0, 256.0),
-            },
-            instance::Instance {
-                transformation: Mat4::from_translation((5.0, 0.0, 0.0).into()),
-                material: Material::new(0.0, 0.0, 256.0),
-            },
-        ],
-        RenderModes::Wireframe,
-        &renderer.device,
-    );
-    renderer.add_object(indexed_wireframe_mesh_instances);
+    let tex_mesh_wireframe_object = RenderObject {
+        renderable: Renderable::WireframeMesh(tex_mesh_id),
+        instance: InstanceDataBuilder::new()
+            .add_instance_stream(&[
+                Transformation(Mat4::IDENTITY).to_data(),
+                Transformation(Mat4::from_translation((5.0, 0.0, 0.0).into())).to_data(),
+            ])
+            .add_instance_stream(&[
+                Material::new(0.0, 0.0, 1.0).to_data(),
+                Material::new(0.0, 0.0, 1.0).to_data(),
+            ])
+            .build(&renderer.device),
+    };
+    let _tex_mesh_wireframe_object_id = renderer.add_object(tex_mesh_wireframe_object);
 
-    let simple_mesh_instances = Object::new(
-        1,
-        vec![instance::Instance {
-            transformation: Mat4::from_translation((-5.0, 0.0, 0.0).into()),
-            material: Material::new(0.0, 0.0, 0.0),
-        }],
-        RenderModes::Solid,
-        &renderer.device,
-    );
-    renderer.add_object(simple_mesh_instances);
+    let colored_mesh = MeshBuilder::new()
+        .add_vertex_stream(POSITIONS)
+        .add_vertex_stream(COLORS)
+        .add_index_stream(INDICES)
+        .build(&renderer.device);
+    let colored_mesh_id = renderer.add_mesh(colored_mesh);
+
+    let colored_mesh_instance_buffer = InstanceDataBuilder::new()
+        .add_instance_stream(&[
+            Transformation(Mat4::from_translation((-5.0, 0.0, 0.0).into())).to_data(),
+        ])
+        .add_instance_stream(&[Material::new(1.0, 0.0, 0.0).to_data()])
+        .build(&renderer.device);
+
+    let colored_mesh_object = RenderObject {
+        renderable: Renderable::ColoredMesh(colored_mesh_id),
+        instance: colored_mesh_instance_buffer,
+    };
+    let _colored_mesh_object_id = renderer.add_object(colored_mesh_object);
+
+    let colored_mesh_wireframe_object = RenderObject {
+        renderable: Renderable::WireframeMesh(colored_mesh_id),
+        instance: InstanceDataBuilder::new()
+            .add_instance_stream(&[
+                Transformation(Mat4::from_translation((-5.0, 0.0, 0.0).into())).to_data(),
+            ])
+            .add_instance_stream(&[Material::new(0.0, 0.0, 1.0).to_data()])
+            .build(&renderer.device),
+    };
+
+    let _colored_mesh_wireframe_object_id = renderer.add_object(colored_mesh_wireframe_object);
+
+    let simple_mesh = MeshBuilder::new()
+        .add_vertex_stream(POSITIONS)
+        .build(&renderer.device);
+
+    let simple_mesh_id = renderer.add_mesh(simple_mesh);
+
+    let simple_mesh_instance_buffer = InstanceDataBuilder::new()
+        .add_instance_stream(&[
+            Transformation(Mat4::from_translation((0.0, 5.0, 0.0).into())).to_data(),
+        ])
+        .add_instance_stream(&[Material::new(1.0, 0.0, 0.0).to_data()])
+        .build(&renderer.device);
+
+    let simple_mesh_object = RenderObject {
+        renderable: Renderable::Mesh(simple_mesh_id),
+        instance: simple_mesh_instance_buffer,
+    };
+    let _simple_mesh_object_id = renderer.add_object(simple_mesh_object);
+
+    let simple_mesh_wireframe_object = RenderObject {
+        renderable: Renderable::WireframeMesh(simple_mesh_id),
+        instance: InstanceDataBuilder::new()
+            .add_instance_stream(&[
+                Transformation(Mat4::from_translation((0.0, 5.0, 0.0).into())).to_data(),
+            ])
+            .add_instance_stream(&[Material::new(0.0, 0.0, 1.0).to_data()])
+            .build(&renderer.device),
+    };
+    let _simple_mesh_wireframe_object_id = renderer.add_object(simple_mesh_wireframe_object);
 
     let image_buffer = renderer.render(&camera_bind_group).await;
     image_buffer.save("image.png").unwrap();

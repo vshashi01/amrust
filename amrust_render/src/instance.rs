@@ -1,81 +1,113 @@
-use glam::Mat4;
+use wgpu::util::DeviceExt;
 
-use crate::material::Material;
+use std::any::TypeId;
 
-pub struct Instance {
-    pub transformation: Mat4,
-    pub material: Material,
+pub trait InstanceFieldDescriptor {
+    fn layout<const LOCATION: u32>() -> wgpu::VertexBufferLayout<'static>;
 }
 
-impl Instance {
-    pub fn to_raw(&self) -> InstanceRaw {
-        InstanceRaw {
-            model: self.transformation.to_cols_array_2d(),
-            material: [self.material.red, self.material.green, self.material.blue],
+pub struct GpuInstance {
+    pub buffer: wgpu::Buffer,
+    pub instance_data_stream: Vec<InstanceDataStream>,
+    pub instance_count: u32,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct InstanceDataStream {
+    pub type_id: TypeId,
+    pub offset: wgpu::BufferAddress,
+    pub stride: wgpu::BufferAddress,
+}
+
+impl GpuInstance {
+    pub fn instance_data_stream<T: 'static>(&self) -> Option<&InstanceDataStream> {
+        self.instance_data_stream
+            .iter()
+            .find(|vs| vs.type_id == TypeId::of::<T>())
+    }
+
+    pub fn vertex_slice<T: 'static>(&self) -> wgpu::BufferSlice {
+        let stream = self.instance_data_stream::<T>().unwrap();
+        self.buffer.slice(stream.offset..)
+    }
+
+    pub fn clone_with_buffer(&self, device: &wgpu::Device) -> Self {
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Instance Buffer Clone"),
+            contents: &self.buffer.slice(..).get_mapped_range(),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        });
+
+        Self {
+            buffer,
+            instance_data_stream: self.instance_data_stream.clone(),
+            instance_count: self.instance_count,
         }
     }
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct InstanceRaw {
-    model: [[f32; 4]; 4],
-    material: [f32; 3],
-    //maybe need normal in the future for shading
-    // pub normal: [[f32; 3]; 3],
+pub struct InstanceDataBuilder {
+    pub instance_data_stream: Vec<InstanceDataStream>,
+    pub data: Vec<u8>,
+    pub instance_count: u32,
 }
 
-impl InstanceRaw {
-    pub fn desc() -> wgpu::VertexBufferLayout<'static> {
-        use std::mem;
-        wgpu::VertexBufferLayout {
-            array_stride: mem::size_of::<InstanceRaw>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &[
-                // transformation attributes
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 5,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                wgpu::VertexAttribute {
-                    offset: mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
-                    shader_location: 6,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                wgpu::VertexAttribute {
-                    offset: mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
-                    shader_location: 7,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                wgpu::VertexAttribute {
-                    offset: mem::size_of::<[f32; 12]>() as wgpu::BufferAddress,
-                    shader_location: 8,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                // material attributes
-                wgpu::VertexAttribute {
-                    offset: mem::size_of::<[f32; 16]>() as wgpu::BufferAddress,
-                    shader_location: 9,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-                //normal attributes
-                // wgpu::VertexAttribute {
-                //     format: wgpu::VertexFormat::Float32x3,
-                //     offset: mem::size_of::<[f32; 16]>() as wgpu::BufferAddress,
-                //     shader_location: 9,
-                // },
-                // wgpu::VertexAttribute {
-                //     format: wgpu::VertexFormat::Float32x3,
-                //     offset: mem::size_of::<[f32; 19]>() as wgpu::BufferAddress,
-                //     shader_location: 10,
-                // },
-                // wgpu::VertexAttribute {
-                //     format: wgpu::VertexFormat::Float32x3,
-                //     offset: mem::size_of::<[f32; 22]>() as wgpu::BufferAddress,
-                //     shader_location: 11,
-                // },
-            ],
+impl InstanceDataBuilder {
+    pub fn new() -> Self {
+        Self {
+            instance_data_stream: Vec::new(),
+            data: Vec::new(),
+            instance_count: 0,
+        }
+    }
+
+    fn append<T: bytemuck::Pod + 'static>(&mut self, data: &[T]) -> wgpu::BufferAddress {
+        let offset = self.data.len() as wgpu::BufferAddress;
+
+        let bytes = bytemuck::cast_slice(data);
+        self.data.extend_from_slice(bytes);
+        offset
+    }
+
+    pub fn add_instance_stream<T: InstanceFieldDescriptor + bytemuck::Pod + 'static>(
+        &mut self,
+        data: &[T],
+    ) -> &mut Self {
+        if self.instance_count < 1 {
+            //the first vertex stream defines the vertex count
+            self.instance_count = data.len() as u32;
+        } else {
+            assert!(
+                self.instance_count == data.len() as u32,
+                "Vertex count mismatch: expected {}, got {}",
+                self.instance_count,
+                data.len()
+            );
+        }
+
+        let offset = self.append(data);
+        let stride = std::mem::size_of::<T>() as wgpu::BufferAddress;
+        self.instance_data_stream.push(InstanceDataStream {
+            type_id: TypeId::of::<T>(),
+            offset,
+            stride,
+        });
+
+        self
+    }
+
+    pub fn build(&mut self, device: &wgpu::Device) -> GpuInstance {
+        let usage = wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST;
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Instance Buffer"),
+            contents: &self.data,
+            usage,
+        });
+
+        GpuInstance {
+            buffer,
+            instance_data_stream: self.instance_data_stream.clone(),
+            instance_count: self.instance_count,
         }
     }
 }
