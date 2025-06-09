@@ -26,6 +26,7 @@ use crate::{
     instance::{InstanceDataBuilder, InstanceFieldDescriptor},
     normalized_box::{COLORS, ORDERED_POSITIONS, POSITIONS, TEX_COORDS, USE_TEXTURE},
     object::RenderObject,
+    render_pass::{solid_render_pass, wireframe_render_pass},
     renderables::Renderable,
     transformation::Transformation,
 };
@@ -284,152 +285,21 @@ impl Renderer {
                 render_pass.set_bind_group((i + 1) as u32, bind_group, &[]);
             }
 
-            let textured_objects = self.objects.iter().filter_map(|o| {
-                if let Renderable::TexturedMesh(mesh_id, local_bind_groups_list) = &o.renderable {
-                    Some((mesh_id, &o.instance, local_bind_groups_list))
-                } else {
-                    None
-                }
-            });
+            solid_render_pass(
+                &self.objects,
+                &self.meshes,
+                &self.local_bind_groups,
+                &self.render_pipeline_cache,
+                &mut render_pass,
+            );
 
-            for (mesh_id, instance, bind_groups_list) in textured_objects {
-                let mesh = self.meshes.get(*mesh_id as usize).unwrap();
-                render_pass
-                    .set_pipeline(self.render_pipeline_cache.get("Textured Surface").unwrap());
-                let position_buffer = mesh.vertex_slice::<vertex::Position>();
-                let color_buffer = mesh.vertex_slice::<vertex::Color>();
-                let tex_coord_buffer = mesh.vertex_slice::<vertex::TexCoords>();
-                let use_texture_buffer = mesh.vertex_slice::<vertex::UseTexture>();
-
-                let transformation_buffer =
-                    instance.vertex_slice::<transformation::TransformationData>();
-                let material_buffer = instance.vertex_slice::<material::RgbMaterialData>();
-
-                render_pass.set_vertex_buffer(0, position_buffer);
-                render_pass.set_vertex_buffer(1, color_buffer);
-                render_pass.set_vertex_buffer(2, tex_coord_buffer);
-                render_pass.set_vertex_buffer(3, use_texture_buffer);
-                render_pass.set_vertex_buffer(4, transformation_buffer);
-                render_pass.set_vertex_buffer(5, material_buffer);
-
-                for pair in bind_groups_list.iter() {
-                    let local_bind_group = self.local_bind_groups.get(pair.0 as usize).unwrap();
-                    render_pass.set_bind_group(pair.1, local_bind_group, &[]);
-                }
-
-                if let Some(index_stream) = &mesh.index_stream {
-                    let index_buffer = mesh.buffer.slice(index_stream.offset..index_stream.end);
-                    render_pass.set_index_buffer(index_buffer, index_stream.format);
-
-                    render_pass.draw_indexed(
-                        0..index_stream.index_count,
-                        0,
-                        0..instance.instance_count,
-                    );
-                } else {
-                    panic!("Mesh does not have an index buffer");
-                }
-            }
-
-            let colored_objects = self.objects.iter().filter_map(|o| {
-                if let Renderable::ColoredMesh(mesh_id) = &o.renderable {
-                    Some((mesh_id, &o.instance))
-                } else {
-                    None
-                }
-            });
-
-            for (mesh_id, instance) in colored_objects {
-                let mesh = self.meshes.get(*mesh_id as usize).unwrap();
-                render_pass
-                    .set_pipeline(self.render_pipeline_cache.get("Colored Surface").unwrap());
-                let position_buffer = mesh.vertex_slice::<vertex::Position>();
-                let color_buffer = mesh.vertex_slice::<vertex::Color>();
-
-                let transformation_buffer =
-                    instance.vertex_slice::<transformation::TransformationData>();
-                let material_buffer = instance.vertex_slice::<material::RgbMaterialData>();
-
-                render_pass.set_vertex_buffer(0, position_buffer);
-                render_pass.set_vertex_buffer(1, color_buffer);
-                render_pass.set_vertex_buffer(2, transformation_buffer);
-                render_pass.set_vertex_buffer(3, material_buffer);
-
-                if let Some(index_stream) = &mesh.index_stream {
-                    let index_buffer = mesh.buffer.slice(index_stream.offset..index_stream.end);
-                    render_pass.set_index_buffer(index_buffer, index_stream.format);
-
-                    render_pass.draw_indexed(
-                        0..index_stream.index_count,
-                        0,
-                        0..instance.instance_count,
-                    );
-                } else {
-                    panic!("Mesh does not have an index buffer");
-                }
-            }
-
-            let simple_objects = self.objects.iter().filter_map(|o| {
-                if let Renderable::Mesh(mesh_id) = &o.renderable {
-                    Some((mesh_id, &o.instance))
-                } else {
-                    None
-                }
-            });
-
-            for (meshid, instance) in simple_objects {
-                let mesh = self.meshes.get(*meshid as usize).unwrap();
-                render_pass.set_pipeline(
-                    self.render_pipeline_cache
-                        .get("Uniform Solid Surface")
-                        .unwrap(),
-                );
-                let position_buffer = mesh.vertex_slice::<vertex::Position>();
-                let transformation_buffer =
-                    instance.vertex_slice::<transformation::TransformationData>();
-                let material_buffer = instance.vertex_slice::<material::RgbMaterialData>();
-
-                render_pass.set_vertex_buffer(0, position_buffer);
-                render_pass.set_vertex_buffer(1, transformation_buffer);
-                render_pass.set_vertex_buffer(2, material_buffer);
-
-                render_pass.draw(0..mesh.vertex_count, 0..instance.instance_count);
-            }
-
-            let wireframe_objects = self.objects.iter().filter_map(|o| {
-                if let Renderable::WireframeMesh(mesh_id) = &o.renderable {
-                    Some((mesh_id, &o.instance))
-                } else {
-                    None
-                }
-            });
-
-            for (mesh_id, instance) in wireframe_objects {
-                let mesh = self.meshes.get(*mesh_id as usize).unwrap();
-                render_pass.set_pipeline(self.render_pipeline_cache.get("Wireframe").unwrap());
-
-                let position_buffer = mesh.vertex_slice::<vertex::Position>();
-                let transformation_buffer =
-                    instance.vertex_slice::<transformation::TransformationData>();
-                let material_buffer = instance.vertex_slice::<material::RgbMaterialData>();
-
-                render_pass.set_vertex_buffer(0, position_buffer);
-                render_pass.set_vertex_buffer(1, transformation_buffer);
-                render_pass.set_vertex_buffer(2, material_buffer);
-
-                if let Some(index_stream) = &mesh.index_stream {
-                    let index_buffer = mesh.buffer.slice(index_stream.offset..index_stream.end);
-                    render_pass.set_index_buffer(index_buffer, index_stream.format);
-
-                    render_pass.draw_indexed(
-                        0..index_stream.index_count,
-                        0,
-                        0..instance.instance_count,
-                    );
-                } else {
-                    render_pass.draw(0..mesh.vertex_count, 0..instance.instance_count);
-                }
-            }
+            wireframe_render_pass(
+                &self.objects,
+                &self.meshes,
+                &self.local_bind_groups,
+                &self.render_pipeline_cache,
+                &mut render_pass,
+            );
         }
 
         let u32_size = std::mem::size_of::<u32>() as u32;
