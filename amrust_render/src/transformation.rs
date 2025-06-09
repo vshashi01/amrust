@@ -1,6 +1,6 @@
-use crate::instance::InstanceFieldDescriptor;
-
 use glam::Mat4;
+
+use crate::instance::InstanceFieldDescriptor;
 
 pub struct Transformation(pub Mat4);
 

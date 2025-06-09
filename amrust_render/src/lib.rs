@@ -1,3 +1,8 @@
+use glam::{Mat4, Vec3};
+use image::{ImageBuffer, Rgba};
+use thiserror::Error;
+use wgpu::{DepthStencilState, RenderPassDepthStencilAttachment};
+
 mod camera;
 mod gpu_mesh;
 mod instance;
@@ -9,27 +14,22 @@ mod renderables;
 mod texture;
 mod transformation;
 mod vertex;
-use std::collections::HashMap;
-
-use camera::{Camera, OrthographicCameraData};
-use glam::{Mat4, Vec3};
-use image::{ImageBuffer, Rgba};
-use material::Material;
-use normalized_box::INDICES;
-use texture::Texture;
-use thiserror::Error;
-use vertex::VertexDescriptor;
-use wgpu::{DepthStencilState, RenderPassDepthStencilAttachment};
 
 use crate::{
+    camera::{Camera, OrthographicCameraData},
     gpu_mesh::{GpuMesh, MeshBuilder},
     instance::{InstanceDataBuilder, InstanceFieldDescriptor},
-    normalized_box::{COLORS, ORDERED_POSITIONS, POSITIONS, TEX_COORDS, USE_TEXTURE},
+    material::Material,
+    normalized_box::{COLORS, INDICES, ORDERED_POSITIONS, POSITIONS, TEX_COORDS, USE_TEXTURE},
     object::RenderObject,
     render_pass::{solid_render_pass, wireframe_render_pass},
     renderables::Renderable,
+    texture::Texture,
     transformation::Transformation,
+    vertex::VertexDescriptor,
 };
+
+use std::collections::HashMap;
 
 #[derive(Debug, Error)]
 pub enum WgpuError {

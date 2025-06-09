@@ -1,8 +1,8 @@
-use std::any::TypeId;
-
 use wgpu::util::DeviceExt;
 
 use crate::vertex::VertexDescriptor;
+
+use std::any::TypeId;
 
 pub struct GpuMesh {
     pub buffer: wgpu::Buffer,
