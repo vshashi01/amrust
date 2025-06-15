@@ -1,10 +1,15 @@
+use std::num::NonZero;
+
 use anyhow::Result;
+
+pub const MAX_TEXTURE_SIZE: u32 = 8192;
+pub const MAX_BINDING_ARRAY_ELEMENTS_PER_SHADER_STAGE: u32 = 6; // Maximum number of texture bindings per shader stage
+pub const MAX_BINDING_ARRAY_SAMPLERS_PER_SHADER_STAGE: u32 = 1; // Maximum number of sampler bindings per shader stage
 
 pub struct Texture {
     #[allow(dead_code)]
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
-    pub sampler: wgpu::Sampler,
     pub label: String,
 }
 
@@ -46,12 +51,7 @@ impl Texture {
         });
 
         queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                origin: wgpu::Origin3d::ZERO,
-                mip_level: 0,
-                aspect: wgpu::TextureAspect::All,
-            },
+            texture.as_image_copy(),
             &img_rgba8,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
@@ -62,35 +62,12 @@ impl Texture {
         );
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
 
         Ok(Self {
             texture,
             view,
-            sampler,
             label: label.to_string(),
         })
-    }
-
-    pub fn create_bind_group(self, device: &wgpu::Device) -> wgpu::BindGroup {
-        let bind_group_label = self.label.clone() + "Bind Group";
-        generate_basic_texture_bind_group(
-            device,
-            self,
-            &Self::create_bind_group_layout(device, &bind_group_label),
-        )
-    }
-
-    pub fn create_bind_group_layout(device: &wgpu::Device, label: &str) -> wgpu::BindGroupLayout {
-        generate_texture_bind_group_layout(device, label, true)
     }
 }
 
@@ -128,9 +105,22 @@ impl DepthTexture {
     }
 }
 
-fn generate_basic_texture_bind_group(
+pub fn generate_basic_texture_sampler(device: &wgpu::Device) -> wgpu::Sampler {
+    device.create_sampler(&wgpu::SamplerDescriptor {
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Nearest,
+        mipmap_filter: wgpu::FilterMode::Nearest,
+        ..Default::default()
+    })
+}
+
+pub fn generate_basic_texture_bind_group<const TEX_BINDING: u32, const SAMPLER_BINDING: u32>(
     device: &wgpu::Device,
-    texture: Texture,
+    texture: &Texture,
+    sampler: &wgpu::Sampler,
     layout: &wgpu::BindGroupLayout,
 ) -> wgpu::BindGroup {
     let bind_group_label = texture.label.clone() + "Bind Group";
@@ -139,18 +129,18 @@ fn generate_basic_texture_bind_group(
         layout,
         entries: &[
             wgpu::BindGroupEntry {
-                binding: 0,
+                binding: TEX_BINDING,
                 resource: wgpu::BindingResource::TextureView(&texture.view),
             },
             wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(&texture.sampler),
+                binding: SAMPLER_BINDING,
+                resource: wgpu::BindingResource::Sampler(sampler),
             },
         ],
     })
 }
 
-fn generate_texture_bind_group_layout(
+pub fn generate_texture_bind_group_layout<const TEX_BINDING: u32, const SAMPLER_BINDING: u32>(
     device: &wgpu::Device,
     label: &str,
     filterable: bool,
@@ -158,7 +148,7 @@ fn generate_texture_bind_group_layout(
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         entries: &[
             wgpu::BindGroupLayoutEntry {
-                binding: 0,
+                binding: TEX_BINDING,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
                     sample_type: wgpu::TextureSampleType::Float { filterable },
@@ -168,7 +158,66 @@ fn generate_texture_bind_group_layout(
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: 1,
+                binding: SAMPLER_BINDING,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(if filterable {
+                    wgpu::SamplerBindingType::Filtering
+                } else {
+                    wgpu::SamplerBindingType::NonFiltering
+                }),
+                count: None,
+            },
+        ],
+        label: Some(label),
+    })
+}
+
+pub fn generate_texture_array_bind_group<const TEX_BINDING: u32, const SAMPLER_BINDING: u32>(
+    device: &wgpu::Device,
+    label: &str,
+    texture_views: &[&wgpu::TextureView],
+    sampler: &wgpu::Sampler,
+    layout: &wgpu::BindGroupLayout,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some(label),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: TEX_BINDING,
+                resource: wgpu::BindingResource::TextureViewArray(texture_views),
+            },
+            wgpu::BindGroupEntry {
+                binding: SAMPLER_BINDING,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    })
+}
+
+pub fn generate_texture_array_bind_group_layout<
+    const TEX_BINDING: u32,
+    const SAMPLER_BINDING: u32,
+>(
+    device: &wgpu::Device,
+    label: &str,
+    filterable: bool,
+    texture_count: NonZero<u32>,
+) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: TEX_BINDING,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: Some(texture_count),
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: SAMPLER_BINDING,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Sampler(if filterable {
                     wgpu::SamplerBindingType::Filtering

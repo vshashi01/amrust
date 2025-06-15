@@ -112,36 +112,78 @@ pub const TEX_COORDS: &[TexCoords] = &[
 
 pub const USE_TEXTURE: &[UseTexture] = &[
     // back face
-    UseTexture::new(true),
-    UseTexture::new(true),
-    UseTexture::new(true),
-    UseTexture::new(true),
+    UseTexture::yes(),
+    UseTexture::yes(),
+    UseTexture::yes(),
+    UseTexture::yes(),
     // front face
-    UseTexture::new(true),
-    UseTexture::new(true),
-    UseTexture::new(true),
-    UseTexture::new(true),
+    UseTexture::yes(),
+    UseTexture::yes(),
+    UseTexture::yes(),
+    UseTexture::yes(),
     // bottom face
-    UseTexture::new(true),
-    UseTexture::new(true),
-    UseTexture::new(true),
-    UseTexture::new(true),
+    UseTexture::yes(),
+    UseTexture::yes(),
+    UseTexture::yes(),
+    UseTexture::yes(),
     // top face
-    UseTexture::new(true),
-    UseTexture::new(true),
-    UseTexture::new(true),
-    UseTexture::new(true),
+    UseTexture::yes(),
+    UseTexture::yes(),
+    UseTexture::yes(),
+    UseTexture::yes(),
     // right face
-    UseTexture::new(false),
-    UseTexture::new(false),
-    UseTexture::new(false),
-    UseTexture::new(false),
+    UseTexture::no(),
+    UseTexture::no(),
+    UseTexture::no(),
+    UseTexture::no(),
     // left face
-    UseTexture::new(true),
-    UseTexture::new(true),
-    UseTexture::new(true),
-    UseTexture::new(true),
+    UseTexture::yes(),
+    UseTexture::yes(),
+    UseTexture::yes(),
+    UseTexture::yes(),
 ];
+
+pub fn get_use_texture_vertices(
+    back_face: UseTexture,
+    front_face: UseTexture,
+    bottom_face: UseTexture,
+    top_face: UseTexture,
+    right_face: UseTexture,
+    left_face: UseTexture,
+) -> [UseTexture; 24] {
+    [
+        // back face
+        back_face,
+        back_face,
+        back_face,
+        back_face,
+        // front face
+        front_face,
+        front_face,
+        front_face,
+        front_face,
+        // bottom face
+        bottom_face,
+        bottom_face,
+        bottom_face,
+        bottom_face,
+        // top face
+        top_face,
+        top_face,
+        top_face,
+        top_face,
+        // right face
+        right_face,
+        right_face,
+        right_face,
+        right_face,
+        // left face
+        left_face,
+        left_face,
+        left_face,
+        left_face,
+    ]
+}
 
 #[rustfmt::skip]
 pub const INDICES: &[u16] = &[

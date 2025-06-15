@@ -58,11 +58,24 @@ impl VertexDescriptor for TexCoords {
 
 #[repr(transparent)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct UseTexture(u32); // 0 for false, 1 for true
+pub struct UseTexture(i32); // 0 for false, 1 for true
 
 impl UseTexture {
-    pub const fn new(use_texture: bool) -> Self {
-        Self(if use_texture { 1 } else { 0 })
+    //todo: replace this weird API
+    pub const fn no() -> Self {
+        Self(-1)
+    }
+
+    pub const fn yes() -> Self {
+        Self(0)
+    }
+
+    pub fn from_texture_index(texture_index: u32) -> Self {
+        let texture_index = i32::try_from(texture_index);
+        match texture_index {
+            Ok(index) => UseTexture(index),
+            Err(_) => UseTexture(-1),
+        }
     }
 }
 
@@ -72,7 +85,7 @@ impl VertexDescriptor for UseTexture {
             array_stride: std::mem::size_of::<Self>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &[wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Uint32,
+                format: wgpu::VertexFormat::Sint32,
                 offset: 0,
                 shader_location: LOCATION,
             }],

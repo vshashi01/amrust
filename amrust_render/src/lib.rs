@@ -1,7 +1,7 @@
 use glam::{Mat4, Vec3};
 use image::{ImageBuffer, Rgba};
 use thiserror::Error;
-use wgpu::{DepthStencilState, RenderPassDepthStencilAttachment};
+use wgpu::{DepthStencilState, Limits, RenderPassDepthStencilAttachment, wgt::DeviceDescriptor};
 
 mod camera;
 mod gpu_mesh;
@@ -24,12 +24,16 @@ use crate::{
     object::RenderObject,
     render_pass::{solid_render_pass, wireframe_render_pass},
     renderables::Renderable,
-    texture::Texture,
+    texture::{
+        MAX_BINDING_ARRAY_ELEMENTS_PER_SHADER_STAGE, MAX_BINDING_ARRAY_SAMPLERS_PER_SHADER_STAGE,
+        MAX_TEXTURE_SIZE, Texture, generate_basic_texture_bind_group,
+        generate_texture_array_bind_group, generate_texture_array_bind_group_layout,
+    },
     transformation::Transformation,
-    vertex::VertexDescriptor,
+    vertex::{UseTexture, VertexDescriptor},
 };
 
-use std::collections::HashMap;
+use std::{collections::HashMap, num::NonZero, u32::MAX};
 
 #[derive(Debug, Error)]
 pub enum WgpuError {
@@ -54,12 +58,16 @@ pub struct Renderer {
 
     // external rendering resources
     // consider splitting these to separate struct to be managed by the app
+    textures: Vec<Texture>,
     meshes: Vec<GpuMesh>,
     objects: Vec<RenderObject>,
     local_bind_groups: Vec<wgpu::BindGroup>,
 
     // internal rendering resources
     global_bind_groups: Vec<wgpu::BindGroup>,
+    texture_bind_group_layout: wgpu::BindGroupLayout,
+    texture_sampler: wgpu::Sampler,
+    texture_array_bind_group_layout: wgpu::BindGroupLayout,
 
     // render pipelines
     render_pipeline_cache: HashMap<String, wgpu::RenderPipeline>,
@@ -79,7 +87,37 @@ impl Renderer {
             })
             .await
             .unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+
+        println!("{:?}", adapter.get_info());
+
+        adapter
+            .features()
+            .contains(wgpu::Features::TEXTURE_BINDING_ARRAY)
+            .then(|| {
+                println!("Adapter supports TEXTURE_BINDING_ARRAY feature");
+            })
+            .unwrap_or_else(|| {
+                println!("Adapter does not support TEXTURE_BINDING_ARRAY feature");
+            });
+
+        let (device, queue) = adapter
+            .request_device(&DeviceDescriptor {
+                label: Some("Gpu Device"),
+                required_features: wgpu::Features::TEXTURE_BINDING_ARRAY
+                    | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
+                required_limits: wgpu::Limits {
+                    max_binding_array_elements_per_shader_stage:
+                        MAX_BINDING_ARRAY_ELEMENTS_PER_SHADER_STAGE,
+                    max_binding_array_sampler_elements_per_shader_stage:
+                        MAX_BINDING_ARRAY_SAMPLERS_PER_SHADER_STAGE,
+                    max_texture_dimension_2d: MAX_TEXTURE_SIZE,
+                    ..Limits::downlevel_defaults()
+                },
+                memory_hints: wgpu::MemoryHints::Performance,
+                trace: wgpu::Trace::Off,
+            })
+            .await
+            .unwrap();
 
         let texture_size = wgpu::Extent3d {
             width,
@@ -115,8 +153,18 @@ impl Renderer {
         let output_buffer = device.create_buffer(&output_buffer_desc);
 
         let camera_bind_group_layout = Camera::create_bind_group_layout(&device);
-        let basic_texture_bind_group_layout =
-            texture::Texture::create_bind_group_layout(&device, "Basic Texture Bind Group Layout");
+        let basic_texture_bind_group_layout = texture::generate_texture_bind_group_layout::<0, 1>(
+            &device,
+            "Basic Texture Bind Group Layout",
+            true,
+        );
+        let texture_sampler = texture::generate_basic_texture_sampler(&device);
+        let texture_array_bind_group_layout = generate_texture_array_bind_group_layout::<0, 1>(
+            &device,
+            "Texture Array Layout",
+            true,
+            NonZero::new(MAX_BINDING_ARRAY_ELEMENTS_PER_SHADER_STAGE).unwrap(),
+        );
 
         let depth_texture = texture::DepthTexture::create_depth_texture(&device, texture_size);
 
@@ -136,6 +184,25 @@ impl Renderer {
                 material::RgbMaterialData::layout::<9>(),
             ],
             &[&camera_bind_group_layout, &basic_texture_bind_group_layout],
+            wgpu::PrimitiveTopology::TriangleList,
+        );
+
+        let source =
+            wgpu::ShaderSource::Wgsl((include_str!("shaders/array_texture_mesh.wgsl")).into());
+        let texture_array_surface_render_pipeline = create_render_pipeline(
+            &device,
+            "Texture Array Surface",
+            source,
+            texture_desc.format,
+            &[
+                vertex::Position::layout::<0>(),
+                vertex::Color::layout::<1>(),
+                vertex::TexCoords::layout::<2>(),
+                vertex::UseTexture::layout::<3>(),
+                transformation::TransformationData::layout::<5>(),
+                material::RgbMaterialData::layout::<9>(),
+            ],
+            &[&camera_bind_group_layout, &texture_array_bind_group_layout],
             wgpu::PrimitiveTopology::TriangleList,
         );
 
@@ -200,6 +267,10 @@ impl Renderer {
             colored_surface_render_pipeline,
         );
         render_pipeline_cache.insert("Uniform Solid Surface".to_string(), solid_render_pipeline);
+        render_pipeline_cache.insert(
+            "Texture Array Surface".to_owned(),
+            texture_array_surface_render_pipeline,
+        );
 
         Ok(Renderer {
             device,
@@ -210,12 +281,52 @@ impl Renderer {
             texture,
             texture_view,
             depth_texture,
+            textures: Vec::new(),
             meshes: Vec::new(),
             objects: Vec::new(),
             local_bind_groups: Vec::new(),
             global_bind_groups: Vec::new(),
+            texture_bind_group_layout: basic_texture_bind_group_layout,
+            texture_array_bind_group_layout,
+            texture_sampler,
             render_pipeline_cache,
         })
+    }
+
+    // returns the texture id and the bind group id
+    pub fn add_texture(&mut self, texture: Texture) -> (u32, u32) {
+        let bind_group = generate_basic_texture_bind_group::<0, 1>(
+            &self.device,
+            &texture,
+            &self.texture_sampler,
+            &self.texture_bind_group_layout,
+        );
+
+        self.textures.push(texture);
+        let bind_group_id = self.add_local_bind_group(bind_group);
+        let texture_id = (self.textures.len() - 1) as u32;
+
+        (texture_id, bind_group_id)
+    }
+
+    // returns the bind group id for the texture array
+    pub fn create_texture_array(&mut self, texture_ids: &[u32]) -> u32 {
+        let mut texture_views = Vec::<&wgpu::TextureView>::new();
+
+        for texture_id in texture_ids {
+            let texture = &self.textures[*texture_id as usize];
+            texture_views.push(&texture.view);
+        }
+
+        let bind_group = generate_texture_array_bind_group::<0, 1>(
+            &self.device,
+            "Array 1",
+            &texture_views,
+            &self.texture_sampler,
+            &self.texture_array_bind_group_layout,
+        );
+
+        self.add_local_bind_group(bind_group)
     }
 
     pub fn add_mesh(&mut self, mesh: GpuMesh) -> u32 {
@@ -398,57 +509,178 @@ pub async fn run() {
     let camera = Camera::new(&camera_data);
     let camera_bind_group = camera.create_bind_group(&renderer.device);
 
-    let happy_tree_bytes = include_bytes!("happy-tree.png");
-    let basic_diffuse_texture = Texture::from_bytes(
-        &renderer.device,
-        &renderer.queue,
-        happy_tree_bytes,
-        "Happy-tree.png",
-    )
-    .unwrap();
-    let happy_tree_bind_group = basic_diffuse_texture.create_bind_group(&renderer.device);
-    let happy_tree_bind_group_id = renderer.add_local_bind_group(happy_tree_bind_group);
+    let (_, happy_tree_bind_group_id) = create_texture_and_texture_bind_group(
+        include_bytes!("resources/happy-tree.png"),
+        "happy-tree",
+        &mut renderer,
+    );
 
-    let tex_mesh = MeshBuilder::new()
+    let (top_tex_id, top_tex_bind_group_id) = create_texture_and_texture_bind_group(
+        include_bytes!("resources/top-tex.png"),
+        "top-tex.png",
+        &mut renderer,
+    );
+
+    let (right_tex_id, _) = create_texture_and_texture_bind_group(
+        include_bytes!("resources/right-tex.png"),
+        "right-tex.png",
+        &mut renderer,
+    );
+
+    let (left_tex_id, _) = create_texture_and_texture_bind_group(
+        include_bytes!("resources/left-tex.png"),
+        "left-tex.png",
+        &mut renderer,
+    );
+
+    let (bottom_tex_id, _) = create_texture_and_texture_bind_group(
+        include_bytes!("resources/bottom-tex.png"),
+        "bottom-tex.png",
+        &mut renderer,
+    );
+
+    let (front_tex_id, _) = create_texture_and_texture_bind_group(
+        include_bytes!("resources/front-tex.png"),
+        "front-tex.png",
+        &mut renderer,
+    );
+
+    let (back_tex_id, _) = create_texture_and_texture_bind_group(
+        include_bytes!("resources/back-tex.png"),
+        "back-tex.png",
+        &mut renderer,
+    );
+
+    let texture_array_bind_group = renderer.create_texture_array(&[
+        front_tex_id,
+        bottom_tex_id,
+        front_tex_id,
+        back_tex_id,
+        left_tex_id,
+        right_tex_id,
+    ]);
+
+    let single_tex_mesh = MeshBuilder::new()
         .add_vertex_stream(POSITIONS)
         .add_vertex_stream(COLORS)
         .add_vertex_stream(TEX_COORDS)
         .add_vertex_stream(USE_TEXTURE)
         .add_index_stream(INDICES)
         .build(&renderer.device);
-    let tex_mesh_id = renderer.add_mesh(tex_mesh);
+    let single_tex_mesh_id = renderer.add_mesh(single_tex_mesh);
 
-    let tex_mesh_instance_buffer = InstanceDataBuilder::new()
+    let single_tex_mesh_instance_buffer = InstanceDataBuilder::new()
         .add_instance_stream(&[
             Transformation(Mat4::IDENTITY).to_data(),
-            Transformation(Mat4::from_translation((5.0, 0.0, 0.0).into())).to_data(),
+            //Transformation(Mat4::from_translation((5.0, 0.0, 0.0).into())).to_data(),
         ])
         .add_instance_stream(&[
             Material::new(1.0, 0.0, 0.0).to_data(),
+            //Material::new(1.0, 0.0, 0.0).to_data(),
+        ])
+        .build(&renderer.device);
+
+    let single_tex_mesh_object = RenderObject {
+        renderable: Renderable::TexturedMesh(
+            single_tex_mesh_id,
+            vec![(happy_tree_bind_group_id, 1)],
+        ),
+        instance: single_tex_mesh_instance_buffer,
+    };
+    let _tex_mesh_object_id = renderer.add_object(single_tex_mesh_object);
+
+    let single_tex_mesh = MeshBuilder::new()
+        .add_vertex_stream(POSITIONS)
+        .add_vertex_stream(COLORS)
+        .add_vertex_stream(TEX_COORDS)
+        .add_vertex_stream(USE_TEXTURE)
+        .add_index_stream(INDICES)
+        .build(&renderer.device);
+    let single_tex_mesh_id = renderer.add_mesh(single_tex_mesh);
+
+    let single_tex_mesh_instance_buffer = InstanceDataBuilder::new()
+        .add_instance_stream(&[
+            Transformation(Mat4::IDENTITY).to_data(),
+            //Transformation(Mat4::from_translation((5.0, 0.0, 0.0).into())).to_data(),
+        ])
+        .add_instance_stream(&[
+            Material::new(1.0, 0.0, 0.0).to_data(),
+            //Material::new(1.0, 0.0, 0.0).to_data(),
+        ])
+        .build(&renderer.device);
+
+    let single_tex_mesh_object = RenderObject {
+        renderable: Renderable::TexturedMesh(single_tex_mesh_id, vec![(top_tex_bind_group_id, 1)]),
+        instance: single_tex_mesh_instance_buffer,
+    };
+    let _single_tex_mesh_object_id = renderer.add_object(single_tex_mesh_object);
+
+    let single_tex_mesh_wireframe_object = RenderObject {
+        renderable: Renderable::WireframeMesh(single_tex_mesh_id),
+        instance: InstanceDataBuilder::new()
+            .add_instance_stream(&[
+                Transformation(Mat4::IDENTITY).to_data(),
+                //Transformation(Mat4::from_translation((5.0, 0.0, 0.0).into())).to_data(),
+            ])
+            .add_instance_stream(&[
+                Material::new(0.0, 0.0, 1.0).to_data(),
+                // Material::new(0.0, 0.0, 1.0).to_data(),
+            ])
+            .build(&renderer.device),
+    };
+    let _single_tex_mesh_wireframe_object_id =
+        renderer.add_object(single_tex_mesh_wireframe_object);
+
+    let multi_tex_mesh = MeshBuilder::new()
+        .add_vertex_stream(POSITIONS)
+        .add_vertex_stream(COLORS)
+        .add_vertex_stream(TEX_COORDS)
+        .add_vertex_stream(&normalized_box::get_use_texture_vertices(
+            UseTexture::from_texture_index(back_tex_id),
+            UseTexture::from_texture_index(front_tex_id),
+            UseTexture::from_texture_index(bottom_tex_id),
+            UseTexture::from_texture_index(top_tex_id),
+            UseTexture::from_texture_index(right_tex_id),
+            UseTexture::from_texture_index(left_tex_id),
+        ))
+        .add_index_stream(INDICES)
+        .build(&renderer.device);
+    let multi_tex_mesh_id = renderer.add_mesh(multi_tex_mesh);
+
+    let multi_tex_mesh_instance_buffer = InstanceDataBuilder::new()
+        .add_instance_stream(&[
+            //Transformation(Mat4::IDENTITY).to_data(),
+            Transformation(Mat4::from_translation((5.0, 0.0, 0.0).into())).to_data(),
+        ])
+        .add_instance_stream(&[
+            // Material::new(1.0, 0.0, 0.0).to_data(),
             Material::new(1.0, 0.0, 0.0).to_data(),
         ])
         .build(&renderer.device);
 
-    let tex_mesh_object = RenderObject {
-        renderable: Renderable::TexturedMesh(tex_mesh_id, vec![(happy_tree_bind_group_id, 1)]),
-        instance: tex_mesh_instance_buffer,
+    let multi_tex_mesh_object = RenderObject {
+        renderable: Renderable::ArrayTexturedMesh(
+            multi_tex_mesh_id,
+            vec![(texture_array_bind_group, 1)],
+        ),
+        instance: multi_tex_mesh_instance_buffer,
     };
-    let _tex_mesh_object_id = renderer.add_object(tex_mesh_object);
+    let _multi_tex_mesh_object = renderer.add_object(multi_tex_mesh_object);
 
-    let tex_mesh_wireframe_object = RenderObject {
-        renderable: Renderable::WireframeMesh(tex_mesh_id),
+    let multi_tex_mesh_wireframe_object = RenderObject {
+        renderable: Renderable::WireframeMesh(multi_tex_mesh_id),
         instance: InstanceDataBuilder::new()
             .add_instance_stream(&[
-                Transformation(Mat4::IDENTITY).to_data(),
+                //Transformation(Mat4::IDENTITY).to_data(),
                 Transformation(Mat4::from_translation((5.0, 0.0, 0.0).into())).to_data(),
             ])
             .add_instance_stream(&[
-                Material::new(0.0, 0.0, 1.0).to_data(),
+                // Material::new(0.0, 0.0, 1.0).to_data(),
                 Material::new(0.0, 0.0, 1.0).to_data(),
             ])
             .build(&renderer.device),
     };
-    let _tex_mesh_wireframe_object_id = renderer.add_object(tex_mesh_wireframe_object);
+    let _multi_tex_mesh_wireframe_object_id = renderer.add_object(multi_tex_mesh_wireframe_object);
 
     let colored_mesh = MeshBuilder::new()
         .add_vertex_stream(POSITIONS)
@@ -514,6 +746,15 @@ pub async fn run() {
 
     let image_buffer = renderer.render(&camera_bind_group).await;
     image_buffer.save("image.png").unwrap();
+}
+
+fn create_texture_and_texture_bind_group(
+    bytes: &[u8],
+    path: &str,
+    renderer: &mut Renderer,
+) -> (u32, u32) {
+    let tex = Texture::from_bytes(&renderer.device, &renderer.queue, bytes, path).unwrap();
+    renderer.add_texture(tex)
 }
 
 fn create_render_pipeline(

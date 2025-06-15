@@ -12,17 +12,25 @@ pub fn solid_render_pass(
     render_pipeline_cache: &HashMap<String, wgpu::RenderPipeline>,
     render_pass: &mut wgpu::RenderPass<'_>,
 ) {
-    let textured_objects = objects.iter().filter_map(|o| {
-        if let Renderable::TexturedMesh(mesh_id, local_bind_groups_list) = &o.renderable {
-            Some((mesh_id, &o.instance, local_bind_groups_list))
-        } else {
-            None
-        }
+    let single_textured_objects = objects.iter().filter_map(|o| match &o.renderable {
+        Renderable::TexturedMesh(mesh_id, local_bind_groups_list) => Some((
+            mesh_id,
+            &o.instance,
+            local_bind_groups_list,
+            "Textured Surface",
+        )),
+        Renderable::ArrayTexturedMesh(mesh_id, local_bind_groups_list) => Some((
+            mesh_id,
+            &o.instance,
+            local_bind_groups_list,
+            "Texture Array Surface",
+        )),
+        _ => None,
     });
 
-    for (mesh_id, instance, bind_groups_list) in textured_objects {
+    for (mesh_id, instance, bind_groups_list, pipeline_key) in single_textured_objects {
         let mesh = meshes.get(*mesh_id as usize).unwrap();
-        render_pass.set_pipeline(render_pipeline_cache.get("Textured Surface").unwrap());
+        render_pass.set_pipeline(render_pipeline_cache.get(pipeline_key).unwrap());
         let position_buffer = mesh.vertex_slice::<vertex::Position>();
         let color_buffer = mesh.vertex_slice::<vertex::Color>();
         let tex_coord_buffer = mesh.vertex_slice::<vertex::TexCoords>();
