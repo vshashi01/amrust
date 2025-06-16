@@ -20,7 +20,10 @@ use crate::{
     gpu_mesh::{GpuMesh, MeshBuilder},
     instance::{InstanceDataBuilder, InstanceFieldDescriptor},
     material::Material,
-    normalized_box::{COLORS, INDICES, ORDERED_POSITIONS, POSITIONS, TEX_COORDS, USE_TEXTURE},
+    normalized_box::{
+        COLORS, INDEXED_POSITIONS_BOX_EDGE_INDICES, INDICES, ORDERED_POSITIONS,
+        ORDERED_POSITIONS_BOX_EDGE_INDICES, POSITIONS, TEX_COORDS, TRI_EDGE_INDICES, USE_TEXTURE,
+    },
     object::RenderObject,
     render_pass::{solid_render_pass, wireframe_render_pass},
     renderables::Renderable,
@@ -33,7 +36,10 @@ use crate::{
     vertex::{UseTexture, VertexDescriptor},
 };
 
-use std::{collections::HashMap, num::NonZero, u32::MAX};
+use std::{
+    collections::{HashMap, HashSet},
+    num::NonZero,
+};
 
 #[derive(Debug, Error)]
 pub enum WgpuError {
@@ -61,6 +67,7 @@ pub struct Renderer {
     textures: Vec<Texture>,
     meshes: Vec<GpuMesh>,
     objects: Vec<RenderObject>,
+    invisible_objects: HashSet<usize>,
     local_bind_groups: Vec<wgpu::BindGroup>,
 
     // internal rendering resources
@@ -284,6 +291,7 @@ impl Renderer {
             textures: Vec::new(),
             meshes: Vec::new(),
             objects: Vec::new(),
+            invisible_objects: HashSet::new(),
             local_bind_groups: Vec::new(),
             global_bind_groups: Vec::new(),
             texture_bind_group_layout: basic_texture_bind_group_layout,
@@ -341,6 +349,14 @@ impl Renderer {
         (self.objects.len() - 1) as u32
     }
 
+    pub fn make_object_invisible(&mut self, object_id: usize) {
+        self.invisible_objects.insert(object_id);
+    }
+
+    pub fn make_object_visible(&mut self, object_id: &usize) {
+        self.invisible_objects.remove(object_id);
+    }
+
     pub fn add_global_bind_group(&mut self, bind_group: wgpu::BindGroup) -> u32 {
         self.global_bind_groups.push(bind_group);
 
@@ -396,8 +412,16 @@ impl Renderer {
                 render_pass.set_bind_group((i + 1) as u32, bind_group, &[]);
             }
 
+            let visible_objects = self
+                .objects
+                .iter()
+                .enumerate()
+                .filter(|(id, _)| !self.invisible_objects.contains(id))
+                .map(|(_, object)| object)
+                .collect::<Vec<_>>();
+
             solid_render_pass(
-                &self.objects,
+                &visible_objects,
                 &self.meshes,
                 &self.local_bind_groups,
                 &self.render_pipeline_cache,
@@ -405,7 +429,7 @@ impl Renderer {
             );
 
             wireframe_render_pass(
-                &self.objects,
+                &visible_objects,
                 &self.meshes,
                 &self.local_bind_groups,
                 &self.render_pipeline_cache,
@@ -504,7 +528,12 @@ pub async fn run() {
             },
             rotation_axis: Vec3::X,
             angle: std::f32::consts::FRAC_2_SQRT_PI,
-        });
+        })
+        .transform(camera::CameraTransform::Pan(Vec3 {
+            x: 1.0,
+            y: 1.0,
+            z: 0.0,
+        }));
 
     let camera = Camera::new(&camera_data);
     let camera_bind_group = camera.create_bind_group(&renderer.device);
@@ -515,7 +544,7 @@ pub async fn run() {
         &mut renderer,
     );
 
-    let (top_tex_id, top_tex_bind_group_id) = create_texture_and_texture_bind_group(
+    let (top_tex_id, _) = create_texture_and_texture_bind_group(
         include_bytes!("resources/top-tex.png"),
         "top-tex.png",
         &mut renderer,
@@ -565,7 +594,8 @@ pub async fn run() {
         .add_vertex_stream(COLORS)
         .add_vertex_stream(TEX_COORDS)
         .add_vertex_stream(USE_TEXTURE)
-        .add_index_stream(INDICES)
+        .add_mesh_index_stream(INDICES)
+        .add_wireframe_index_stream(TRI_EDGE_INDICES)
         .build(&renderer.device);
     let single_tex_mesh_id = renderer.add_mesh(single_tex_mesh);
 
@@ -585,32 +615,6 @@ pub async fn run() {
             single_tex_mesh_id,
             vec![(happy_tree_bind_group_id, 1)],
         ),
-        instance: single_tex_mesh_instance_buffer,
-    };
-    let _tex_mesh_object_id = renderer.add_object(single_tex_mesh_object);
-
-    let single_tex_mesh = MeshBuilder::new()
-        .add_vertex_stream(POSITIONS)
-        .add_vertex_stream(COLORS)
-        .add_vertex_stream(TEX_COORDS)
-        .add_vertex_stream(USE_TEXTURE)
-        .add_index_stream(INDICES)
-        .build(&renderer.device);
-    let single_tex_mesh_id = renderer.add_mesh(single_tex_mesh);
-
-    let single_tex_mesh_instance_buffer = InstanceDataBuilder::new()
-        .add_instance_stream(&[
-            Transformation(Mat4::IDENTITY).to_data(),
-            //Transformation(Mat4::from_translation((5.0, 0.0, 0.0).into())).to_data(),
-        ])
-        .add_instance_stream(&[
-            Material::new(1.0, 0.0, 0.0).to_data(),
-            //Material::new(1.0, 0.0, 0.0).to_data(),
-        ])
-        .build(&renderer.device);
-
-    let single_tex_mesh_object = RenderObject {
-        renderable: Renderable::TexturedMesh(single_tex_mesh_id, vec![(top_tex_bind_group_id, 1)]),
         instance: single_tex_mesh_instance_buffer,
     };
     let _single_tex_mesh_object_id = renderer.add_object(single_tex_mesh_object);
@@ -643,7 +647,8 @@ pub async fn run() {
             UseTexture::from_texture_index(right_tex_id),
             UseTexture::from_texture_index(left_tex_id),
         ))
-        .add_index_stream(INDICES)
+        .add_mesh_index_stream(INDICES)
+        .add_wireframe_index_stream(INDEXED_POSITIONS_BOX_EDGE_INDICES)
         .build(&renderer.device);
     let multi_tex_mesh_id = renderer.add_mesh(multi_tex_mesh);
 
@@ -665,7 +670,7 @@ pub async fn run() {
         ),
         instance: multi_tex_mesh_instance_buffer,
     };
-    let _multi_tex_mesh_object = renderer.add_object(multi_tex_mesh_object);
+    let _multi_tex_mesh_object_id = renderer.add_object(multi_tex_mesh_object);
 
     let multi_tex_mesh_wireframe_object = RenderObject {
         renderable: Renderable::WireframeMesh(multi_tex_mesh_id),
@@ -685,7 +690,8 @@ pub async fn run() {
     let colored_mesh = MeshBuilder::new()
         .add_vertex_stream(POSITIONS)
         .add_vertex_stream(COLORS)
-        .add_index_stream(INDICES)
+        .add_mesh_index_stream(INDICES)
+        .add_wireframe_index_stream(INDEXED_POSITIONS_BOX_EDGE_INDICES)
         .build(&renderer.device);
     let colored_mesh_id = renderer.add_mesh(colored_mesh);
 
@@ -711,11 +717,11 @@ pub async fn run() {
             .add_instance_stream(&[Material::new(0.0, 0.0, 1.0).to_data()])
             .build(&renderer.device),
     };
-
     let _colored_mesh_wireframe_object_id = renderer.add_object(colored_mesh_wireframe_object);
 
     let simple_mesh = MeshBuilder::new()
         .add_vertex_stream(ORDERED_POSITIONS)
+        .add_wireframe_index_stream(ORDERED_POSITIONS_BOX_EDGE_INDICES)
         .build(&renderer.device);
 
     let simple_mesh_id = renderer.add_mesh(simple_mesh);
@@ -743,6 +749,11 @@ pub async fn run() {
             .build(&renderer.device),
     };
     let _simple_mesh_wireframe_object_id = renderer.add_object(simple_mesh_wireframe_object);
+
+    // renderer.make_object_invisible(_single_tex_mesh_object_id as usize);
+    // renderer.make_object_invisible(_multi_tex_mesh_object_id as usize);
+    // renderer.make_object_invisible(_colored_mesh_object_id as usize);
+    // renderer.make_object_invisible(_simple_mesh_object_id as usize);
 
     let image_buffer = renderer.render(&camera_bind_group).await;
     image_buffer.save("image.png").unwrap();

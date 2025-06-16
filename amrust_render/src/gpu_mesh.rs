@@ -8,7 +8,8 @@ pub struct GpuMesh {
     pub buffer: wgpu::Buffer,
     pub vertex_count: u32,
     pub vertex_streams: Vec<VertexStream>,
-    pub index_stream: Option<IndexStream>,
+    pub mesh_index_stream: Option<IndexStream>,
+    pub wireframe_index_stream: Option<IndexStream>,
 }
 
 impl GpuMesh {
@@ -42,7 +43,8 @@ pub struct IndexStream {
 
 pub struct MeshBuilder {
     pub vertex_streams: Vec<VertexStream>,
-    pub index_stream: Option<IndexStream>,
+    pub mesh_index_stream: Option<IndexStream>,
+    pub wireframe_index_stream: Option<IndexStream>,
     pub data: Vec<u8>,
     pub vertex_count: u32,
 }
@@ -51,7 +53,8 @@ impl MeshBuilder {
     pub fn new() -> Self {
         Self {
             vertex_streams: Vec::new(),
-            index_stream: None,
+            mesh_index_stream: None,
+            wireframe_index_stream: None,
             data: Vec::new(),
             vertex_count: 0,
         }
@@ -94,9 +97,9 @@ impl MeshBuilder {
         self
     }
 
-    pub fn add_index_stream(&mut self, data: &[u16]) -> &mut Self {
+    pub fn add_mesh_index_stream(&mut self, data: &[u16]) -> &mut Self {
         assert!(
-            self.index_stream.is_none(),
+            self.mesh_index_stream.is_none(),
             "Index stream already set, cannot set again"
         );
 
@@ -105,7 +108,28 @@ impl MeshBuilder {
         let end = self.data.len() as wgpu::BufferAddress;
         let index_count = data.len() as u32;
 
-        self.index_stream = Some(IndexStream {
+        self.mesh_index_stream = Some(IndexStream {
+            offset,
+            end,
+            index_count,
+            format,
+        });
+
+        self
+    }
+
+    pub fn add_wireframe_index_stream(&mut self, data: &[u16]) -> &mut Self {
+        assert!(
+            self.wireframe_index_stream.is_none(),
+            "Index stream already set, cannot set again"
+        );
+
+        let offset = self.append(data);
+        let format = wgpu::IndexFormat::Uint16;
+        let end = self.data.len() as wgpu::BufferAddress;
+        let index_count = data.len() as u32;
+
+        self.wireframe_index_stream = Some(IndexStream {
             offset,
             end,
             index_count,
@@ -117,7 +141,10 @@ impl MeshBuilder {
 
     pub fn build(&mut self, device: &wgpu::Device) -> GpuMesh {
         let mut usage = wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST;
-        usage.set(wgpu::BufferUsages::INDEX, self.index_stream.is_some());
+        usage.set(
+            wgpu::BufferUsages::INDEX,
+            self.mesh_index_stream.is_some() || self.wireframe_index_stream.is_some(),
+        );
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Mesh Buffer"),
             contents: &self.data,
@@ -128,7 +155,8 @@ impl MeshBuilder {
             buffer,
             vertex_count: self.vertex_count,
             vertex_streams: self.vertex_streams.clone(),
-            index_stream: self.index_stream,
+            mesh_index_stream: self.mesh_index_stream,
+            wireframe_index_stream: self.wireframe_index_stream,
         }
     }
 }

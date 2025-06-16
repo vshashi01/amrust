@@ -6,7 +6,7 @@ use crate::{
 use std::collections::HashMap;
 
 pub fn solid_render_pass(
-    objects: &[RenderObject],
+    objects: &[&RenderObject],
     meshes: &[GpuMesh],
     local_bind_groups: &[wgpu::BindGroup],
     render_pipeline_cache: &HashMap<String, wgpu::RenderPipeline>,
@@ -51,7 +51,7 @@ pub fn solid_render_pass(
             render_pass.set_bind_group(pair.1, local_bind_group, &[]);
         }
 
-        if let Some(index_stream) = &mesh.index_stream {
+        if let Some(index_stream) = &mesh.mesh_index_stream {
             let index_buffer = mesh.buffer.slice(index_stream.offset..index_stream.end);
             render_pass.set_index_buffer(index_buffer, index_stream.format);
 
@@ -83,7 +83,7 @@ pub fn solid_render_pass(
         render_pass.set_vertex_buffer(2, transformation_buffer);
         render_pass.set_vertex_buffer(3, material_buffer);
 
-        if let Some(index_stream) = &mesh.index_stream {
+        if let Some(index_stream) = &mesh.mesh_index_stream {
             let index_buffer = mesh.buffer.slice(index_stream.offset..index_stream.end);
             render_pass.set_index_buffer(index_buffer, index_stream.format);
 
@@ -117,7 +117,7 @@ pub fn solid_render_pass(
 }
 
 pub fn wireframe_render_pass(
-    objects: &[RenderObject],
+    objects: &[&RenderObject],
     meshes: &[GpuMesh],
     local_bind_groups: &[wgpu::BindGroup],
     render_pipeline_cache: &HashMap<String, wgpu::RenderPipeline>,
@@ -144,7 +144,7 @@ pub fn wireframe_render_pass(
         render_pass.set_vertex_buffer(1, transformation_buffer);
         render_pass.set_vertex_buffer(2, material_buffer);
 
-        if let Some(index_stream) = &mesh.index_stream {
+        if let Some(index_stream) = &mesh.wireframe_index_stream {
             let index_buffer = mesh.buffer.slice(index_stream.offset..index_stream.end);
             render_pass.set_index_buffer(index_buffer, index_stream.format);
 
