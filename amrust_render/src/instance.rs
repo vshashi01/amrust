@@ -111,3 +111,9 @@ impl InstanceDataBuilder {
         }
     }
 }
+
+impl Default for InstanceDataBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}

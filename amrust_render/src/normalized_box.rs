@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use crate::vertex::{Color, Position, TexCoords, UseTexture};
 
 //

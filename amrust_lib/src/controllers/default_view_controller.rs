@@ -92,10 +92,10 @@ impl DefaultViewController {
             return controller.update_state(ctx);
         }
 
-        if self.make_render {
-            self.make_render = false;
-            amrust_render::run().await;
-        }
+        // if self.make_render {
+        //     self.make_render = false;
+        //     amrust_render::run().await;
+        // }
 
         Ok(())
     }

@@ -343,4 +343,16 @@ mod tests {
         env_logger::init();
         pollster::block_on(run());
     }
+
+    fn test_box_with_front_texture() {}
+
+    fn test_box_with_back_texture() {}
+
+    fn test_box_wireframe_only() {}
+
+    fn test_box_solid_color_only() {}
+
+    fn test_box_with_vertex_color_only() {}
+
+    fn test_box_with_vertex_color_and_texture() {}
 }
