@@ -1,7 +1,7 @@
 use glam::{Mat4, Vec3};
 use image::{ImageBuffer, Rgba};
 use thiserror::Error;
-use wgpu::{DepthStencilState, Limits, RenderPassDepthStencilAttachment, wgt::DeviceDescriptor};
+use wgpu::{Limits, RenderPassDepthStencilAttachment, wgt::DeviceDescriptor};
 
 mod camera;
 mod gpu_mesh;
@@ -9,6 +9,7 @@ mod instance;
 mod material;
 mod normalized_box;
 mod object;
+mod pipeline;
 mod render_pass;
 mod renderables;
 mod texture;
@@ -25,6 +26,7 @@ use crate::{
         ORDERED_POSITIONS_BOX_EDGE_INDICES, POSITIONS, TEX_COORDS, TRI_EDGE_INDICES, USE_TEXTURE,
     },
     object::RenderObject,
+    pipeline::{PipelineBuilder, create_depth_stencil_state},
     render_pass::{solid_render_pass, wireframe_render_pass},
     renderables::Renderable,
     texture::{
@@ -175,93 +177,93 @@ impl Renderer {
 
         let depth_texture = texture::DepthTexture::create_depth_texture(&device, texture_size);
 
-        let source =
-            wgpu::ShaderSource::Wgsl((include_str!("shaders/textured_vertex.wgsl")).into());
-        let texture_surface_render_pipeline = create_render_pipeline(
-            &device,
-            "Textured Surface",
-            source,
-            texture_desc.format,
-            &[
-                vertex::Position::layout::<0>(),
-                vertex::Color::layout::<1>(),
-                vertex::TexCoords::layout::<2>(),
-                vertex::UseTexture::layout::<3>(),
-                transformation::TransformationData::layout::<5>(),
-                material::RgbMaterialData::layout::<9>(),
-            ],
-            &[&camera_bind_group_layout, &basic_texture_bind_group_layout],
-            wgpu::PrimitiveTopology::TriangleList,
+        let standard_textured_vert_shader_source =
+            wgpu::ShaderSource::Wgsl((include_str!("shaders/textured_vert_shader.wgsl")).into());
+        let single_texture_frag_shader_source =
+            wgpu::ShaderSource::Wgsl((include_str!("shaders/texture_frag_shader.wgsl")).into());
+        let texture_surface_render_pipeline = PipelineBuilder::new()
+            .set_vertex_source(standard_textured_vert_shader_source, None)
+            .set_frag_source(single_texture_frag_shader_source, None)
+            .set_texture_format(texture_desc.format)
+            .add_vertex_buffer_layout(vertex::Position::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Color::layout::<1>())
+            .add_vertex_buffer_layout(vertex::TexCoords::layout::<2>())
+            .add_vertex_buffer_layout(vertex::UseTexture::layout::<3>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_bind_group_layout(&camera_bind_group_layout)
+            .add_bind_group_layout(&basic_texture_bind_group_layout)
+            .set_depth_stencil(create_depth_stencil_state())
+            .build(&device, "Textured Surface");
+
+        let standard_textured_vert_shader_source =
+            wgpu::ShaderSource::Wgsl((include_str!("shaders/textured_vert_shader.wgsl")).into());
+        let array_textures_frag_shader_source = wgpu::ShaderSource::Wgsl(
+            (include_str!("shaders/array_textures_frag_shader.wgsl")).into(),
         );
+        let texture_array_surface_render_pipeline = PipelineBuilder::new()
+            .set_vertex_source(standard_textured_vert_shader_source, None)
+            .set_frag_source(array_textures_frag_shader_source, None)
+            .set_texture_format(texture_desc.format)
+            .add_vertex_buffer_layout(vertex::Position::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Color::layout::<1>())
+            .add_vertex_buffer_layout(vertex::TexCoords::layout::<2>())
+            .add_vertex_buffer_layout(vertex::UseTexture::layout::<3>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_bind_group_layout(&camera_bind_group_layout)
+            .add_bind_group_layout(&texture_array_bind_group_layout)
+            .set_depth_stencil(create_depth_stencil_state())
+            .build(&device, "Texture Array Surface");
 
-        let source =
-            wgpu::ShaderSource::Wgsl((include_str!("shaders/array_texture_mesh.wgsl")).into());
-        let texture_array_surface_render_pipeline = create_render_pipeline(
-            &device,
-            "Texture Array Surface",
-            source,
-            texture_desc.format,
-            &[
-                vertex::Position::layout::<0>(),
-                vertex::Color::layout::<1>(),
-                vertex::TexCoords::layout::<2>(),
-                vertex::UseTexture::layout::<3>(),
-                transformation::TransformationData::layout::<5>(),
-                material::RgbMaterialData::layout::<9>(),
-            ],
-            &[&camera_bind_group_layout, &texture_array_bind_group_layout],
-            wgpu::PrimitiveTopology::TriangleList,
+        let colored_vert_shader_source =
+            wgpu::ShaderSource::Wgsl((include_str!("shaders/colored_vert_shader.wgsl")).into());
+        let colored_frag_shader_source =
+            wgpu::ShaderSource::Wgsl(include_str!("shaders/colored_frag_shader.wgsl").into());
+        let colored_surface_render_pipeline = PipelineBuilder::new()
+            .set_vertex_source(colored_vert_shader_source, None)
+            .set_frag_source(colored_frag_shader_source, None)
+            .set_texture_format(texture_desc.format)
+            .add_vertex_buffer_layout(vertex::Position::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Color::layout::<1>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_bind_group_layout(&camera_bind_group_layout)
+            .set_depth_stencil(create_depth_stencil_state())
+            .build(&device, "Colored Surface");
+
+        let solid_source = wgpu::ShaderSource::Wgsl(
+            (include_str!("shaders/material_color_vert_shader.wgsl")).into(),
         );
+        let colored_frag_shader_source =
+            wgpu::ShaderSource::Wgsl(include_str!("shaders/colored_frag_shader.wgsl").into());
+        let solid_render_pipeline = PipelineBuilder::new()
+            .set_vertex_source(solid_source, None)
+            .set_frag_source(colored_frag_shader_source, None)
+            .set_texture_format(texture_desc.format)
+            .add_vertex_buffer_layout(vertex::Position::layout::<0>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_bind_group_layout(&camera_bind_group_layout)
+            .set_depth_stencil(create_depth_stencil_state())
+            .build(&device, "Solid uniform");
 
-        let source = wgpu::ShaderSource::Wgsl((include_str!("shaders/colored_vertex.wgsl")).into());
-        let colored_surface_render_pipeline = create_render_pipeline(
-            &device,
-            "Colored Surface",
-            source,
-            texture_desc.format,
-            &[
-                vertex::Position::layout::<0>(),
-                vertex::Color::layout::<1>(),
-                transformation::TransformationData::layout::<5>(),
-                material::RgbMaterialData::layout::<9>(),
-            ],
-            &[&camera_bind_group_layout],
-            wgpu::PrimitiveTopology::TriangleList,
+        let colored_vert_shader_source = wgpu::ShaderSource::Wgsl(
+            (include_str!("shaders/material_color_vert_shader.wgsl")).into(),
         );
-
-        let solid_source =
-            wgpu::ShaderSource::Wgsl((include_str!("shaders/uniform_color_vertex.wgsl")).into());
-
-        let solid_render_pipeline = create_render_pipeline(
-            &device,
-            "Solid uniform",
-            solid_source,
-            texture_desc.format,
-            &[
-                vertex::Position::layout::<0>(),
-                transformation::TransformationData::layout::<5>(),
-                material::RgbMaterialData::layout::<9>(),
-            ],
-            &[&camera_bind_group_layout],
-            wgpu::PrimitiveTopology::TriangleList,
-        );
-
-        let wireframe_source =
-            wgpu::ShaderSource::Wgsl((include_str!("shaders/uniform_color_vertex.wgsl")).into());
-
-        let wireframe_render_pipeline = create_render_pipeline(
-            &device,
-            "Wireframe",
-            wireframe_source,
-            texture_desc.format,
-            &[
-                vertex::Position::layout::<0>(),
-                transformation::TransformationData::layout::<5>(),
-                material::RgbMaterialData::layout::<9>(),
-            ],
-            &[&camera_bind_group_layout],
-            wgpu::PrimitiveTopology::LineList,
-        );
+        let colored_frag_shader_source =
+            wgpu::ShaderSource::Wgsl(include_str!("shaders/colored_frag_shader.wgsl").into());
+        let wireframe_render_pipeline = PipelineBuilder::new()
+            .set_vertex_source(colored_vert_shader_source, None)
+            .set_frag_source(colored_frag_shader_source, None)
+            .set_texture_format(texture_desc.format)
+            .add_vertex_buffer_layout(vertex::Position::layout::<0>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_bind_group_layout(&camera_bind_group_layout)
+            .set_topology(wgpu::PrimitiveTopology::LineList)
+            .set_depth_stencil(create_depth_stencil_state())
+            .build(&device, "Solid Wireframe");
 
         let mut render_pipeline_cache = HashMap::new();
         render_pipeline_cache.insert(
@@ -766,86 +768,6 @@ fn create_texture_and_texture_bind_group(
 ) -> (u32, u32) {
     let tex = Texture::from_bytes(&renderer.device, &renderer.queue, bytes, path).unwrap();
     renderer.add_texture(tex)
-}
-
-fn create_render_pipeline(
-    device: &wgpu::Device,
-    shader_name: &str,
-    source: wgpu::ShaderSource,
-    texture_format: wgpu::TextureFormat,
-    buffers: &[wgpu::VertexBufferLayout<'static>],
-    bind_group_layouts: &[&wgpu::BindGroupLayout],
-    topology: wgpu::PrimitiveTopology,
-) -> wgpu::RenderPipeline {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some(shader_name),
-        source,
-    });
-
-    let pipeline_layout_name = format!("Pipeline Layout {shader_name}");
-    let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some(&pipeline_layout_name),
-        bind_group_layouts,
-        push_constant_ranges: &[],
-    });
-
-    let render_pipeline_name = format!("Render Pipeline: {shader_name}");
-
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some(&render_pipeline_name),
-        layout: Some(&render_pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
-            buffers,
-            compilation_options: Default::default(),
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: texture_format,
-                blend: Some(wgpu::BlendState {
-                    alpha: wgpu::BlendComponent::REPLACE,
-                    color: wgpu::BlendComponent::REPLACE,
-                }),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            compilation_options: Default::default(),
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology,
-            strip_index_format: None,
-            front_face: wgpu::FrontFace::Ccw,
-            cull_mode: Some(wgpu::Face::Back),
-            // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
-            polygon_mode: wgpu::PolygonMode::Fill,
-            // Requires Features::DEPTH_CLIP_CONTROL
-            unclipped_depth: false,
-            // Requires Features::CONSERVATIVE_RASTERIZATION
-            conservative: false,
-        },
-        depth_stencil: Some(DepthStencilState {
-            format: texture::DepthTexture::DEPTH_FORMAT,
-            depth_write_enabled: true,
-            depth_compare: wgpu::CompareFunction::Less,
-            stencil: wgpu::StencilState::default(),
-            bias: wgpu::DepthBiasState {
-                constant: 0,
-                slope_scale: 0.0,
-                clamp: 0.0,
-            },
-        }),
-        multisample: wgpu::MultisampleState {
-            count: 1,
-            mask: !0,
-            alpha_to_coverage_enabled: false,
-        },
-        // If the pipeline will be used with a multiview render pass, this
-        // indicates how many array layers the attachments will have.
-        multiview: None,
-        cache: None,
-    })
 }
 
 #[cfg(test)]

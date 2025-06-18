@@ -1,3 +1,4 @@
+
 struct CameraUniform {
     view_proj: mat4x4<f32>,
 };
@@ -29,7 +30,7 @@ struct InstanceInput {
 
 
 @vertex
-fn vs_main(model: VertexInput, instance: InstanceInput) -> VertexOutput {
+fn vertex_color_main(model: VertexInput, instance: InstanceInput) -> VertexOutput {
     var out: VertexOutput;
     let model_matrix = mat4x4<f32>(instance.model_matrix_0, instance.model_matrix_1, instance.model_matrix_2, instance.model_matrix_3,);
     out.color = model.color;
@@ -38,7 +39,17 @@ fn vs_main(model: VertexInput, instance: InstanceInput) -> VertexOutput {
     return out;
 }
 
-@fragment 
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(in.color, 1.0);
-}
+// @vertex
+// fn material_color_main(model: VertexInput, instance: InstanceInput) -> VertexOutput {
+//     var out: VertexOutput;
+//     let model_matrix = mat4x4<f32>(instance.model_matrix_0, instance.model_matrix_1, instance.model_matrix_2, instance.model_matrix_3,);
+//     out.clip_position = camera.view_proj * model_matrix * vec4<f32>(model.position, 1.0);
+//     out.color = instance.material; 
+
+//     return out;
+// }
+
+// @fragment 
+// fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+//     return vec4<f32>(in.color, 1.0);
+// }
