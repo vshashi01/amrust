@@ -88,8 +88,6 @@ impl<'a> PipelineBuilder<'a> {
             None => panic!("Vertex shader not found"),
         };
 
-        // let bind_group_layout_refs: Vec<&wgpu::BindGroupLayout> =
-        //     self.bind_group_layouts.iter().collect();
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(&format!("Pipeline Layout: {name}")),

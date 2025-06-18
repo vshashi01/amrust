@@ -1,7 +1,4 @@
-use crate::{
-    gpu_mesh::GpuMesh, material, object::RenderObject, renderables::Renderable, transformation,
-    vertex,
-};
+use crate::{RenderObject, Renderable, gpu_mesh::GpuMesh, material, transformation, vertex};
 
 use std::collections::HashMap;
 
