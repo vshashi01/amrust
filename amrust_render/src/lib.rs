@@ -317,7 +317,7 @@ mod tests {
         let texture_array_bind_group = renderer.create_texture_array(&[
             front_tex_id,
             bottom_tex_id,
-            front_tex_id,
+            top_tex_id,
             back_tex_id,
             left_tex_id,
             right_tex_id,
@@ -328,12 +328,12 @@ mod tests {
             .add_vertex_stream(COLORS)
             .add_vertex_stream(TEX_COORDS)
             .add_vertex_stream(&normalized_box::get_use_texture_vertices(
-                vertex::UseTexture::from_texture_index(back_tex_id),
-                vertex::UseTexture::from_texture_index(front_tex_id),
-                vertex::UseTexture::from_texture_index(bottom_tex_id),
-                vertex::UseTexture::no(),
-                vertex::UseTexture::from_texture_index(top_tex_id),
-                vertex::UseTexture::from_texture_index(right_tex_id),
+                vertex::UseTexture::from_texture_index(3),
+                vertex::UseTexture::from_texture_index(0),
+                vertex::UseTexture::from_texture_index(1),
+                vertex::UseTexture::no(), //2
+                vertex::UseTexture::from_texture_index(5),
+                vertex::UseTexture::from_texture_index(4),
                 // vertex::UseTexture::from_texture_index(left_tex_id),
             ))
             .add_mesh_index_stream(INDICES)
