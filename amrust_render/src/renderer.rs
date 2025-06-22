@@ -337,7 +337,7 @@ impl Renderer {
     pub async fn render(
         &self,
         primary_camera_bind_group: &wgpu::BindGroup,
-    ) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
+    ) -> Result<(), WgpuError> {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -423,6 +423,10 @@ impl Renderer {
 
         self.queue.submit(Some(encoder.finish()));
 
+        Ok(())
+    }
+
+    pub async fn present(&mut self) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
         // We need to scope the mapping variables so that we can
         // unmap the buffer
         let image_buffer = {

@@ -74,9 +74,42 @@ pub const POSITIONS: &[Position] = &[
     Position([-1.0, -1.0, 1.0]),  // 4 ~ 23
 ];
 
+// pub const COLORS: &[Color] = &[
+//     // All faces use the same color
+//     Color([0.5, 0.0, 0.5]); 24
+// ];
+
 pub const COLORS: &[Color] = &[
-    // All faces use the same color
-    Color([0.5, 0.0, 0.5]); 24
+    // back face                  // vertices ~ index
+    Color([1.0, 0.5, 0.0]), // 0 ~ 0
+    Color([1.0, 0.5, 0.0]), // 1 ~ 1
+    Color([1.0, 0.5, 0.0]), // 2 ~ 2
+    Color([1.0, 0.5, 0.0]), // 3 ~ 3
+    // front face
+    Color([1.0, 0.0, 0.0]), // 4 ~ 4
+    Color([1.0, 0.0, 0.0]), // 5 ~ 5
+    Color([1.0, 0.0, 0.0]), // 6 ~ 6
+    Color([1.0, 0.0, 0.0]), // 7 ~ 7
+    // bottom face
+    Color([1.0, 0.0, 0.0]), // 4 ~ 8
+    Color([1.0, 0.5, 0.0]), // 0 ~ 9
+    Color([1.0, 0.0, 0.0]), // 7 ~ 10
+    Color([1.0, 0.5, 0.0]), // 1 ~ 11
+    // top face
+    Color([1.0, 0.5, 0.0]), // 3 ~ 12
+    Color([1.0, 0.0, 0.0]), // 5 ~ 13
+    Color([1.0, 0.5, 0.0]), // 2 ~ 14
+    Color([1.0, 0.0, 0.0]), // 6 ~ 15
+    // right face
+    Color([1.0, 0.0, 0.0]), // 6 ~ 16
+    Color([1.0, 0.0, 0.0]), // 7 ~ 17
+    Color([1.0, 0.5, 0.0]), // 2 ~ 18
+    Color([1.0, 0.5, 0.0]), // 1 ~ 19
+    // left face
+    Color([1.0, 0.5, 0.0]), // 3 ~ 20
+    Color([1.0, 0.5, 0.0]), // 0 ~ 21
+    Color([1.0, 0.0, 0.0]), // 5 ~ 22
+    Color([1.0, 0.0, 0.0]), // 4 ~ 23
 ];
 
 pub const TEX_COORDS: &[TexCoords] = &[
