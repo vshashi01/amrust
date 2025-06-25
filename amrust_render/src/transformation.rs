@@ -1,3 +1,6 @@
+#[cfg(feature = "egui_wgpu")]
+use egui_wgpu::wgpu;
+
 use glam::Mat4;
 
 use crate::instance::InstanceFieldDescriptor;

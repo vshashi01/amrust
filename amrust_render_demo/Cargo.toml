@@ -1,0 +1,26 @@
+[[bin]]
+name = "AMRUST_RENDER_DEMO"
+version = "0.1.0"
+path = "src/main.rs"
+
+[package]
+name = "amrust_render_demo"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+
+winit = { version = "0.30.11", features = ["rwh_05"] }
+egui-wgpu = "0.31.1"
+pollster = "0.4.0"
+wgpu = "25.0.0"
+env_logger = "0.11.8"
+bytemuck = { version = "1.14", features = ["derive"] }
+anyhow = "1.0.77"
+cfg-if = "1.0.0"
+log = "0.4.20"
+egui-winit = "0.31.1"
+egui = "0.31.1"
+
+amrust_render = { path = "../amrust_render" }

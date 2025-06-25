@@ -1,3 +1,6 @@
+#[cfg(feature = "egui_wgpu")]
+use egui_wgpu::wgpu;
+
 use thiserror::Error;
 
 //export module
@@ -20,6 +23,7 @@ pub enum WgpuError {
     #[error("Something went wrong with the Device request")]
     DeviceError(#[from] wgpu::RequestDeviceError),
 
+    #[cfg(feature = "wgpu")]
     #[error("When something goes wrong with the adapter")]
     AdapterError(#[from] wgpu::RequestAdapterError),
 }
@@ -65,13 +69,13 @@ mod tests {
     #[test]
     fn test_box_wireframe_only() {
         pollster::block_on(async {
-            let mut renderer = renderer::Renderer::new_texture_based(TEXTURE_WIDTH, TEXTURE_HEIGHT)
+            let mut renderer = renderer::Renderer::from_new_device(TEXTURE_WIDTH, TEXTURE_HEIGHT)
                 .await
                 .unwrap();
             let _wireframe_object_id = set_wireframe_mesh_object(&mut renderer);
 
             let camera_bind_group = get_camera_bind_group(&renderer.device);
-            let _ = renderer.render(&camera_bind_group).await;
+            let _ = renderer.render(None, &camera_bind_group).await;
             let image_buffer = renderer.present().await;
             // image_buffer.save("tests/data/wireframe_mesh.png").unwrap();
 
@@ -96,13 +100,13 @@ mod tests {
     #[test]
     fn test_box_solid_color_only() {
         pollster::block_on(async {
-            let mut renderer = renderer::Renderer::new_texture_based(TEXTURE_WIDTH, TEXTURE_HEIGHT)
+            let mut renderer = renderer::Renderer::from_new_device(TEXTURE_WIDTH, TEXTURE_HEIGHT)
                 .await
                 .unwrap();
             let (_mesh_object_id, _wireframe_object_id) = set_solid_mesh(&mut renderer);
 
             let camera_bind_group = get_camera_bind_group(&renderer.device);
-            let _ = renderer.render(&camera_bind_group).await;
+            let _ = renderer.render(None, &camera_bind_group).await;
             let image_buffer = renderer.present().await;
             // image_buffer.save("tests/data/solid_color_mesh.png").unwrap();
 
@@ -127,13 +131,13 @@ mod tests {
     #[test]
     fn test_box_with_vertex_color_only() {
         pollster::block_on(async {
-            let mut renderer = renderer::Renderer::new_texture_based(TEXTURE_WIDTH, TEXTURE_HEIGHT)
+            let mut renderer = renderer::Renderer::from_new_device(TEXTURE_WIDTH, TEXTURE_HEIGHT)
                 .await
                 .unwrap();
             let (_mesh_object_id, _wireframe_object_id) = set_colored_mesh_object(&mut renderer);
 
             let camera_bind_group = get_camera_bind_group(&renderer.device);
-            let _ = renderer.render(&camera_bind_group).await;
+            let _ = renderer.render(None, &camera_bind_group).await;
             let image_buffer = renderer.present().await;
             // image_buffer
             //     .save("tests/data/vertex_color_mesh.png")
@@ -160,13 +164,13 @@ mod tests {
     #[test]
     fn test_box_with_single_texture_and_vertex_colors() {
         pollster::block_on(async {
-            let mut renderer = renderer::Renderer::new_texture_based(TEXTURE_WIDTH, TEXTURE_HEIGHT)
+            let mut renderer = renderer::Renderer::from_new_device(TEXTURE_WIDTH, TEXTURE_HEIGHT)
                 .await
                 .unwrap();
             let (_mesh_object_id, _wireframe_object_id) = single_tex_mesh_object(&mut renderer);
 
             let camera_bind_group = get_camera_bind_group(&renderer.device);
-            let _ = renderer.render(&camera_bind_group).await;
+            let _ = renderer.render(None, &camera_bind_group).await;
             let image_buffer = renderer.present().await;
             // image_buffer.save("tests/data/single_tex_mesh.png").unwrap();
 
@@ -191,13 +195,13 @@ mod tests {
     #[test]
     fn test_box_with_multiple_textures_and_vertex_colors() {
         pollster::block_on(async {
-            let mut renderer = renderer::Renderer::new_texture_based(TEXTURE_WIDTH, TEXTURE_HEIGHT)
+            let mut renderer = renderer::Renderer::from_new_device(TEXTURE_WIDTH, TEXTURE_HEIGHT)
                 .await
                 .unwrap();
             let (_mesh_object_id, _wireframe_object_id) = set_multi_tex_mesh_object(&mut renderer);
 
             let camera_bind_group = get_camera_bind_group(&renderer.device);
-            let _ = renderer.render(&camera_bind_group).await;
+            let _ = renderer.render(None, &camera_bind_group).await;
             let image_buffer = renderer.present().await;
             // image_buffer
             //     .save("tests/data/array_tex_mesh_new.png")

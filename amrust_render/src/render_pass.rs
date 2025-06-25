@@ -1,3 +1,6 @@
+#[cfg(feature = "egui_wgpu")]
+use egui_wgpu::wgpu;
+
 use crate::{RenderObject, Renderable, gpu_mesh::GpuMesh, material, transformation, vertex};
 
 use std::collections::HashMap;

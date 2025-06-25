@@ -1,3 +1,6 @@
+#[cfg(feature = "egui_wgpu")]
+use egui_wgpu::wgpu;
+
 pub trait VertexDescriptor {
     fn layout<const LOCATION: u32>() -> wgpu::VertexBufferLayout<'static>;
 }

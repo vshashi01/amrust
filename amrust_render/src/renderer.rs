@@ -1,3 +1,6 @@
+#[cfg(feature = "egui_wgpu")]
+use egui_wgpu::wgpu;
+
 use image::{ImageBuffer, Rgba};
 
 use crate::{
@@ -14,17 +17,20 @@ use std::{
     num::NonZero,
 };
 
+pub struct RenderTextureData {
+    pub texture: wgpu::Texture,
+    pub texture_view: wgpu::TextureView,
+    pub texture_size: wgpu::Extent3d,
+}
+
 pub struct Renderer {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
 
     // properties related to the render surface
-    output_buffer: wgpu::Buffer,
+    output_buffer: Option<wgpu::Buffer>,
     texture_size: wgpu::Extent3d,
     texture_format: wgpu::TextureFormat, //stored for future dynamic render pipeline creation
-    texture: wgpu::Texture,
-    texture_view: wgpu::TextureView,
-    depth_texture: texture::DepthTexture,
 
     // external rendering resources
     // consider splitting these to separate struct to be managed by the app
@@ -44,8 +50,56 @@ pub struct Renderer {
     render_pipeline_cache: HashMap<String, wgpu::RenderPipeline>,
 }
 
+pub const DEVICE_FEATURES: [wgpu::Features; 2] = [
+    wgpu::Features::TEXTURE_BINDING_ARRAY,
+    wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
+];
+
+#[cfg(feature = "wgpu")]
+pub const DEVICE_LIMITS: wgpu::Limits = wgpu::Limits {
+    max_binding_array_elements_per_shader_stage:
+        texture::MAX_BINDING_ARRAY_ELEMENTS_PER_SHADER_STAGE,
+    max_binding_array_sampler_elements_per_shader_stage:
+        texture::MAX_BINDING_ARRAY_SAMPLERS_PER_SHADER_STAGE,
+    max_texture_dimension_2d: texture::MAX_TEXTURE_SIZE,
+    ..wgpu::Limits::downlevel_defaults()
+};
+
+#[cfg(feature = "egui_wgpu")]
+pub const DEVICE_LIMITS: wgpu::Limits = wgpu::Limits {
+    max_texture_dimension_2d: texture::MAX_TEXTURE_SIZE,
+    ..wgpu::Limits::downlevel_defaults()
+};
+
 impl Renderer {
-    pub async fn new_texture_based(width: u32, height: u32) -> Result<Self, WgpuError> {
+    pub async fn from_existing_device_and_queue(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        texture_format: wgpu::TextureFormat,
+        texture_size: wgpu::Extent3d,
+    ) -> Result<Self, WgpuError> {
+        for features in DEVICE_FEATURES {
+            if !device.features().contains(features) {
+                panic!(
+                    "Required feature {:?} is not supported by the device",
+                    features
+                );
+            }
+        }
+
+        let limits_satisfied = device.limits().check_limits(&DEVICE_LIMITS);
+
+        if !limits_satisfied {
+            panic!(
+                "Device does not support required limits: {:?}",
+                DEVICE_LIMITS
+            );
+        }
+
+        Self::setup_new_renderer(device, queue, texture_format, texture_size, None)
+    }
+
+    pub async fn from_new_device(width: u32, height: u32) -> Result<Self, WgpuError> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::VULKAN,
             ..Default::default()
@@ -59,34 +113,33 @@ impl Renderer {
             .await
             .unwrap();
 
-        println!("{:?}", adapter.get_info());
+        let required_features = DEVICE_FEATURES
+            .iter()
+            .fold(wgpu::Features::empty(), |acc, &f| acc | f);
 
-        adapter
-            .features()
-            .contains(wgpu::Features::TEXTURE_BINDING_ARRAY)
-            .then(|| {
-                println!("Adapter supports TEXTURE_BINDING_ARRAY feature");
-            })
-            .unwrap_or_else(|| {
-                println!("Adapter does not support TEXTURE_BINDING_ARRAY feature");
-            });
+        #[cfg(feature = "wgpu")]
+        let device_descriptor = wgpu::DeviceDescriptor {
+            label: Some("Gpu Device"),
+            required_features,
+            required_limits: DEVICE_LIMITS,
+            memory_hints: wgpu::MemoryHints::Performance,
+            trace: wgpu::Trace::Off,
+        };
 
+        #[cfg(feature = "egui_wgpu")]
+        let device_descriptor = wgpu::DeviceDescriptor {
+            label: Some("Gpu Device"),
+            required_features,
+            required_limits: DEVICE_LIMITS,
+            memory_hints: wgpu::MemoryHints::Performance,
+        };
+
+        #[cfg(feature = "wgpu")]
+        let (device, queue) = adapter.request_device(&device_descriptor).await.unwrap();
+
+        #[cfg(feature = "egui_wgpu")]
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: Some("Gpu Device"),
-                required_features: wgpu::Features::TEXTURE_BINDING_ARRAY
-                    | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
-                required_limits: wgpu::Limits {
-                    max_binding_array_elements_per_shader_stage:
-                        texture::MAX_BINDING_ARRAY_ELEMENTS_PER_SHADER_STAGE,
-                    max_binding_array_sampler_elements_per_shader_stage:
-                        texture::MAX_BINDING_ARRAY_SAMPLERS_PER_SHADER_STAGE,
-                    max_texture_dimension_2d: texture::MAX_TEXTURE_SIZE,
-                    ..wgpu::Limits::downlevel_defaults()
-                },
-                memory_hints: wgpu::MemoryHints::Performance,
-                trace: wgpu::Trace::Off,
-            })
+            .request_device(&device_descriptor, None)
             .await
             .unwrap();
 
@@ -97,19 +150,6 @@ impl Renderer {
         };
 
         let texture_format = wgpu::TextureFormat::Rgba8UnormSrgb;
-
-        let texture_desc = wgpu::TextureDescriptor {
-            size: texture_size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: texture_format,
-            usage: wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::RENDER_ATTACHMENT,
-            label: None,
-            view_formats: &[],
-        };
-        let texture = device.create_texture(&texture_desc);
-        let texture_view = texture.create_view(&Default::default());
 
         let u32_size = std::mem::size_of::<u32>() as u32;
         let output_buffer_size = (u32_size * width * height) as wgpu::BufferAddress;
@@ -123,6 +163,22 @@ impl Renderer {
         };
         let output_buffer = device.create_buffer(&output_buffer_desc);
 
+        Self::setup_new_renderer(
+            device,
+            queue,
+            texture_format,
+            texture_size,
+            Some(output_buffer),
+        )
+    }
+
+    fn setup_new_renderer(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        texture_format: wgpu::TextureFormat,
+        texture_size: wgpu::Extent3d,
+        output_buffer: Option<wgpu::Buffer>,
+    ) -> Result<Self, WgpuError> {
         let camera_bind_group_layout = Camera::create_bind_group_layout(&device);
         let basic_texture_bind_group_layout = texture::generate_texture_bind_group_layout::<0, 1>(
             &device,
@@ -138,8 +194,6 @@ impl Renderer {
                 NonZero::new(texture::MAX_BINDING_ARRAY_ELEMENTS_PER_SHADER_STAGE).unwrap(),
             );
 
-        let depth_texture = texture::DepthTexture::create_depth_texture(&device, texture_size);
-
         let standard_textured_vert_shader_source =
             wgpu::ShaderSource::Wgsl((include_str!("shaders/textured_vert_shader.wgsl")).into());
         let single_texture_frag_shader_source =
@@ -147,7 +201,7 @@ impl Renderer {
         let texture_surface_render_pipeline = pipeline::PipelineBuilder::new()
             .set_vertex_source(standard_textured_vert_shader_source, None)
             .set_frag_source(single_texture_frag_shader_source, None)
-            .set_texture_format(texture_desc.format)
+            .set_texture_format(texture_format)
             .add_vertex_buffer_layout(vertex::Position::layout::<0>())
             .add_vertex_buffer_layout(vertex::Color::layout::<1>())
             .add_vertex_buffer_layout(vertex::TexCoords::layout::<2>())
@@ -167,7 +221,7 @@ impl Renderer {
         let texture_array_surface_render_pipeline = pipeline::PipelineBuilder::new()
             .set_vertex_source(standard_textured_vert_shader_source, None)
             .set_frag_source(array_textures_frag_shader_source, None)
-            .set_texture_format(texture_desc.format)
+            .set_texture_format(texture_format)
             .add_vertex_buffer_layout(vertex::Position::layout::<0>())
             .add_vertex_buffer_layout(vertex::Color::layout::<1>())
             .add_vertex_buffer_layout(vertex::TexCoords::layout::<2>())
@@ -186,7 +240,7 @@ impl Renderer {
         let colored_surface_render_pipeline = pipeline::PipelineBuilder::new()
             .set_vertex_source(colored_vert_shader_source, None)
             .set_frag_source(colored_frag_shader_source, None)
-            .set_texture_format(texture_desc.format)
+            .set_texture_format(texture_format)
             .add_vertex_buffer_layout(vertex::Position::layout::<0>())
             .add_vertex_buffer_layout(vertex::Color::layout::<1>())
             .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
@@ -203,7 +257,7 @@ impl Renderer {
         let solid_render_pipeline = pipeline::PipelineBuilder::new()
             .set_vertex_source(solid_source, None)
             .set_frag_source(colored_frag_shader_source, None)
-            .set_texture_format(texture_desc.format)
+            .set_texture_format(texture_format)
             .add_vertex_buffer_layout(vertex::Position::layout::<0>())
             .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
             .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
@@ -219,7 +273,7 @@ impl Renderer {
         let wireframe_render_pipeline = pipeline::PipelineBuilder::new()
             .set_vertex_source(colored_vert_shader_source, None)
             .set_frag_source(colored_frag_shader_source, None)
-            .set_texture_format(texture_desc.format)
+            .set_texture_format(texture_format)
             .add_vertex_buffer_layout(vertex::Position::layout::<0>())
             .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
             .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
@@ -250,9 +304,6 @@ impl Renderer {
             output_buffer,
             texture_size,
             texture_format,
-            texture,
-            texture_view,
-            depth_texture,
             textures: Vec::new(),
             meshes: Vec::new(),
             objects: Vec::new(),
@@ -264,6 +315,27 @@ impl Renderer {
             texture_sampler,
             render_pipeline_cache,
         })
+    }
+
+    pub fn create_texture_data(&self) -> RenderTextureData {
+        let texture_desc = wgpu::TextureDescriptor {
+            size: self.texture_size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.texture_format,
+            usage: wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            label: None,
+            view_formats: &[],
+        };
+        let texture = self.device.create_texture(&texture_desc);
+        let texture_view = texture.create_view(&Default::default());
+
+        RenderTextureData {
+            texture,
+            texture_view,
+            texture_size: self.texture_size,
+        }
     }
 
     // returns the texture id and the bind group id
@@ -336,8 +408,28 @@ impl Renderer {
 
     pub async fn render(
         &self,
+        render_texture_data: Option<&RenderTextureData>,
         primary_camera_bind_group: &wgpu::BindGroup,
     ) -> Result<(), WgpuError> {
+        let texture_data = match render_texture_data {
+            Some(data) => data,
+            None => &self.create_texture_data(),
+        };
+        // let texture_desc = wgpu::TextureDescriptor {
+        //     size: self.texture_size,
+        //     mip_level_count: 1,
+        //     sample_count: 1,
+        //     dimension: wgpu::TextureDimension::D2,
+        //     format: self.texture_format,
+        //     usage: wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::RENDER_ATTACHMENT,
+        //     label: None,
+        //     view_formats: &[],
+        // };
+        // let texture = self.device.create_texture(&texture_desc);
+        // let texture_view = texture.create_view(&Default::default());
+        let depth_texture =
+            texture::DepthTexture::create_depth_texture(&self.device, self.texture_size);
+
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -346,7 +438,7 @@ impl Renderer {
             let render_pass_desc = wgpu::RenderPassDescriptor {
                 label: Some("Surface Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.texture_view,
+                    view: &texture_data.texture_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -359,7 +451,7 @@ impl Renderer {
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_texture.view,
+                    view: &depth_texture.view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
@@ -402,24 +494,29 @@ impl Renderer {
             );
         }
 
-        let u32_size = std::mem::size_of::<u32>() as u32;
-        encoder.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo {
-                aspect: wgpu::TextureAspect::All,
-                texture: &self.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-            },
-            wgpu::TexelCopyBufferInfo {
-                buffer: &self.output_buffer,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(u32_size * self.texture_size.width),
-                    rows_per_image: Some(self.texture_size.height),
-                },
-            },
-            self.texture_size,
-        );
+        match &self.output_buffer {
+            Some(buffer) => {
+                let u32_size = std::mem::size_of::<u32>() as u32;
+                encoder.copy_texture_to_buffer(
+                    wgpu::TexelCopyTextureInfo {
+                        aspect: wgpu::TextureAspect::All,
+                        texture: &texture_data.texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                    },
+                    wgpu::TexelCopyBufferInfo {
+                        buffer,
+                        layout: wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(u32_size * self.texture_size.width),
+                            rows_per_image: Some(self.texture_size.height),
+                        },
+                    },
+                    self.texture_size,
+                );
+            }
+            None => panic!("Output buffer is not set!"),
+        }
 
         self.queue.submit(Some(encoder.finish()));
 
@@ -427,33 +524,47 @@ impl Renderer {
     }
 
     pub async fn present(&mut self) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
-        // We need to scope the mapping variables so that we can
-        // unmap the buffer
-        let image_buffer = {
-            let buffer_slice = self.output_buffer.slice(..);
+        match &self.output_buffer {
+            Some(buffer) => {
+                // We need to scope the mapping variables so that we can
+                // unmap the buffer
+                let image_buffer = {
+                    let buffer_slice = buffer.slice(..);
 
-            // NOTE: We have to create the mapping THEN device.poll() before await
-            // the future. Otherwise the application will freeze.
-            let (tx, rx) = futures_intrusive::channel::shared::oneshot_channel();
-            buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-                tx.send(result).unwrap();
-            });
-            self.device.poll(wgpu::PollType::Wait).unwrap();
-            rx.receive().await.unwrap().unwrap();
+                    // NOTE: We have to create the mapping THEN device.poll() before await
+                    // the future. Otherwise the application will freeze.
+                    let (tx, rx) = futures_intrusive::channel::shared::oneshot_channel();
+                    buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+                        tx.send(result).unwrap();
+                    });
 
-            let data = buffer_slice.get_mapped_range();
+                    #[cfg(feature = "wgpu")]
+                    match self.device.poll(wgpu::PollType::Wait) {
+                        Ok(status) => true,
+                        Err(_) => false,
+                    };
 
-            use image::{ImageBuffer, Rgba};
+                    #[cfg(feature = "egui_wgpu")]
+                    self.device.poll(wgpu::Maintain::Wait).panic_on_timeout();
 
-            ImageBuffer::<Rgba<u8>, _>::from_raw(
-                self.texture_size.width,
-                self.texture_size.height,
-                data.to_vec(),
-            )
-            .unwrap()
-        };
-        self.output_buffer.unmap();
+                    rx.receive().await.unwrap().unwrap();
 
-        image_buffer
+                    let data = buffer_slice.get_mapped_range();
+
+                    use image::{ImageBuffer, Rgba};
+
+                    ImageBuffer::<Rgba<u8>, _>::from_raw(
+                        self.texture_size.width,
+                        self.texture_size.height,
+                        data.to_vec(),
+                    )
+                    .unwrap()
+                };
+                buffer.unmap();
+
+                image_buffer
+            }
+            None => panic!("Output buffer is not set!"),
+        }
     }
 }

@@ -1,3 +1,6 @@
+#[cfg(feature = "egui_wgpu")]
+use egui_wgpu::wgpu;
+
 use crate::texture;
 
 pub struct PipelineBuilder<'a> {

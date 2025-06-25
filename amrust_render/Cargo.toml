@@ -3,15 +3,23 @@ name = "amrust_render"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["egui_wgpu"]
+wgpu = ["dep:wgpu"]
+egui_wgpu = ["dep:egui-wgpu"]
+
 [dependencies]
 futures-intrusive = { version = "0.5.0" }
-wgpu = { version = "25.0.0", features = ["spirv"] }
+wgpu = { version = "25.0.0", features = ["spirv"], optional = true }
 log = { version = "0.4.27" }
 bytemuck = { version = "1.23.0", features = ["derive"] }
 glam = { version = "0.30.3" }
 image = { version = "0.25.6" }
 thiserror = { version = "2.0.11" }
 anyhow = { version = "1.0.98" }
+egui-wgpu = { version = "0.31.1", optional = true }
+cfg-if = { version = "1.0.0" }
+
 
 [dev-dependencies]
 pollster = { version = "0.4.0" }
