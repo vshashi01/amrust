@@ -1,9 +1,8 @@
-#[cfg(feature = "egui_wgpu")]
-use egui_wgpu::wgpu;
+use anyhow::Result;
+
+use crate::prelude::*;
 
 use std::num::NonZero;
-
-use anyhow::Result;
 
 pub const MAX_TEXTURE_SIZE: u32 = 8192;
 pub const MAX_BINDING_ARRAY_ELEMENTS_PER_SHADER_STAGE: u32 = 6; // Maximum number of texture bindings per shader stage

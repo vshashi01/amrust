@@ -1,20 +1,21 @@
-#[cfg(feature = "egui_wgpu")]
-use egui_wgpu::wgpu;
-
 use thiserror::Error;
+
+mod prelude;
+pub use prelude::*;
 
 //export module
 pub mod camera;
 pub mod gpu_mesh;
 pub mod instance;
 pub mod material;
+pub mod normalized_box;
 pub mod renderer;
 pub mod texture;
 pub mod transformation;
 pub mod vertex;
 
 // internal module
-mod normalized_box;
+// mod normalized_box;
 mod pipeline;
 mod render_pass;
 

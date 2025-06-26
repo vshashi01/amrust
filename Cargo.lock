@@ -222,6 +222,7 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "env_logger",
+ "glam",
  "log",
  "pollster",
  "wgpu 25.0.0",

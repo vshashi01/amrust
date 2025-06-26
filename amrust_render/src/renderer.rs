@@ -1,7 +1,6 @@
-#[cfg(feature = "egui_wgpu")]
-use egui_wgpu::wgpu;
-
 use image::{ImageBuffer, Rgba};
+
+use crate::prelude::*;
 
 use crate::{
     RenderObject, WgpuError,
@@ -317,14 +316,16 @@ impl Renderer {
         })
     }
 
-    pub fn create_texture_data(&self) -> RenderTextureData {
+    pub fn create_render_texture_data(&self) -> RenderTextureData {
         let texture_desc = wgpu::TextureDescriptor {
             size: self.texture_size,
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: self.texture_format,
-            usage: wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            usage: wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING,
             label: None,
             view_formats: &[],
         };
@@ -413,20 +414,8 @@ impl Renderer {
     ) -> Result<(), WgpuError> {
         let texture_data = match render_texture_data {
             Some(data) => data,
-            None => &self.create_texture_data(),
+            None => &self.create_render_texture_data(),
         };
-        // let texture_desc = wgpu::TextureDescriptor {
-        //     size: self.texture_size,
-        //     mip_level_count: 1,
-        //     sample_count: 1,
-        //     dimension: wgpu::TextureDimension::D2,
-        //     format: self.texture_format,
-        //     usage: wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::RENDER_ATTACHMENT,
-        //     label: None,
-        //     view_formats: &[],
-        // };
-        // let texture = self.device.create_texture(&texture_desc);
-        // let texture_view = texture.create_view(&Default::default());
         let depth_texture =
             texture::DepthTexture::create_depth_texture(&self.device, self.texture_size);
 
@@ -494,28 +483,25 @@ impl Renderer {
             );
         }
 
-        match &self.output_buffer {
-            Some(buffer) => {
-                let u32_size = std::mem::size_of::<u32>() as u32;
-                encoder.copy_texture_to_buffer(
-                    wgpu::TexelCopyTextureInfo {
-                        aspect: wgpu::TextureAspect::All,
-                        texture: &texture_data.texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
+        if let Some(buffer) = &self.output_buffer {
+            let u32_size = std::mem::size_of::<u32>() as u32;
+            encoder.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo {
+                    aspect: wgpu::TextureAspect::All,
+                    texture: &texture_data.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                },
+                wgpu::TexelCopyBufferInfo {
+                    buffer,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(u32_size * self.texture_size.width),
+                        rows_per_image: Some(self.texture_size.height),
                     },
-                    wgpu::TexelCopyBufferInfo {
-                        buffer,
-                        layout: wgpu::TexelCopyBufferLayout {
-                            offset: 0,
-                            bytes_per_row: Some(u32_size * self.texture_size.width),
-                            rows_per_image: Some(self.texture_size.height),
-                        },
-                    },
-                    self.texture_size,
-                );
-            }
-            None => panic!("Output buffer is not set!"),
+                },
+                self.texture_size,
+            );
         }
 
         self.queue.submit(Some(encoder.finish()));

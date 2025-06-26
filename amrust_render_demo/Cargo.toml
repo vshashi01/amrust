@@ -22,5 +22,6 @@ cfg-if = "1.0.0"
 log = "0.4.20"
 egui-winit = "0.31.1"
 egui = "0.31.1"
+glam = { version = "0.30.3" }
 
 amrust_render = { path = "../amrust_render" }

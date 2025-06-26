@@ -1,11 +1,6 @@
-#[cfg(feature = "egui_wgpu")]
-use egui_wgpu::{wgpu, wgpu::util::DeviceExt};
-// use wgpu::util::DeviceExt;
-
-#[cfg(feature = "wgpu")]
-use wgpu::util::DeviceExt;
-
 use glam::{Mat4, Vec3};
+
+use crate::prelude::*;
 
 //Camera Uniform
 #[repr(C)]

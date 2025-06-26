@@ -1,5 +1,4 @@
-#[cfg(feature = "egui_wgpu")]
-use egui_wgpu::wgpu;
+use crate::prelude::*;
 
 use crate::texture;
 

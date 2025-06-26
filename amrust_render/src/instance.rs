@@ -1,8 +1,4 @@
-#[cfg(feature = "egui_wgpu")]
-use egui_wgpu::{wgpu, wgpu::util::DeviceExt};
-
-#[cfg(feature = "wgpu")]
-use wgpu::util::DeviceExt;
+use crate::prelude::*;
 
 use std::any::TypeId;
 

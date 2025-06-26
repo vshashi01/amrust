@@ -1,6 +1,16 @@
 use crate::egui_tools::EguiRenderer;
+use amrust_render::camera::{self, Camera, OrthographicCameraData};
+use amrust_render::gpu_mesh::MeshBuilder;
+use amrust_render::instance::InstanceDataBuilder;
+use amrust_render::material::Material;
+use amrust_render::normalized_box::{ORDERED_POSITIONS, ORDERED_POSITIONS_BOX_EDGE_INDICES};
+use amrust_render::renderer::RenderTextureData;
+use amrust_render::transformation::Transformation;
+use egui::{Image, Vec2, epaint};
 use egui_wgpu::wgpu::SurfaceError;
+use egui_wgpu::wgpu::core::device;
 use egui_wgpu::{ScreenDescriptor, wgpu};
+use glam::{Mat4, Vec3};
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
@@ -8,7 +18,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId};
 
-use amrust_render::renderer;
+use amrust_render::{RenderObject, Renderable, renderer};
 
 pub struct AppState {
     pub device: Arc<wgpu::Device>,
@@ -18,6 +28,7 @@ pub struct AppState {
     pub scale_factor: f32,
     pub egui_renderer: EguiRenderer,
     pub renderer_3d: renderer::Renderer,
+    pub texture_id: epaint::TextureId,
 }
 
 impl AppState {
@@ -76,11 +87,11 @@ impl AppState {
 
         surface.configure(&device, &surface_config);
 
-        let egui_renderer = EguiRenderer::new(&device, surface_config.format, None, 1, window);
+        let mut egui_renderer = EguiRenderer::new(&device, surface_config.format, None, 1, window);
 
         let scale_factor = 1.0;
 
-        let renderer_3d = renderer::Renderer::from_existing_device_and_queue(
+        let mut renderer_3d = renderer::Renderer::from_existing_device_and_queue(
             device.clone(),
             queue.clone(),
             surface_config.format,
@@ -93,6 +104,12 @@ impl AppState {
         .await
         .unwrap();
 
+        let texture_data = renderer_3d.create_render_texture_data();
+
+        let texture_id = egui_renderer.register_texture(&device, &texture_data.texture_view);
+
+        test_box_solid_color_only(&mut renderer_3d, &device, &texture_data).await;
+
         Self {
             device: Arc::new(device),
             queue: Arc::new(queue),
@@ -101,6 +118,7 @@ impl AppState {
             egui_renderer,
             scale_factor,
             renderer_3d,
+            texture_id,
         }
     }
 
@@ -233,13 +251,19 @@ impl App {
                     });
                 });
 
+            let image_texture = Image::new((
+                state.texture_id,
+                Vec2::new(TEXTURE_WIDTH as f32, TEXTURE_HEIGHT as f32),
+            ));
+
             egui::Window::new("3D Renderer")
                 .resizable(true)
                 .vscroll(true)
-                .default_open(false)
+                .default_open(true)
                 .show(state.egui_renderer.context(), |ui| {
-                    ui.label("3D Renderer is ready!");
-                    if ui.button("Render Triangle").clicked() {}
+                    // ui.label("3D Renderer is ready!");
+                    // if ui.button("Render Triangle").clicked() {}
+                    ui.image(image_texture.source(state.egui_renderer.context()));
                 });
 
             state.egui_renderer.end_frame_and_draw(
@@ -289,6 +313,121 @@ impl ApplicationHandler for App {
             _ => (),
         }
     }
+}
+
+const TEXTURE_WIDTH: u32 = 512;
+const TEXTURE_HEIGHT: u32 = 512;
+
+async fn test_box_solid_color_only(
+    renderer: &mut renderer::Renderer,
+    device: &wgpu::Device,
+    render_texture_data: &RenderTextureData,
+) {
+    // let mut renderer = renderer::Renderer::from_new_device(TEXTURE_WIDTH, TEXTURE_HEIGHT)
+    //     .await
+    //     .unwrap();
+    let (_mesh_object_id, _wireframe_object_id) = set_solid_mesh(renderer);
+
+    let camera_bind_group = get_camera_bind_group(device);
+    let _ = renderer
+        .render(Some(render_texture_data), &camera_bind_group)
+        .await;
+}
+
+fn set_solid_mesh(renderer: &mut renderer::Renderer) -> (u32, u32) {
+    let simple_mesh = MeshBuilder::new()
+        .add_vertex_stream(ORDERED_POSITIONS)
+        .add_wireframe_index_stream(ORDERED_POSITIONS_BOX_EDGE_INDICES)
+        .build(&renderer.device);
+
+    let simple_mesh_id = renderer.add_mesh(simple_mesh);
+
+    let transformations = [
+        Transformation(Mat4::from_translation((0.0, 5.0, 0.0).into())).to_data(),
+        Transformation(Mat4::from_axis_angle(
+            Vec3 {
+                x: 0.0,
+                y: 1.0,
+                z: 0.0,
+            },
+            45.0_f32.to_radians(),
+        ))
+        .to_data(),
+    ];
+
+    let simple_mesh_instance_buffer = InstanceDataBuilder::new()
+        .add_instance_stream(&transformations)
+        .add_instance_stream(&[
+            Material::new(0.75, 0.05, 0.5).to_data(),
+            Material::new(1.0, 0.0, 1.0).to_data(),
+        ])
+        .build(&renderer.device);
+
+    let simple_mesh_object = RenderObject {
+        renderable: Renderable::Mesh(simple_mesh_id),
+        instance: simple_mesh_instance_buffer,
+    };
+    let _simple_mesh_object_id = renderer.add_object(simple_mesh_object);
+
+    let simple_mesh_wireframe_object = RenderObject {
+        renderable: Renderable::WireframeMesh(simple_mesh_id),
+        instance: InstanceDataBuilder::new()
+            .add_instance_stream(&transformations)
+            .add_instance_stream(&[
+                Material::new(0.0, 0.0, 1.0).to_data(),
+                Material::new(0.0, 0.0, 1.0).to_data(),
+            ])
+            .build(&renderer.device),
+    };
+    let _simple_mesh_wireframe_object_id = renderer.add_object(simple_mesh_wireframe_object);
+
+    (_simple_mesh_object_id, _simple_mesh_wireframe_object_id)
+}
+
+fn get_camera_bind_group(device: &wgpu::Device) -> wgpu::BindGroup {
+    let camera_data = OrthographicCameraData::default()
+        .transform(camera::CameraTransform::Zoom(-0.80))
+        .transform(camera::CameraTransform::Pan(Vec3 {
+            x: 0.5,
+            y: 0.5,
+            z: 0.0,
+        }))
+        .transform(camera::CameraTransform::Rotate {
+            pivot: Vec3 {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            rotation_axis: Vec3::NEG_X,
+            angle: std::f32::consts::FRAC_2_PI,
+        })
+        .transform(camera::CameraTransform::Rotate {
+            pivot: Vec3 {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            rotation_axis: Vec3::NEG_Y,
+            angle: -std::f32::consts::FRAC_2_SQRT_PI * 1.5,
+        })
+        .transform(camera::CameraTransform::Rotate {
+            pivot: Vec3 {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            rotation_axis: Vec3::X,
+            angle: std::f32::consts::FRAC_2_SQRT_PI,
+        })
+        .transform(camera::CameraTransform::Pan(Vec3 {
+            x: 1.0,
+            y: 1.0,
+            z: 0.0,
+        }));
+
+    let camera = Camera::new(&camera_data);
+
+    camera.create_bind_group(device)
 }
 
 #[repr(C)]
