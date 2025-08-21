@@ -1,4 +1,4 @@
-use std::{hash::Hash, path::PathBuf};
+use std::path::PathBuf;
 
 use amrust_3mf::io::ThreemfPackage;
 use amrust_render::renderer;
@@ -26,8 +26,6 @@ async fn load_and_render_3mf() {
 
         object_transform_map.push((mesh_id, transform));
     });
-    
-    
 }
 
 #[cfg(test)]

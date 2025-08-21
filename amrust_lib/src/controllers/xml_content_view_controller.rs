@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use roxmltree::{Document, Node};
 
 use crate::widgets::xml_content_tree::XmlContentTree;
@@ -113,16 +113,16 @@ fn process_node(
 
     if node.is_element() {
         //if its the element below root then extract all the namespaces
-        if let Some(parent_node) = node.parent() {
-            if parent_node.is_root() {
-                for ns in node.namespaces() {
-                    let prefix = match ns.name() {
-                        Some(prefix) => format!(":{}", prefix),
-                        None => String::new(),
-                    };
-                    let ns_attribute = (format!("xmlns{}", prefix), ns.uri().to_owned());
-                    attributes.push(ns_attribute);
-                }
+        if let Some(parent_node) = node.parent()
+            && parent_node.is_root()
+        {
+            for ns in node.namespaces() {
+                let prefix = match ns.name() {
+                    Some(prefix) => format!(":{}", prefix),
+                    None => String::new(),
+                };
+                let ns_attribute = (format!("xmlns{}", prefix), ns.uri().to_owned());
+                attributes.push(ns_attribute);
             }
         }
 
@@ -151,15 +151,16 @@ fn process_node(
             attributes.push(("Child count".to_owned(), count.to_string()));
         }
 
-        if let Some(content) = node.text() {
-            if !content.is_empty() && !content.trim().is_empty() {
-                childs.push(XmlContentTree {
-                    id: node.id().get_usize(),
-                    name: content.trim().to_owned(),
-                    attributes: None,
-                    childs: None,
-                });
-            }
+        if let Some(content) = node.text()
+            && !content.is_empty()
+            && !content.trim().is_empty()
+        {
+            childs.push(XmlContentTree {
+                id: node.id().get_usize(),
+                name: content.trim().to_owned(),
+                attributes: None,
+                childs: None,
+            });
         }
     }
 

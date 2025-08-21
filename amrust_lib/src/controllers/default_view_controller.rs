@@ -116,10 +116,10 @@ impl DefaultViewController {
     }
 
     pub fn file_tree_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        if let Some(controller) = &mut self.current_controller {
-            if controller.has_file_tree() {
-                controller.file_tree_ui(ui, ctx);
-            }
+        if let Some(controller) = &mut self.current_controller
+            && controller.has_file_tree()
+        {
+            controller.file_tree_ui(ui, ctx);
         }
     }
 

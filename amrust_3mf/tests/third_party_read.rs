@@ -1,16 +1,15 @@
 #[cfg(test)]
 pub mod tests {
 
+    pub mod test_utilities;
+
     use amrust_3mf::io::ThreemfPackage;
     use amrust_3mf::io::ThreemfUnpacked;
     use amrust_3mf::io::thumbnail;
-    use image::imageops::thumbnail;
-    use nv_flip::DEFAULT_PIXELS_PER_DEGREE;
 
     use std::cmp::Ordering;
     use std::fs::File;
     use std::path::PathBuf;
-    pub mod test_utilities;
 
     #[test]
     pub fn can_load_thirdparty_3mf_package() {
@@ -53,8 +52,11 @@ pub mod tests {
                             let test_image =
                                 nv_flip::FlipImageRgb8::with_data(1280, 1080, &thumbnail);
 
-                            let error_map =
-                                nv_flip::flip(ref_image, test_image, DEFAULT_PIXELS_PER_DEGREE);
+                            let error_map = nv_flip::flip(
+                                ref_image,
+                                test_image,
+                                nv_flip::DEFAULT_PIXELS_PER_DEGREE,
+                            );
                             let pool = nv_flip::FlipPool::from_image(&error_map);
                             if let Some(Ordering::Greater) =
                                 pool.mean().partial_cmp(&FLIP_MEAN_ERROR)
