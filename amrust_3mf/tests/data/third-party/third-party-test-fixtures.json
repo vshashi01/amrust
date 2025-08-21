@@ -5,6 +5,7 @@
             "origin": "Blender 3.2.1 with 3mf plugin 1.0.2",
             "desc": "Suzanne from blender as single model in a 3mf file",
             "date": "05-04-2025",
+            "golden_thumbnail_path": "blender-suzanne.3mf_golden_thumbnail.png",
             "skip_test": false,
             "large_test": false
         },
@@ -13,6 +14,7 @@
             "origin": "Meshmixer 3.5",
             "desc": "Bunny as single model in a 3mf file",
             "date": "05-04-2025",
+            "golden_thumbnail_path": "meshmixer-bunny.3mf_golden_thumbnail.png",
             "skip_test": false,
             "large_test": false
         },
@@ -21,6 +23,7 @@
             "origin": "Prusa Slicer 2.9.1",
             "desc": "2 shared instances of Iron giant and 1 unique Iron giant placed on platform",
             "date": "05-04-2025",
+            "golden_thumbnail_path": "prusa-iron_giant.3mf_golden_thumbnail.png",
             "skip_test": false,
             "large_test": true
         },
@@ -29,6 +32,7 @@
             "origin": "Ultimaker Cura 5.10.0",
             "desc": "A set 10 instances of spinal implant placed on platform",
             "date": "05-04-2025",
+            "golden_thumbnail_path": "ultimaker-spinal_implant.3mf_golden_thumbnail.png",
             "skip_test": false,
             "large_test": false
         },
@@ -37,6 +41,7 @@
             "origin": "Materialise Magics xx",
             "desc": "A set 10 instances of of a part with beam lattice and 3D Displacement Texture",
             "date": "17-04-2025",
+            "golden_thumbnail_path": "",
             "skip_test": false,
             "large_test": false
         },
@@ -45,8 +50,18 @@
             "origin": "Materialise Magics xx",
             "desc": "A set 10 unique parts with beam lattice and 3D Displacement Texture",
             "date": "17-04-2025",
+            "golden_thumbnail_path": "",
             "skip_test": false,
             "large_test": true
+        },
+        {
+            "filepath": "meshmixer-resized_box_mm.3mf",
+            "origin": "Meshmixer 3.5",
+            "desc": "Single rescaled and rotated box",
+            "date": "21-08-2025",
+            "golden_thumbnail_path": "meshmixer-resized_box_mm.3mf_golden_thumbnail.png",
+            "skip_test": false,
+            "large_test": false
         }
     ]
 }

@@ -1,34 +1,82 @@
 #[cfg(test)]
 pub mod tests {
-    use serde::*;
 
     use amrust_3mf::io::ThreemfPackage;
     use amrust_3mf::io::ThreemfUnpacked;
+    use amrust_3mf::io::thumbnail;
+    use image::imageops::thumbnail;
+    use nv_flip::DEFAULT_PIXELS_PER_DEGREE;
 
+    use std::cmp::Ordering;
     use std::fs::File;
     use std::path::PathBuf;
-    use std::vec::IntoIter;
+    pub mod test_utilities;
 
     #[test]
     pub fn can_load_thirdparty_3mf_package() {
         let folder_path = PathBuf::from("./tests/data/third-party/");
-        let fixtures = get_test_fixtures();
+        let fixtures = test_utilities::get_test_fixtures();
 
         for fixture in fixtures {
             if fixture.skip_test || fixture.large_test {
                 continue;
             }
 
-            let filepath = folder_path.join(fixture.filepath);
+            let filepath = folder_path.join(fixture.filepath.clone());
             let file = File::open(&filepath).unwrap();
 
             let package = ThreemfPackage::from_reader(file, true);
+
+            let golden_thumbnail_path = folder_path
+                .join("golden_thumbnails/")
+                .join(fixture.golden_thumbnail_path.clone());
 
             match package {
                 Ok(threemf) => {
                     assert!(!threemf.content_types.defaults.is_empty());
                     assert!(!threemf.relationships.is_empty());
                     assert!(!threemf.root.build.item.is_empty());
+
+                    if golden_thumbnail_path.is_file() {
+                        const FLIP_MEAN_ERROR: f32 = 0.0;
+                        pollster::block_on(async {
+                            let ref_image_data =
+                                image::open(&golden_thumbnail_path).unwrap().into_rgba8();
+
+                            let thumbnail =
+                                thumbnail::render_package_thumbnail(&threemf, 1280, 1080)
+                                    .await
+                                    .unwrap();
+
+                            let ref_image =
+                                nv_flip::FlipImageRgb8::with_data(1280, 1080, &ref_image_data);
+                            let test_image =
+                                nv_flip::FlipImageRgb8::with_data(1280, 1080, &thumbnail);
+
+                            let error_map =
+                                nv_flip::flip(ref_image, test_image, DEFAULT_PIXELS_PER_DEGREE);
+                            let pool = nv_flip::FlipPool::from_image(&error_map);
+                            if let Some(Ordering::Greater) =
+                                pool.mean().partial_cmp(&FLIP_MEAN_ERROR)
+                            {
+                                println!("Mean error {}", pool.mean());
+                                let generated_thumbnail_path = golden_thumbnail_path
+                                    .clone()
+                                    .join("_generated_thumbnail.png");
+                                thumbnail.save(generated_thumbnail_path).unwrap();
+
+                                panic!(
+                                    "Something is wrong with the thumbnail: {:?}",
+                                    golden_thumbnail_path
+                                );
+                            }
+                        });
+                    } else {
+                        println!(
+                            "Skipped thumbnail comparison for: {:?}",
+                            golden_thumbnail_path
+                        );
+                    }
                 }
                 Err(err) => {
                     panic!(
@@ -43,7 +91,7 @@ pub mod tests {
     #[test]
     pub fn unpack_thirdparty_3mf_package() {
         let folder_path = PathBuf::from("./tests/data/third-party/");
-        let fixtures = get_test_fixtures();
+        let fixtures = test_utilities::get_test_fixtures();
 
         for fixture in fixtures {
             if fixture.skip_test {
@@ -69,34 +117,5 @@ pub mod tests {
                 }
             }
         }
-    }
-
-    #[derive(Deserialize, Debug)]
-    struct TestFixture {
-        pub filepath: String,
-        pub skip_test: bool,
-        pub large_test: bool,
-    }
-
-    #[derive(Deserialize, Debug)]
-    struct TestFixtures {
-        pub fixtures: Vec<TestFixture>,
-    }
-
-    impl IntoIterator for TestFixtures {
-        type Item = TestFixture;
-
-        type IntoIter = IntoIter<TestFixture>;
-
-        fn into_iter(self) -> Self::IntoIter {
-            self.fixtures.into_iter()
-        }
-    }
-
-    fn get_test_fixtures() -> TestFixtures {
-        let json = include_str!("../tests/data/third-party/third-party-test-fixtures.json");
-        let fixtures: TestFixtures = serde_json::from_str(json).unwrap();
-
-        fixtures
     }
 }

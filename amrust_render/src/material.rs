@@ -2,6 +2,7 @@ use crate::prelude::*;
 
 use crate::instance::InstanceFieldDescriptor;
 
+#[derive(Debug, Clone, Copy)]
 pub struct Material {
     pub red: f32,
     pub green: f32,

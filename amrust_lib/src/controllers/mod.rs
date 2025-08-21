@@ -1,8 +1,9 @@
 use anyhow::Result;
 
 pub mod default_view_controller;
-pub mod threemf_view_controller;
-pub mod xml_content_view_controller;
+mod threemf_3d_view_controller;
+mod threemf_view_controller;
+mod xml_content_view_controller;
 
 pub trait StandardFileViewController {
     fn has_file_tree(&self) -> bool;

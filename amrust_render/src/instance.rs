@@ -26,7 +26,7 @@ impl GpuInstance {
             .find(|vs| vs.type_id == TypeId::of::<T>())
     }
 
-    pub fn vertex_slice<T: 'static>(&self) -> wgpu::BufferSlice {
+    pub fn vertex_slice<T: 'static>(&self) -> wgpu::BufferSlice<'_> {
         let stream = self.instance_data_stream::<T>().unwrap();
         self.buffer.slice(stream.offset..)
     }
