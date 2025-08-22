@@ -1,23 +1,22 @@
 [package]
 name = "amrust_lib"
 version = "0.1.0"
-edition = "2024"
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [lib]
 name = "amrust_lib"
 path = "src/lib.rs"
 
 [dependencies]
-egui = { version = "0.31.1" }
-anyhow = "1.0.86"
-roxmltree = "0.20.0"
-log = "0.4.22"
-image = "0.25.0"
-glam = { version = "0.30.4" }
-mint = { version = "0.5.9" }
+egui = { workspace = true }
+anyhow = { workspace = true }
+roxmltree = { workspace = true }
+log = { workspace = true }
+image = { workspace = true, default-features = true }
+glam = { workspace = true }
+egui_extras = { workspace = true, features = ["default", "image"] }
 
-# For image support:
-egui_extras = { version = "0.31.0", features = ["default", "image"] }
-
-amrust_3mf = { path = "../amrust_3mf" }
-amrust_render = { path = "../amrust_render" }
+amrust_3mf = { workspace = true }
+amrust_render = { workspace = true }

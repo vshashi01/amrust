@@ -1,23 +1,20 @@
 [package]
 name = "amrust"
 version = "0.1.0"
-edition = "2024"
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [[bin]]
 name = "AMRUST"
 path = "src/main.rs"
 
 [dependencies]
-eframe = { version = "0.31.1", features = ["default", "wgpu"] }
-egui = "0.31.1"
+eframe = { workspace = true, features = ["default", "wgpu"] }
+egui = { workspace = true }
+egui_extras = { workspace = true, features = ["default", "image"] }
+egui_logger = { workspace = true }
+log = { workspace = true }
+pollster = { workspace = true }
 
-# For image support:
-egui_extras = { version = "0.31.0", features = ["default", "image"] }
-
-# For logging stuff
-egui_logger = "0.6.3"
-log = "0.4.22"
-
-pollster = { version = "0.4.0" }
-
-amrust_lib = { path = "../amrust_lib" }
+amrust_lib = { workspace = true }

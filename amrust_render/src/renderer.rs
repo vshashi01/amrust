@@ -57,20 +57,20 @@ pub const DEVICE_FEATURES: [wgpu::Features; 2] = [
 ];
 
 // #[cfg(feature = "wgpu")]
-// pub const DEVICE_LIMITS: wgpu::Limits = wgpu::Limits {
-//     max_binding_array_elements_per_shader_stage:
-//         texture::MAX_BINDING_ARRAY_ELEMENTS_PER_SHADER_STAGE,
-//     max_binding_array_sampler_elements_per_shader_stage:
-//         texture::MAX_BINDING_ARRAY_SAMPLERS_PER_SHADER_STAGE,
-//     max_texture_dimension_2d: texture::MAX_TEXTURE_SIZE,
-//     ..wgpu::Limits::downlevel_defaults()
-// };
-
-// #[cfg(feature = "egui_wgpu")]
 pub const DEVICE_LIMITS: wgpu::Limits = wgpu::Limits {
+    max_binding_array_elements_per_shader_stage:
+        texture::MAX_BINDING_ARRAY_ELEMENTS_PER_SHADER_STAGE,
+    max_binding_array_sampler_elements_per_shader_stage:
+        texture::MAX_BINDING_ARRAY_SAMPLERS_PER_SHADER_STAGE,
     max_texture_dimension_2d: texture::MAX_TEXTURE_SIZE,
     ..wgpu::Limits::downlevel_defaults()
 };
+
+// #[cfg(feature = "egui_wgpu")]
+// pub const DEVICE_LIMITS: wgpu::Limits = wgpu::Limits {
+//     max_texture_dimension_2d: texture::MAX_TEXTURE_SIZE,
+//     ..wgpu::Limits::downlevel_defaults()
+// };
 
 impl Renderer {
     pub async fn from_existing_device_and_queue(
@@ -123,12 +123,10 @@ impl Renderer {
             required_features,
             required_limits: DEVICE_LIMITS,
             memory_hints: wgpu::MemoryHints::Performance,
+            trace: wgpu::Trace::Off,
         };
 
-        let (device, queue) = adapter
-            .request_device(&device_descriptor, None)
-            .await
-            .unwrap();
+        let (device, queue) = adapter.request_device(&device_descriptor).await.unwrap();
 
         let texture_size = wgpu::Extent3d {
             width,
@@ -531,20 +529,29 @@ impl Renderer {
                         tx.send(result).unwrap();
                     });
 
-                    self.device.poll(wgpu::Maintain::Wait).panic_on_timeout();
+                    let result = self.device.poll(wgpu::PollType::Wait);
 
-                    rx.receive().await.unwrap().unwrap();
+                    match result {
+                        Ok(status) => {
+                            if status.wait_finished() {
+                                rx.receive().await.unwrap().unwrap();
 
-                    let data = buffer_slice.get_mapped_range();
+                                let data = buffer_slice.get_mapped_range();
 
-                    use image::{ImageBuffer, Rgba};
+                                use image::{ImageBuffer, Rgba};
 
-                    ImageBuffer::<Rgba<u8>, _>::from_raw(
-                        self.texture_size.width,
-                        self.texture_size.height,
-                        data.to_vec(),
-                    )
-                    .unwrap()
+                                ImageBuffer::<Rgba<u8>, _>::from_raw(
+                                    self.texture_size.width,
+                                    self.texture_size.height,
+                                    data.to_vec(),
+                                )
+                                .unwrap()
+                            } else {
+                                panic!("Polling GPU never returned");
+                            }
+                        }
+                        Err(e) => panic!("{}", e),
+                    }
                 };
                 buffer.unmap();
 

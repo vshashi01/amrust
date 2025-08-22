@@ -249,7 +249,9 @@ fn relationships_from_zip_by_name<R: Read + io::Seek>(
     }
 }
 
-fn relationships_from_zipfile(mut file: zip::read::ZipFile<'_>) -> Result<Relationships, Error> {
+fn relationships_from_zipfile<R: Read>(
+    mut file: zip::read::ZipFile<'_, R>,
+) -> Result<Relationships, Error> {
     let mut xml_string: String = Default::default();
     let _ = file.read_to_string(&mut xml_string)?;
     let rels = from_str::<Relationships>(&xml_string)?;
@@ -446,7 +448,7 @@ pub mod tests {
             writer
         };
 
-        assert_eq!(bytes.into_inner().len(), 961);
+        assert_eq!(bytes.into_inner().len(), 963);
     }
 
     #[test]

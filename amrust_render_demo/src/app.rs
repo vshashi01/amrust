@@ -53,15 +53,13 @@ impl AppState {
             .iter()
             .fold(wgpu::Features::empty(), |acc, &feature| acc | feature);
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: None,
-                    required_features: features,
-                    required_limits: renderer::DEVICE_LIMITS,
-                    memory_hints: Default::default(),
-                },
-                None,
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                label: None,
+                required_features: features,
+                required_limits: renderer::DEVICE_LIMITS,
+                memory_hints: Default::default(),
+                trace: wgpu::Trace::Off,
+            })
             .await
             .expect("Failed to create device");
 
