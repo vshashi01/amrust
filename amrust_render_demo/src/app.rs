@@ -26,7 +26,10 @@ pub struct AppState {
     pub surface: wgpu::Surface<'static>,
     pub scale_factor: f32,
     pub egui_renderer: EguiRenderer,
+    pub height: u32,
+    pub width: u32,
     pub renderer_3d: renderer::Renderer,
+    pub render_texture_data: renderer::RenderTextureData,
     pub texture_id: epaint::TextureId,
 }
 
@@ -48,7 +51,6 @@ impl AppState {
             .await
             .expect("Failed to find an appropriate adapter");
 
-        // let features = wgpu::Features::empty();
         let features = renderer::DEVICE_FEATURES
             .iter()
             .fold(wgpu::Features::empty(), |acc, &feature| acc | feature);
@@ -92,20 +94,17 @@ impl AppState {
             device.clone(),
             queue.clone(),
             surface_config.format,
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
+            width,
+            height,
         )
         .await
         .unwrap();
 
-        let texture_data = renderer_3d.create_render_texture_data();
+        //when the size change we need to create a new render texture data and register a new egui texture.
+        let render_texture_data = renderer_3d.create_render_texture_data();
 
-        let texture_id = egui_renderer.register_texture(&device, &texture_data.texture_view);
-
-        test_box_solid_color_only(&mut renderer_3d, &device, &texture_data).await;
+        let texture_id = egui_renderer.register_texture(&device, &render_texture_data.texture_view);
+        test_box_solid_color_only(&mut renderer_3d, &device, &render_texture_data).await;
 
         Self {
             device: Arc::new(device),
@@ -114,7 +113,10 @@ impl AppState {
             surface_config,
             egui_renderer,
             scale_factor,
+            height,
+            width,
             renderer_3d,
+            render_texture_data,
             texture_id,
         }
     }
@@ -123,6 +125,27 @@ impl AppState {
         self.surface_config.width = width;
         self.surface_config.height = height;
         self.surface.configure(&self.device, &self.surface_config);
+
+        self.width = width;
+        self.height = height;
+        self.renderer_3d.set_size(width, height);
+        let render_texture_data = self.renderer_3d.create_render_texture_data();
+        let texture_id = self
+            .egui_renderer
+            .register_texture(&self.device, &render_texture_data.texture_view);
+        self.render_texture_data = render_texture_data;
+        self.texture_id = texture_id;
+    }
+
+    fn handle_redraw(&mut self) {
+        pollster::block_on(async {
+            test_box_solid_color_only(
+                &mut self.renderer_3d,
+                &self.device,
+                &self.render_texture_data,
+            )
+            .await
+        });
     }
 }
 
@@ -159,7 +182,7 @@ impl App {
             surface,
             &window,
             initial_width,
-            initial_width,
+            initial_height,
         )
         .await;
 
@@ -169,7 +192,8 @@ impl App {
 
     fn handle_resized(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 {
-            self.state.as_mut().unwrap().resize_surface(width, height);
+            let state = self.state.as_mut().unwrap();
+            state.resize_surface(width, height);
         }
     }
 
@@ -203,7 +227,9 @@ impl App {
                 surface_texture.expect("Failed to acquire next swap chain texture");
                 return;
             }
-            Ok(_) => {}
+            Ok(_) => {
+                state.handle_redraw();
+            }
         };
 
         let surface_texture = surface_texture.unwrap();
@@ -221,6 +247,15 @@ impl App {
         {
             state.egui_renderer.begin_frame(window);
 
+            let image_texture = Image::new((
+                state.texture_id,
+                Vec2::new(state.width as f32, state.height as f32),
+            ));
+
+            egui::CentralPanel::default().show(state.egui_renderer.context(), |ui| {
+                ui.image(image_texture.source(state.egui_renderer.context()));
+            });
+
             egui::Window::new("winit + egui + wgpu says hello!")
                 .resizable(true)
                 .vscroll(true)
@@ -229,6 +264,8 @@ impl App {
                     ui.label("Label!");
 
                     if ui.button("Button!").clicked() {
+                        println!("width: {}, height: {}", state.width, state.height);
+                        println!("See if it is built");
                         println!("boom!")
                     }
 
@@ -245,21 +282,6 @@ impl App {
                             state.scale_factor = (state.scale_factor + 0.1).min(3.0);
                         }
                     });
-                });
-
-            let image_texture = Image::new((
-                state.texture_id,
-                Vec2::new(TEXTURE_WIDTH as f32, TEXTURE_HEIGHT as f32),
-            ));
-
-            egui::Window::new("3D Renderer")
-                .resizable(true)
-                .vscroll(true)
-                .default_open(true)
-                .show(state.egui_renderer.context(), |ui| {
-                    // ui.label("3D Renderer is ready!");
-                    // if ui.button("Render Triangle").clicked() {}
-                    ui.image(image_texture.source(state.egui_renderer.context()));
                 });
 
             state.egui_renderer.end_frame_and_draw(
@@ -311,20 +333,13 @@ impl ApplicationHandler for App {
     }
 }
 
-const TEXTURE_WIDTH: u32 = 512;
-const TEXTURE_HEIGHT: u32 = 512;
-
 async fn test_box_solid_color_only(
     renderer: &mut renderer::Renderer,
     device: &wgpu::Device,
     render_texture_data: &RenderTextureData,
 ) {
-    // let mut renderer = renderer::Renderer::from_new_device(TEXTURE_WIDTH, TEXTURE_HEIGHT)
-    //     .await
-    //     .unwrap();
     let (_mesh_object_id, _wireframe_object_id) = set_solid_mesh(renderer);
 
-    // let camera_bind_group = get_camera_bind_group(device);
     renderer.update_camera(&get_camera_data());
     let _ = renderer.render_to_texture(render_texture_data).await;
 }
@@ -422,53 +437,4 @@ fn get_camera_data() -> OrthographicCameraData {
         }));
 
     camera_data
-
-    //let camera = Camera::new(&camera_data);
-
-    //camera.create_bind_group(device)
 }
-
-// #[repr(C)]
-// #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-// struct Vertex {
-//     position: [f32; 3],
-//     color: [f32; 3],
-// }
-
-// impl Vertex {
-//     fn desc() -> wgpu::VertexBufferLayout<'static> {
-//         wgpu::VertexBufferLayout {
-//             array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-//             step_mode: wgpu::VertexStepMode::Vertex,
-//             attributes: &[
-//                 wgpu::VertexAttribute {
-//                     offset: 0,
-//                     shader_location: 0,
-//                     format: wgpu::VertexFormat::Float32x3,
-//                 },
-//                 wgpu::VertexAttribute {
-//                     offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
-//                     shader_location: 1,
-//                     format: wgpu::VertexFormat::Float32x3,
-//                 },
-//             ],
-//         }
-//     }
-// }
-
-// const VERTICES: &[Vertex] = &[
-//     Vertex {
-//         position: [0.0, 0.5, 0.0],
-//         color: [1.0, 0.0, 0.0],
-//     },
-//     Vertex {
-//         position: [-0.5, -0.5, 0.0],
-//         color: [0.0, 1.0, 0.0],
-//     },
-//     Vertex {
-//         position: [0.5, -0.5, 0.0],
-//         color: [0.0, 0.0, 1.0],
-//     },
-// ];
-
-// const INDICES: &[u16] = &[0, 1, 2];

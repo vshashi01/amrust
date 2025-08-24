@@ -77,12 +77,13 @@ impl Renderer {
         device: wgpu::Device,
         queue: wgpu::Queue,
         texture_format: wgpu::TextureFormat,
-        texture_size: wgpu::Extent3d,
+        width: u32,
+        height: u32,
     ) -> Result<Self, WgpuError> {
         for features in DEVICE_FEATURES {
             if !device.features().contains(features) {
                 panic!(
-                    "Required feature {:?} is not supported by the device",
+                    "Required features {:?} are not supported by the device",
                     features
                 );
             }
@@ -96,6 +97,12 @@ impl Renderer {
                 DEVICE_LIMITS
             );
         }
+
+        let texture_size = wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        };
 
         Self::setup_new_renderer(device, queue, texture_format, texture_size, None)
     }
@@ -303,6 +310,16 @@ impl Renderer {
             camera,
             render_pipeline_cache,
         })
+    }
+
+    pub fn set_size(&mut self, width: u32, height: u32) {
+        let texture_size = wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        };
+
+        self.texture_size = texture_size;
     }
 
     pub fn create_render_texture_data(&self) -> RenderTextureData {
