@@ -8,6 +8,15 @@ pub struct BoundingBox {
     pub max: Vec3,
 }
 
+impl Default for BoundingBox {
+    fn default() -> Self {
+        BoundingBox {
+            min: Vec3::ZERO,
+            max: Vec3::ZERO,
+        }
+    }
+}
+
 impl BoundingBox {
     pub fn center(&self) -> Vec3 {
         self.min + (self.max - self.min) * 0.5

@@ -1,5 +1,6 @@
 mod app;
 mod egui_tools;
+mod load_3mf;
 
 use winit::event_loop::{ControlFlow, EventLoop};
 

@@ -151,6 +151,7 @@ impl OrthographicCameraData {
     pub fn transform(&mut self, transform: CameraTransform) -> &mut Self {
         match transform {
             CameraTransform::Zoom(value) => {
+                //ToDo: Fix the zoom to never become negative
                 self.zoom += value;
             }
             CameraTransform::Pan(value) => {

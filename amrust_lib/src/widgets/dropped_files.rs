@@ -15,11 +15,11 @@ impl DroppedFilesWidget {
 
     pub fn run(&mut self, ctx: &egui::Context, can_process_file: &impl Fn(PathBuf) -> bool) {
         self.preview_files_being_dropped(ctx, can_process_file);
-        ctx.input(|i| {
-            if !i.raw.dropped_files.is_empty() {
-                self.dropped_files.clone_from(&i.raw.dropped_files);
-            }
-        });
+        if let Some(dropped_files) = ctx.input(|i| Some(i.raw.dropped_files.clone()))
+            && !dropped_files.is_empty()
+        {
+            self.dropped_files.clone_from(&dropped_files);
+        };
     }
 
     pub fn pull_dropped_file(&mut self) -> Vec<DroppedFile> {
@@ -38,21 +38,20 @@ impl DroppedFilesWidget {
 
         let mut is_unsupported_file_exist = false;
 
-        if !ctx.input(|i| i.raw.hovered_files.is_empty()) {
-            let text = ctx.input(|i| {
-                let mut text = "Dropping files:\n".to_owned();
-                for file in &i.raw.hovered_files {
-                    if let Some(path) = &file.path {
-                        write!(text, "\n{}", path.display()).ok();
-                        if !can_process_file(path.to_path_buf()) {
-                            is_unsupported_file_exist = true;
-                        }
-                    } else {
-                        text += "\n???";
+        if let Some(hovered_files) = ctx.input(|i| Some(i.raw.hovered_files.clone()))
+            && !hovered_files.is_empty()
+        {
+            let mut text = "Dropping files:\n".to_owned();
+            for file in hovered_files {
+                if let Some(path) = &file.path {
+                    write!(text, "\n{}", path.display()).ok();
+                    if !can_process_file(path.to_path_buf()) {
+                        is_unsupported_file_exist = true;
                     }
+                } else {
+                    text += "\n???";
                 }
-                text
-            });
+            }
 
             let painter =
                 ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("file_drop_target")));

@@ -1,5 +1,8 @@
 use crate::egui_tools::EguiRenderer;
-use amrust_render::camera::{self, OrthographicCameraData};
+use crate::load_3mf;
+use amrust_render::bounding_box::BoundingBox;
+// use amrust_lib::widgets::dropped_files::DroppedFilesWidget;
+use amrust_render::camera::{self, CameraData, OrthographicCameraData};
 use amrust_render::gpu_mesh::MeshBuilder;
 use amrust_render::instance::InstanceDataBuilder;
 use amrust_render::material::Material;
@@ -7,9 +10,11 @@ use amrust_render::normalized_box::{ORDERED_POSITIONS, ORDERED_POSITIONS_BOX_EDG
 use amrust_render::renderer::RenderTextureData;
 use amrust_render::transformation::Transformation;
 use egui::{Image, Vec2, epaint};
+use egui_file_dialog::FileDialog;
 use egui_wgpu::wgpu::SurfaceError;
 use egui_wgpu::{ScreenDescriptor, wgpu};
 use glam::{Mat4, Vec3};
+use std::path::PathBuf;
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
@@ -24,13 +29,16 @@ pub struct AppState {
     pub queue: Arc<wgpu::Queue>,
     pub surface_config: wgpu::SurfaceConfiguration,
     pub surface: wgpu::Surface<'static>,
-    pub scale_factor: f32,
+    pub dpi_factor: f32,
     pub egui_renderer: EguiRenderer,
-    pub height: u32,
-    pub width: u32,
     pub renderer_3d: renderer::Renderer,
+    pub camera_data: OrthographicCameraData,
     pub render_texture_data: renderer::RenderTextureData,
     pub texture_id: epaint::TextureId,
+    // pub dropped_files: DroppedFilesWidget,
+    pub file_dialog: FileDialog,
+    pub picked_file: Option<PathBuf>,
+    pub scene_bbox: Option<BoundingBox>,
 }
 
 impl AppState {
@@ -40,6 +48,7 @@ impl AppState {
         window: &Window,
         width: u32,
         height: u32,
+        dpi_factor: f32,
     ) -> Self {
         let power_pref = wgpu::PowerPreference::default();
         let adapter = instance
@@ -88,8 +97,6 @@ impl AppState {
 
         let mut egui_renderer = EguiRenderer::new(&device, surface_config.format, None, 1, window);
 
-        let scale_factor = 1.0;
-
         let mut renderer_3d = renderer::Renderer::from_existing_device_and_queue(
             device.clone(),
             queue.clone(),
@@ -103,21 +110,31 @@ impl AppState {
         //when the size change we need to create a new render texture data and register a new egui texture.
         let render_texture_data = renderer_3d.create_render_texture_data();
 
+        // let (_mesh_object_id, _wireframe_object_id) = set_solid_mesh(&mut renderer_3d);
+
         let texture_id = egui_renderer.register_texture(&device, &render_texture_data.texture_view);
-        test_box_solid_color_only(&mut renderer_3d, &device, &render_texture_data).await;
+        let camera_data = get_camera_data();
+        render_frame(&mut renderer_3d, &camera_data, &render_texture_data).await;
+
+        // let dropped_files_widget = DroppedFilesWidget::new();
+
+        let file_dialog = FileDialog::new();
 
         Self {
             device: Arc::new(device),
             queue: Arc::new(queue),
             surface,
             surface_config,
+            dpi_factor,
             egui_renderer,
-            scale_factor,
-            height,
-            width,
             renderer_3d,
+            camera_data,
             render_texture_data,
             texture_id,
+            // dropped_files: dropped_files_widget,
+            file_dialog,
+            picked_file: None,
+            scene_bbox: None,
         }
     }
 
@@ -126,8 +143,6 @@ impl AppState {
         self.surface_config.height = height;
         self.surface.configure(&self.device, &self.surface_config);
 
-        self.width = width;
-        self.height = height;
         self.renderer_3d.set_size(width, height);
         let render_texture_data = self.renderer_3d.create_render_texture_data();
         let texture_id = self
@@ -139,9 +154,9 @@ impl AppState {
 
     fn handle_redraw(&mut self) {
         pollster::block_on(async {
-            test_box_solid_color_only(
+            render_frame(
                 &mut self.renderer_3d,
-                &self.device,
+                &self.camera_data,
                 &self.render_texture_data,
             )
             .await
@@ -171,6 +186,7 @@ impl App {
         let initial_height = 768;
 
         let _ = window.request_inner_size(PhysicalSize::new(initial_width, initial_height));
+        let scale_factor = window.scale_factor();
 
         let surface = self
             .instance
@@ -183,6 +199,7 @@ impl App {
             &window,
             initial_width,
             initial_height,
+            scale_factor as f32,
         )
         .await;
 
@@ -195,6 +212,12 @@ impl App {
             let state = self.state.as_mut().unwrap();
             state.resize_surface(width, height);
         }
+    }
+
+    fn handle_dpi_changed(&mut self, scale_factor: f64) {
+        let state = self.state.as_mut().unwrap();
+        state.dpi_factor = scale_factor as f32;
+        state.egui_renderer.context().request_repaint();
     }
 
     fn handle_redraw(&mut self) {
@@ -211,8 +234,7 @@ impl App {
 
         let screen_descriptor = ScreenDescriptor {
             size_in_pixels: [state.surface_config.width, state.surface_config.height],
-            pixels_per_point: self.window.as_ref().unwrap().scale_factor() as f32
-                * state.scale_factor,
+            pixels_per_point: state.dpi_factor,
         };
 
         let surface_texture = state.surface.get_current_texture();
@@ -247,42 +269,112 @@ impl App {
         {
             state.egui_renderer.begin_frame(window);
 
-            let image_texture = Image::new((
-                state.texture_id,
-                Vec2::new(state.width as f32, state.height as f32),
-            ));
-
             egui::CentralPanel::default().show(state.egui_renderer.context(), |ui| {
+                let dpi_factor = state.egui_renderer.context().pixels_per_point();
+                let image_texture = Image::new((
+                    state.texture_id,
+                    Vec2::new(
+                        (state.surface_config.width as f32 / dpi_factor) - 10.0,
+                        (state.surface_config.height as f32 / dpi_factor) - 10.0,
+                    ),
+                ));
+
+                let response = ui.interact(
+                    ui.max_rect(),
+                    ui.id().with("3d_viewport"),
+                    egui::Sense::drag(),
+                );
+
+                if response.dragged() {
+                    let delta = response.drag_delta();
+                    let default_bbox = BoundingBox::default();
+                    let bbox = state.scene_bbox.as_ref().unwrap_or(&default_bbox);
+                    // Example: rotate camera based on drag
+                    state
+                        .camera_data
+                        .transform(camera::CameraTransform::Rotate {
+                            pivot: bbox.center(),
+                            rotation_axis: glam::Vec3::Y,
+                            angle: delta.x * 0.01, // adjust sensitivity as needed
+                        });
+                    state
+                        .camera_data
+                        .transform(camera::CameraTransform::Rotate {
+                            pivot: bbox.center(),
+                            rotation_axis: glam::Vec3::X,
+                            angle: delta.y * 0.01,
+                        });
+                    state.egui_renderer.context().request_repaint();
+                }
+
+                // Track scroll for zoom
+                if ui.ctx().input(|i| i.raw_scroll_delta.y != 0.0) {
+                    let scroll = ui.ctx().input(|i| i.raw_scroll_delta.y);
+                    state
+                        .camera_data
+                        .transform(camera::CameraTransform::Zoom(scroll * 0.001));
+                    state.egui_renderer.context().request_repaint();
+                }
+
                 ui.image(image_texture.source(state.egui_renderer.context()));
             });
 
-            egui::Window::new("winit + egui + wgpu says hello!")
+            egui::Window::new("View Controls")
                 .resizable(true)
                 .vscroll(true)
                 .default_open(false)
                 .show(state.egui_renderer.context(), |ui| {
-                    ui.label("Label!");
-
-                    if ui.button("Button!").clicked() {
-                        println!("width: {}, height: {}", state.width, state.height);
-                        println!("See if it is built");
-                        println!("boom!")
-                    }
-
-                    ui.separator();
                     ui.horizontal(|ui| {
-                        ui.label(format!(
-                            "Pixels per point: {}",
-                            state.egui_renderer.context().pixels_per_point()
-                        ));
+                        ui.label(format!("DPI Factor: {}", state.dpi_factor));
+                        let camera_data =
+                            format!("Camera data currently is: {:?}", state.camera_data);
+                        ui.add(egui::Label::new(camera_data).wrap());
+
+                        ui.separator();
+
                         if ui.button("-").clicked() {
-                            state.scale_factor = (state.scale_factor - 0.1).max(0.3);
+                            state
+                                .camera_data
+                                .transform(camera::CameraTransform::Zoom(-0.1));
+                            println!("Minus pressed");
                         }
                         if ui.button("+").clicked() {
-                            state.scale_factor = (state.scale_factor + 0.1).min(3.0);
+                            state
+                                .camera_data
+                                .transform(camera::CameraTransform::Zoom(0.1));
+                            println!("Plus pressed");
+                        }
+                    });
+
+                    ui.horizontal(|ui| {
+                        if ui.button("Pick File").clicked() {
+                            state.file_dialog.pick_file();
+                        }
+
+                        if ui.button("Add Test Mesh").clicked() {
+                            set_solid_mesh(&mut state.renderer_3d);
+                            state.egui_renderer.context().request_repaint();
                         }
                     });
                 });
+
+            // state
+            //     .dropped_files
+            //     .run(state.egui_renderer.context(), &|test| false);
+            state.file_dialog.update(state.egui_renderer.context());
+
+            if let Some(path) = state.file_dialog.take_picked() {
+                println!("File picked is: {:?}", path);
+
+                let total_bbox = load_3mf::add_mesh_from_3mf(
+                    &mut state.renderer_3d,
+                    path.clone(),
+                    &mut state.camera_data,
+                );
+                state.scene_bbox.get_or_insert(total_bbox);
+                state.egui_renderer.context().request_repaint();
+                state.picked_file = Some(path);
+            }
 
             state.egui_renderer.end_frame_and_draw(
                 &state.device,
@@ -328,19 +420,32 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(new_size) => {
                 self.handle_resized(new_size.width, new_size.height);
             }
+            WindowEvent::ScaleFactorChanged {
+                scale_factor,
+                inner_size_writer: _,
+            } => {
+                self.handle_dpi_changed(scale_factor);
+            }
+            WindowEvent::HoveredFileCancelled => {
+                println!("Hovered file cancelled")
+            }
+            WindowEvent::HoveredFile(filepath) => {
+                println!("File hovered");
+            }
+            WindowEvent::DroppedFile(filepath) => {
+                println!("File dropped");
+            }
             _ => (),
         }
     }
 }
 
-async fn test_box_solid_color_only(
+async fn render_frame(
     renderer: &mut renderer::Renderer,
-    device: &wgpu::Device,
+    camera_data: &impl CameraData,
     render_texture_data: &RenderTextureData,
 ) {
-    let (_mesh_object_id, _wireframe_object_id) = set_solid_mesh(renderer);
-
-    renderer.update_camera(&get_camera_data());
+    renderer.update_camera(camera_data);
     let _ = renderer.render_to_texture(render_texture_data).await;
 }
 
