@@ -217,23 +217,23 @@ fn convert_vertices_to_position(vertices: &Vertices) -> Vec<Position> {
         .collect()
 }
 
-fn convert_triangles_to_indices(triangles: &Triangles) -> Vec<u16> {
+fn convert_triangles_to_indices(triangles: &Triangles) -> Vec<u32> {
     triangles
         .triangle
         .iter()
-        .flat_map(|t| vec![t.v1 as u16, t.v2 as u16, t.v3 as u16])
+        .flat_map(|t| vec![t.v1 as u32, t.v2 as u32, t.v3 as u32])
         .collect()
 }
 
-fn convert_triangles_to_wireframe_indices(triangles: &Triangles) -> Vec<u16> {
+fn convert_triangles_to_wireframe_indices(triangles: &Triangles) -> Vec<u32> {
     let mut indices = Vec::new();
     for t in &triangles.triangle {
-        indices.push(t.v1 as u16);
-        indices.push(t.v2 as u16);
-        indices.push(t.v2 as u16);
-        indices.push(t.v3 as u16);
-        indices.push(t.v3 as u16);
-        indices.push(t.v1 as u16);
+        indices.push(t.v1 as u32);
+        indices.push(t.v2 as u32);
+        indices.push(t.v2 as u32);
+        indices.push(t.v3 as u32);
+        indices.push(t.v3 as u32);
+        indices.push(t.v1 as u32);
     }
 
     indices

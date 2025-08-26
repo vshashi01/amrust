@@ -221,7 +221,7 @@ pub fn get_use_texture_vertices(
 }
 
 #[rustfmt::skip]
-pub const INDICES: &[u16] = &[
+pub const INDICES: &[u32] = &[
     // Front face //done
     5,4,6, 6,4,7,
     // Left face
@@ -237,7 +237,7 @@ pub const INDICES: &[u16] = &[
 ];
 
 #[rustfmt::skip]
-pub const TRI_EDGE_INDICES: &[u16] = &[
+pub const TRI_EDGE_INDICES: &[u32] = &[
     //front face
     5,4,4,6,5,6, 6,4,4,7,6,7,
     //left face
@@ -253,7 +253,7 @@ pub const TRI_EDGE_INDICES: &[u16] = &[
 ];
 
 #[rustfmt::skip]
-pub const INDEXED_POSITIONS_BOX_EDGE_INDICES: &[u16] = &[
+pub const INDEXED_POSITIONS_BOX_EDGE_INDICES: &[u32] = &[
     //left face
     21, 20, 20, 22, 22, 23, 23, 21, 
     //bottom face
@@ -338,7 +338,7 @@ pub const ORDERED_POSITIONS_TRI_EDGE_INDICES: &[u16] = &[
 ];
 
 #[rustfmt::skip]
-pub const ORDERED_POSITIONS_BOX_EDGE_INDICES: &[u16] = &[
+pub const ORDERED_POSITIONS_BOX_EDGE_INDICES: &[u32] = &[
     //left face
     7, 6, 6, 8, 8, 11, 11, 7, 
     //bottom face

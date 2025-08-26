@@ -219,15 +219,15 @@ fn convert_triangles_to_indices(triangles: &Triangles) -> Vec<u16> {
         .collect()
 }
 
-fn convert_triangles_to_wireframe_indices(triangles: &Triangles) -> Vec<u16> {
+fn convert_triangles_to_wireframe_indices(triangles: &Triangles) -> Vec<u32> {
     let mut indices = Vec::new();
     for t in &triangles.triangle {
-        indices.push(t.v1 as u16);
-        indices.push(t.v2 as u16);
-        indices.push(t.v2 as u16);
-        indices.push(t.v3 as u16);
-        indices.push(t.v3 as u16);
-        indices.push(t.v1 as u16);
+        indices.push(t.v1 as u32);
+        indices.push(t.v2 as u32);
+        indices.push(t.v2 as u32);
+        indices.push(t.v3 as u32);
+        indices.push(t.v3 as u32);
+        indices.push(t.v1 as u32);
     }
 
     indices
@@ -238,6 +238,11 @@ fn sort_triangles_by_islands(triangles: &Triangles) -> Vec<Vec<usize>> {
     // Map vertex index -> set of triangle indices that use it
     let mut vertex_to_triangles: HashMap<usize, Vec<usize>> = HashMap::new();
     for (i, tri) in triangles.triangle.iter().enumerate() {
+        assert!(
+            !is_triangle_degenerate(tri.v1, tri.v2, tri.v3),
+            "Degenerate triangle detected: v1={}, v2={}, v3={}",
+            tri.v1, tri.v2, tri.v3
+        );
         for &v in &[tri.v1, tri.v2, tri.v3] {
             vertex_to_triangles.entry(v).or_default().push(i);
         }
@@ -269,20 +274,28 @@ fn sort_triangles_by_islands(triangles: &Triangles) -> Vec<Vec<usize>> {
         }
         islands.push(island);
     }
+
+    println!("Number of islands are:{:?}", islands.len());
     islands
 }
 
 // Example usage: flatten islands in order for rendering
-fn convert_triangles_to_indices_sorted(triangles: &Triangles) -> Vec<u16> {
+fn convert_triangles_to_indices_sorted(triangles: &Triangles) -> Vec<u32> {
     let islands = sort_triangles_by_islands(triangles);
     let mut indices = Vec::with_capacity(triangles.triangle.len() * 3);
     for island in islands {
         for &i in &island {
             let t = &triangles.triangle[i];
-            indices.extend_from_slice(&[t.v1 as u16, t.v2 as u16, t.v3 as u16]);
+            indices.extend_from_slice(&[t.v1 as u32, t.v2 as u32, t.v3 as u32]);
         }
     }
     indices
+}
+
+/// Checks if a triangle is degenerate.
+fn is_triangle_degenerate(v1: usize, v2: usize, v3: usize) -> bool {
+    // Check if any two vertices are the same
+    v1 == v2 || v2 == v3 || v3 == v1
 }
 
 fn convert_vertices_to_color(vertices: &Vertices) -> Vec<amrust_render::vertex::Color> {

@@ -44,9 +44,9 @@ impl BoundingBox {
         ]
     }
 
-    pub fn wireframe_indices() -> [u16; 24] {
+    pub fn wireframe_indices() -> [u32; 24] {
         // Each pair is a line segment between two corners
-        let box_wireframe_indices: [u16; 24] = [
+        let box_wireframe_indices: [u32; 24] = [
             // Bottom face (min z)
             0, 1, 1, 3, 3, 2, 2, 0, // Top face (max z)
             4, 5, 5, 7, 7, 6, 6, 4, // Vertical edges

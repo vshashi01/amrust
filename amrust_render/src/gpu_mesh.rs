@@ -97,14 +97,14 @@ impl MeshBuilder {
         self
     }
 
-    pub fn add_mesh_index_stream(&mut self, data: &[u16]) -> &mut Self {
+    pub fn add_mesh_index_stream(&mut self, data: &[u32]) -> &mut Self {
         assert!(
             self.mesh_index_stream.is_none(),
             "Index stream already set, cannot set again"
         );
 
         let offset = self.append(data);
-        let format = wgpu::IndexFormat::Uint16;
+        let format = wgpu::IndexFormat::Uint32;
         let end = self.data.len() as wgpu::BufferAddress;
         let index_count = data.len() as u32;
 
@@ -118,14 +118,14 @@ impl MeshBuilder {
         self
     }
 
-    pub fn add_wireframe_index_stream(&mut self, data: &[u16]) -> &mut Self {
+    pub fn add_wireframe_index_stream(&mut self, data: &[u32]) -> &mut Self {
         assert!(
             self.wireframe_index_stream.is_none(),
             "Index stream already set, cannot set again"
         );
 
         let offset = self.append(data);
-        let format = wgpu::IndexFormat::Uint16;
+        let format = wgpu::IndexFormat::Uint32;
         let end = self.data.len() as wgpu::BufferAddress;
         let index_count = data.len() as u32;
 
