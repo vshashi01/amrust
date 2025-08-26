@@ -269,6 +269,9 @@ impl App {
         {
             state.egui_renderer.begin_frame(window);
 
+            let default_bbox = BoundingBox::default();
+            let bbox = state.scene_bbox.as_ref().unwrap_or(&default_bbox);
+
             egui::CentralPanel::default().show(state.egui_renderer.context(), |ui| {
                 let dpi_factor = state.egui_renderer.context().pixels_per_point();
                 let image_texture = Image::new((
@@ -287,8 +290,6 @@ impl App {
 
                 if response.dragged() {
                     let delta = response.drag_delta();
-                    let default_bbox = BoundingBox::default();
-                    let bbox = state.scene_bbox.as_ref().unwrap_or(&default_bbox);
                     // Example: rotate camera based on drag
                     state
                         .camera_data
@@ -346,6 +347,8 @@ impl App {
                         }
                     });
 
+                    ui.separator();
+
                     ui.horizontal(|ui| {
                         if ui.button("Pick File").clicked() {
                             state.file_dialog.pick_file();
@@ -355,7 +358,30 @@ impl App {
                             set_solid_mesh(&mut state.renderer_3d);
                             state.egui_renderer.context().request_repaint();
                         }
+
+                        if ui.button("Unzoom Scene").clicked() {
+                            load_3mf::unzoom_bbox(&mut state.camera_data, bbox);
+                            state.egui_renderer.context().request_repaint();
+                        }
+
+                        if ui.button("Clear all mesh").clicked() {
+                            state.renderer_3d.clear_all();
+                        }
                     });
+
+                    ui.separator();
+
+                    ui.vertical(|ui| {
+                        ui.add(
+                            egui::Label::new(format!("Bounding Box points are: {:?}", bbox,))
+                                .wrap(),
+                        );
+
+                        ui.add(
+                            egui::Label::new(format!("Bounding boz size: {:?}", bbox.delta(),))
+                                .wrap(),
+                        );
+                    })
                 });
 
             // state

@@ -15,8 +15,8 @@ use amrust_3mf::core::{Triangles, Vertices};
 use amrust_3mf::io::ThreemfPackage;
 
 use core::f32;
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 
 struct Data {
@@ -58,7 +58,12 @@ pub fn add_mesh_from_3mf(
                 && let Some(mesh) = &object.mesh
             {
                 let positions = convert_vertices_to_position(&mesh.vertices);
-                let indices = convert_triangles_to_indices(&mesh.triangles);
+                println!("Number of vertices: {}", positions.len());
+                // let indices = convert_triangles_to_indices(&mesh.triangles);
+                let indices = convert_triangles_to_indices_sorted(&mesh.triangles);
+
+                println!("Number of triangles: {}", indices.len() / 3);
+
                 let color = convert_vertices_to_color(&mesh.vertices);
                 let wireframe_indices = convert_triangles_to_wireframe_indices(&mesh.triangles);
 
@@ -145,6 +150,12 @@ pub fn add_mesh_from_3mf(
     add_bounding_box_wireframe(renderer, &total_bbox);
     // println!("Bounding Box points are: {:?}", total_bbox);
     // println!("Bounding Box size is: {:?}", total_bbox.delta());
+    unzoom_bbox(camera, &total_bbox);
+
+    total_bbox
+}
+
+pub fn unzoom_bbox(camera: &mut OrthographicCameraData, total_bbox: &BoundingBox) {
     let top_left_corner = Vec3::new(total_bbox.min.x, total_bbox.min.y, total_bbox.max.z);
     // println!("The top left corner is: {}", top_left_corner);
 
@@ -153,13 +164,11 @@ pub fn add_mesh_from_3mf(
     camera.up_vector = Vec3::Z;
 
     let view_matrix = camera.get_view_matrix();
-    let max_extent = calculate_max_extent_in_camera_space(&total_bbox, &view_matrix);
+    let max_extent = calculate_max_extent_in_camera_space(total_bbox, &view_matrix);
     // println!("max_extent: {}", max_extent);
     if max_extent != f32::NAN {
         camera.zoom = 2.0 / max_extent;
     }
-
-    total_bbox
 }
 
 fn calculate_max_extent_in_camera_space(bbox: &BoundingBox, view_matrix: &Mat4) -> f32 {
@@ -221,6 +230,58 @@ fn convert_triangles_to_wireframe_indices(triangles: &Triangles) -> Vec<u16> {
         indices.push(t.v1 as u16);
     }
 
+    indices
+}
+
+/// Returns a Vec of Vecs, where each inner Vec is a sorted island of triangle indices.
+fn sort_triangles_by_islands(triangles: &Triangles) -> Vec<Vec<usize>> {
+    // Map vertex index -> set of triangle indices that use it
+    let mut vertex_to_triangles: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (i, tri) in triangles.triangle.iter().enumerate() {
+        for &v in &[tri.v1, tri.v2, tri.v3] {
+            vertex_to_triangles.entry(v).or_default().push(i);
+        }
+    }
+
+    let mut visited = vec![false; triangles.triangle.len()];
+    let mut islands = Vec::new();
+
+    for start in 0..triangles.triangle.len() {
+        if visited[start] {
+            continue;
+        }
+        let mut island = Vec::new();
+        let mut queue = VecDeque::new();
+        queue.push_back(start);
+        visited[start] = true;
+
+        while let Some(idx) = queue.pop_front() {
+            island.push(idx);
+            let tri = &triangles.triangle[idx];
+            for &v in &[tri.v1, tri.v2, tri.v3] {
+                for &neighbor in &vertex_to_triangles[&v] {
+                    if !visited[neighbor] {
+                        visited[neighbor] = true;
+                        queue.push_back(neighbor);
+                    }
+                }
+            }
+        }
+        islands.push(island);
+    }
+    islands
+}
+
+// Example usage: flatten islands in order for rendering
+fn convert_triangles_to_indices_sorted(triangles: &Triangles) -> Vec<u16> {
+    let islands = sort_triangles_by_islands(triangles);
+    let mut indices = Vec::with_capacity(triangles.triangle.len() * 3);
+    for island in islands {
+        for &i in &island {
+            let t = &triangles.triangle[i];
+            indices.extend_from_slice(&[t.v1 as u16, t.v2 as u16, t.v3 as u16]);
+        }
+    }
     indices
 }
 

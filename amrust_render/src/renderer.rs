@@ -393,6 +393,12 @@ impl Renderer {
         (self.objects.len() - 1) as u32
     }
 
+    pub fn clear_all(&mut self) {
+        self.objects.clear();
+        self.meshes.clear();
+        self.local_bind_groups.clear();
+    }
+
     pub fn make_object_invisible(&mut self, object_id: usize) {
         self.invisible_objects.insert(object_id);
     }
