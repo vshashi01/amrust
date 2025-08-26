@@ -1,6 +1,6 @@
 use glam::{Mat4, Vec3};
 
-use crate::prelude::*;
+use crate::{bounding_box::BoundingBox, prelude::*};
 
 //Camera Uniform
 #[repr(C)]
@@ -12,6 +12,8 @@ pub struct CameraUniform {
 pub trait CameraData {
     fn get_view_matrix(&self) -> Mat4;
     fn get_projection_matrix(&self) -> Mat4;
+
+    fn transform(&mut self, transform: CameraTransform) -> &mut Self;
 
     fn get_frustum_planes(&self) -> Frustum {
         calculate_frustum_planes(self.get_projection_matrix(), self.get_view_matrix())
@@ -137,6 +139,10 @@ pub enum CameraTransform {
         target_position: Vec3,
         up_vector: Vec3,
     },
+    FitToExtent {
+        min: Vec3,
+        max: Vec3,
+    }, //it depends on how the independent camera system handle the input. Orthographic camera data takes in the min and maximum in WCS
 }
 
 impl OrthographicCameraData {
@@ -145,42 +151,6 @@ impl OrthographicCameraData {
         self.target_position = target_position;
         self.up_vector = up_vector;
         self.zoom = 1.0; // Reset zoom to default
-        self
-    }
-
-    pub fn transform(&mut self, transform: CameraTransform) -> &mut Self {
-        match transform {
-            CameraTransform::Zoom(value) => {
-                //ToDo: Fix the zoom to never become negative
-                self.zoom += value;
-            }
-            CameraTransform::Pan(value) => {
-                self.eye_position += value;
-                self.target_position += value;
-            }
-            CameraTransform::Rotate {
-                pivot,
-                rotation_axis,
-                angle,
-            } => {
-                let (eye_position, target_position, up_vector) =
-                    self.get_multi_rotation_data(pivot, rotation_axis, angle);
-
-                self.eye_position = eye_position;
-                self.target_position = target_position;
-                self.up_vector = up_vector;
-            }
-            CameraTransform::SetView {
-                eye_position,
-                target_position,
-                up_vector,
-            } => {
-                self.eye_position = eye_position;
-                self.target_position = target_position;
-                self.up_vector = up_vector;
-            }
-        }
-
         self
     }
 
@@ -216,6 +186,51 @@ impl CameraData for OrthographicCameraData {
     fn get_projection_matrix(&self) -> Mat4 {
         let (left, right, bottom, top) = get_bounds_from_zoom(self.zoom);
         Mat4::orthographic_rh(left, right, bottom, top, self.near, self.far)
+    }
+
+    fn transform(&mut self, transform: CameraTransform) -> &mut Self {
+        match transform {
+            CameraTransform::Zoom(value) => {
+                //ToDo: Fix the zoom to never become negative
+                self.zoom += value;
+            }
+            CameraTransform::Pan(value) => {
+                self.eye_position += value;
+                self.target_position += value;
+            }
+            CameraTransform::Rotate {
+                pivot,
+                rotation_axis,
+                angle,
+            } => {
+                let (eye_position, target_position, up_vector) =
+                    self.get_multi_rotation_data(pivot, rotation_axis, angle);
+
+                self.eye_position = eye_position;
+                self.target_position = target_position;
+                self.up_vector = up_vector;
+            }
+            CameraTransform::SetView {
+                eye_position,
+                target_position,
+                up_vector,
+            } => {
+                self.eye_position = eye_position;
+                self.target_position = target_position;
+                self.up_vector = up_vector;
+            }
+            CameraTransform::FitToExtent { min, max } => {
+                let view_matrix = self.get_view_matrix();
+                let max_extent =
+                    calculate_max_extent_in_camera_space(&BoundingBox { min, max }, &view_matrix);
+
+                if !max_extent.is_nan() && max_extent.is_sign_positive() && max_extent.is_finite() {
+                    self.zoom = 2.0 / max_extent
+                }
+            }
+        }
+
+        self
     }
 }
 
@@ -283,6 +298,25 @@ fn calculate_frustum_planes(projection_matrix: Mat4, view_matrix: Mat4) -> Frust
     let far = plane(3, 2, -1);
 
     Frustum([left, right, bottom, top, near, far])
+}
+
+fn calculate_max_extent_in_camera_space(bbox: &BoundingBox, view_matrix: &Mat4) -> f32 {
+    let corners_in_camera_space = bbox.corners().map(|corner| {
+        let corner_vector = corner.extend(1.0);
+        let transformed = view_matrix * corner_vector;
+        transformed.truncate()
+    });
+    let mut min = corners_in_camera_space[0];
+    let mut max = corners_in_camera_space[0];
+
+    for v in &corners_in_camera_space[1..] {
+        min = min.min(*v);
+        max = max.max(*v);
+    }
+
+    let extent = max - min;
+
+    extent.x.max(extent.y).max(extent.z)
 }
 
 #[cfg(test)]

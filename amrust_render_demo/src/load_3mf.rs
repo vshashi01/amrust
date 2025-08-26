@@ -1,5 +1,5 @@
 use amrust_render::bounding_box::BoundingBox;
-use amrust_render::camera::{CameraData, OrthographicCameraData};
+use amrust_render::camera::CameraData;
 use amrust_render::gpu_mesh::MeshBuilder;
 use amrust_render::instance::InstanceDataBuilder;
 use amrust_render::material::Material;
@@ -27,7 +27,7 @@ struct Data {
 pub fn add_mesh_from_3mf(
     renderer: &mut renderer::Renderer,
     filepath: PathBuf,
-    camera: &mut OrthographicCameraData,
+    camera: &mut impl CameraData,
 ) -> BoundingBox {
     let threemf = std::fs::File::open(filepath).unwrap();
     let package = ThreemfPackage::from_reader(threemf, true).unwrap();
@@ -155,39 +155,19 @@ pub fn add_mesh_from_3mf(
     total_bbox
 }
 
-pub fn unzoom_bbox(camera: &mut OrthographicCameraData, total_bbox: &BoundingBox) {
+pub fn unzoom_bbox(camera: &mut impl CameraData, total_bbox: &BoundingBox) {
     let top_left_corner = Vec3::new(total_bbox.min.x, total_bbox.min.y, total_bbox.max.z);
     // println!("The top left corner is: {}", top_left_corner);
-
-    camera.target_position = total_bbox.center();
-    camera.eye_position = top_left_corner;
-    camera.up_vector = Vec3::Z;
-
-    let view_matrix = camera.get_view_matrix();
-    let max_extent = calculate_max_extent_in_camera_space(total_bbox, &view_matrix);
-    // println!("max_extent: {}", max_extent);
-    if max_extent != f32::NAN {
-        camera.zoom = 2.0 / max_extent;
-    }
-}
-
-fn calculate_max_extent_in_camera_space(bbox: &BoundingBox, view_matrix: &Mat4) -> f32 {
-    let corners_in_camera_space = bbox.corners().map(|corner| {
-        let corner_vector = corner.extend(1.0);
-        let transformed = view_matrix * corner_vector;
-        transformed.truncate()
-    });
-    let mut min = corners_in_camera_space[0];
-    let mut max = corners_in_camera_space[0];
-
-    for v in &corners_in_camera_space[1..] {
-        min = min.min(*v);
-        max = max.max(*v);
-    }
-
-    let extent = max - min;
-
-    extent.x.max(extent.y).max(extent.z)
+    camera
+        .transform(amrust_render::camera::CameraTransform::SetView {
+            eye_position: top_left_corner,
+            target_position: total_bbox.center(),
+            up_vector: Vec3::Z,
+        })
+        .transform(amrust_render::camera::CameraTransform::FitToExtent {
+            min: total_bbox.min,
+            max: total_bbox.max,
+        });
 }
 
 fn calculate_bounding_box(vertices: &Vertices) -> BoundingBox {
@@ -241,7 +221,9 @@ fn sort_triangles_by_islands(triangles: &Triangles) -> Vec<Vec<usize>> {
         assert!(
             !is_triangle_degenerate(tri.v1, tri.v2, tri.v3),
             "Degenerate triangle detected: v1={}, v2={}, v3={}",
-            tri.v1, tri.v2, tri.v3
+            tri.v1,
+            tri.v2,
+            tri.v3
         );
         for &v in &[tri.v1, tri.v2, tri.v3] {
             vertex_to_triangles.entry(v).or_default().push(i);

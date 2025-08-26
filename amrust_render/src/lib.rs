@@ -52,8 +52,11 @@ mod tests {
 
     use super::*;
     use crate::{
-        camera::OrthographicCameraData, gpu_mesh::MeshBuilder, instance::InstanceDataBuilder,
-        material::Material, transformation::Transformation,
+        camera::{CameraData, OrthographicCameraData},
+        gpu_mesh::MeshBuilder,
+        instance::InstanceDataBuilder,
+        material::Material,
+        transformation::Transformation,
     };
     use normalized_box::{
         COLORS, INDEXED_POSITIONS_BOX_EDGE_INDICES, INDICES, ORDERED_POSITIONS,

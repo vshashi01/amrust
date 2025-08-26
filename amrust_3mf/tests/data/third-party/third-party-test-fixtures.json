@@ -62,6 +62,15 @@
             "golden_thumbnail_path": "meshmixer-resized_box_mm.3mf_golden_thumbnail.png",
             "skip_test": false,
             "large_test": false
+        },
+        {
+            "filepath": "mgx-iron_giant_single.3mf",
+            "origin": "Materialise Magics xx",
+            "desc": "Transformed model with large mesh",
+            "date": "21-08-2025",
+            "golden_thumbnail_path": "mgx-iron_giant_single.3mf_golden_thumbnail.png",
+            "skip_test": false,
+            "large_test": true
         }
     ]
 }

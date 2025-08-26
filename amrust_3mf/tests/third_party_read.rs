@@ -22,13 +22,15 @@ pub mod tests {
             }
 
             let filepath = folder_path.join(fixture.filepath.clone());
+            println!("{:?}", filepath);
             let file = File::open(&filepath).unwrap();
 
             let package = ThreemfPackage::from_reader(file, true);
 
-            let golden_thumbnail_path = folder_path
-                .join("golden_thumbnails/")
-                .join(fixture.golden_thumbnail_path.clone());
+            let golden_thumbnail_path = folder_path.join(format!(
+                "golden_thumbnails/{}",
+                fixture.golden_thumbnail_path
+            ));
 
             match package {
                 Ok(threemf) => {
@@ -62,10 +64,9 @@ pub mod tests {
                                 pool.mean().partial_cmp(&FLIP_MEAN_ERROR)
                             {
                                 println!("Mean error {}", pool.mean());
-                                let generated_thumbnail_path = golden_thumbnail_path
-                                    .clone()
-                                    .join("_generated_thumbnail.png");
-                                thumbnail.save(generated_thumbnail_path).unwrap();
+                                // thumbnail
+                                //     .save(format!("{}_golden_thumbnail.png", fixture.filepath))
+                                //     .unwrap();
 
                                 panic!(
                                     "Something is wrong with the thumbnail: {:?}",

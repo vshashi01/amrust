@@ -48,7 +48,7 @@ impl<'xml> FromXml<'xml> for Preserve {
             None => return Err(Error::MissingValue("No Must Preserve value found")),
         };
 
-        if let Ok(must_preserve) =  value.parse::<bool>() {
+        if let Ok(must_preserve) = value.parse::<bool>() {
             *into = Some(Preserve(must_preserve));
             Ok(())
         } else {
@@ -96,7 +96,7 @@ pub mod tests {
         );
         let metadata = Metadata {
             name: "Copyright".to_string(),
-            preserve: Some(Preserve(true)),
+            preserve: None,
             value: Some("Copyright (c) 2018 3MF Consortium. All rights reserved.".to_string()),
         };
         let metadata_string = to_string(&metadata).unwrap();
@@ -151,7 +151,7 @@ pub mod tests {
                     },
                     Metadata {
                         name: "From Test 2".to_string(),
-                        preserve:None,
+                        preserve: None,
                         value: None,
                     }
                 ]
