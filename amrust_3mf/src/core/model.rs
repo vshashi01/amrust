@@ -131,6 +131,7 @@ pub mod test {
             recommendedextensions: None,
             metadata: vec![Metadata {
                 name: "Trial Metadata".to_owned(),
+                preserve:None,
                 value: None,
             }],
             resources: Resources {
@@ -181,6 +182,7 @@ pub mod test {
                 recommendedextensions: None,
                 metadata: vec![Metadata {
                     name: "Trial Metadata".to_owned(),
+                    preserve:None,
                     value: None,
                 }],
                 resources: Resources {
@@ -237,6 +239,7 @@ pub mod test {
                 recommendedextensions: None,
                 metadata: vec![Metadata {
                     name: "Trial Metadata".to_owned(),
+                    preserve:None,
                     value: None,
                 }],
                 resources: Resources {
