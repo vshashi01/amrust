@@ -1,27 +1,21 @@
 [package]
 name = "amrust_render"
 version = "0.1.0"
-edition = "2024"
-
-[features]
-default = ["egui_wgpu"]
-wgpu = ["dep:wgpu"]
-egui_wgpu = ["dep:egui-wgpu"]
+edition.workspace = true
+rust-version.workspace = true
 
 [dependencies]
-futures-intrusive = { version = "0.5.0" }
-wgpu = { version = "25.0.0", features = ["spirv"], optional = true }
-log = { version = "0.4.27" }
-bytemuck = { version = "1.23.0", features = ["derive"] }
-glam = { version = "0.30.3" }
-image = { version = "0.25.6" }
-thiserror = { version = "2.0.11" }
-anyhow = { version = "1.0.98" }
-egui-wgpu = { version = "0.31.1", optional = true }
-cfg-if = { version = "1.0.0" }
+futures-intrusive = { workspace = true }
+wgpu = { workspace = true, features = ["spirv"] }
+log = { workspace = true }
+bytemuck = { workspace = true, features = ["derive"] }
+glam = { workspace = true }
+image = { workspace = true, default-features = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
 
 
 [dev-dependencies]
-pollster = { version = "0.4.0" }
-env_logger = { version = "0.11.8" }
-nv-flip = { version = "0.1.2" }
+pollster = { workspace = true }
+env_logger = { workspace = true }
+nv-flip = { workspace = true }

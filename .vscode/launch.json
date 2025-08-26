@@ -1,58 +1,32 @@
 {
-    // Use IntelliSense to learn about possible attributes.
-    // Hover to view descriptions of existing attributes.
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
-    "version": "0.2.0",
-    "configurations": [
-        // {
-        //     "name": "Linux Launch",
-        //     "type": "lldb",
-        //     "request": "launch",
-        //     "program": "${workspaceRoot}/target/debug/amrust",
-        //     "cargo": {
-        //         "args": [
-        //             "build",
-        //             "--bin=amrust",
-        //             "--package=amrust"
-        //         ],
-        //         "filter": {
-        //             "name": "amrust",
-        //             "kind": "bin"
-        //         }
-        //     },
-        //     "args": [],
-        //     "cwd": "${workspaceFolder}"
-        // },
-        // {
-        //     "name": "Debug unit tests in Linux",
-        //     "type": "cppvsdbg",
-        //     "request": "launch",
-        //     "cargo": {
-        //         "args": [
-        //             "test",
-        //             "--no-run",
-        //             "--bin=amrust",
-        //             "--package=amrust"
-        //         ],
-        //         "filter": {
-        //             "name": "amrust",
-        //             "kind": "bin"
-        //         }
-        //     },
-        //     "args": [],
-        //     "cwd": "${workspaceFolder}"
-        // },
-        
-{
-    "name": "(Windows) Launch",
-    "type": "cppvsdbg",
-    "request": "launch",
-    "program": "${workspaceRoot}/target/debug/amrust.exe",
-    "args": [],
-    "stopAtEntry": false,
-    "cwd": "${workspaceFolder}",
-    "environment": [],
-    "console": "externalTerminal"
-}
-    ]
+  // Use IntelliSense to learn about possible attributes.
+  // Hover to view descriptions of existing attributes.
+  // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "(Windows) Launch amrust",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceRoot}/target/debug/amrust.exe",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "console": "externalTerminal",
+      "preLaunchTask": "build all"
+    },
+    {
+      "name": "(Windows) Launch AMRUST Render Demo",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceRoot}/target/debug/amrust_render_demo.exe",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "console": "externalTerminal",
+      "preLaunchTask": "build amrust_render_demo"
+    }
+  ]
 }

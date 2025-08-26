@@ -4,6 +4,14 @@ use std::ops::Index;
 
 const MATRIX_SIZE: usize = 12;
 
+// for a matrix in 3mf 
+//
+// | m00 m01 m02 0.0 |
+// | m10 m11 m12 0.0 | 
+// | m20 m21 m22 0.0 |
+// | m30 m31 m32 1.0 |
+//
+// the first 3 columns are represented as [m00, m01, m02, m10, m11, m12, m20, m21, m22, m30, m31, m32]
 #[derive(Debug, PartialEq, Clone)]
 pub struct Transform(pub [f64; MATRIX_SIZE]);
 

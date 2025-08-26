@@ -1,5 +1,8 @@
 [workspace]
 resolver = "3"
+package.edition = "2024"
+package.rust-version = "1.89"
+package.license = "MIT Or Apache-2.0"
 members = [
     "amrust",
     "amrust_lib",
@@ -8,6 +11,52 @@ members = [
     "amrust_render_demo",
 ]
 
-# only because that current instant-xml is used like this in 3mf-rs
-[patch.crates-io]
+[workspace.dependencies]
+#egui related
+eframe = { version = "0.32.1" }
+egui = { version = "0.32.1" }
+egui_extras = { version = "0.32.1" }
+egui_logger = { version = "0.8.0" }
+egui-winit = { version = "0.32.1" }
+egui-wgpu = { version = "0.32.1" }
+
+#app building
+log = { version = "0.4.22" }
+pollster = { version = "0.4.0" }
+thiserror = { version = "2.0.3" }
+anyhow = { version = "1.0.86" }
+futures-intrusive = { version = "0.5.0" }
+winit = { version = "0.30.11" }
+cfg-if = { version = "1.0.0" }
+env_logger = { version = "0.11.8" }
+
+#math or data processing libraries
+glam = { version = "0.30.3" }
+bytemuck = { version = "1.23.0" }
+
+
+#(de)serialization libraries (XML, Image, Zip)
 instant-xml = { git = "https://github.com/djc/instant-xml.git" }
+zip = { version = "4.4.0", default-features = false }
+roxmltree = { version = "0.20.0" }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = { version = "1.0.140" }
+image = { version = "0.25.5", default-features = false }
+
+#rendering APIs
+wgpu = { version = "25.0.0" }
+
+#testing libraries
+pretty_assertions = { version = "1.4.1" }
+collapse = { version = "0.1.2" }
+nv-flip = { version = "0.1.2" }
+
+#shared libraries of amrust
+amrust_lib = { path = "amrust_lib" }
+amrust_render = { path = "amrust_render" }
+amrust_3mf = { path = "amrust_3mf" }
+
+
+# need to update the official version once a new version is released.
+# [patch.crates-io]
+# instant-xml = { git = "https://github.com/djc/instant-xml.git" }

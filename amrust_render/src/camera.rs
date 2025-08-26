@@ -12,41 +12,77 @@ pub struct CameraUniform {
 pub trait CameraData {
     fn get_view_matrix(&self) -> Mat4;
     fn get_projection_matrix(&self) -> Mat4;
+
+    fn get_frustum_planes(&self) -> Frustum {
+        calculate_frustum_planes(self.get_projection_matrix(), self.get_view_matrix())
+    }
+}
+
+#[derive(Debug)]
+pub struct Frustum([Plane; 6]);
+
+impl Frustum {
+    pub fn is_point_inside(&self, point: Vec3) -> bool {
+        self.0
+            .iter()
+            .all(|p| p.normal.dot(point) + p.distance >= 0.0)
+    }
+}
+
+#[derive(Debug)]
+pub struct Plane {
+    pub normal: Vec3,
+    pub distance: f32,
 }
 
 pub struct Camera {
     view_matrix: Mat4,
     projection_matrix: Mat4,
+    buffer: wgpu::Buffer,
+    pub bind_group: wgpu::BindGroup,
 }
 
 impl Camera {
-    pub fn new<T: CameraData>(data: &T) -> Self {
-        let view_matrix = data.get_view_matrix();
-        let projection_matrix = data.get_projection_matrix();
+    pub fn new(device: &wgpu::Device) -> Self {
+        let view_matrix = Mat4::IDENTITY;
+        let projection_matrix = Mat4::IDENTITY;
+        let buffer = Self::create_uniform_buffer(
+            Self::create_uniform(view_matrix, projection_matrix),
+            device,
+        );
+
+        let bind_group = Self::create_bind_group(&buffer, device);
         Self {
             view_matrix,
             projection_matrix,
+            buffer,
+            bind_group,
         }
     }
 
-    pub fn view_projection_matrix(&self) -> Mat4 {
-        self.projection_matrix * self.view_matrix
+    pub fn update<T: CameraData>(&mut self, data: &T) {
+        self.view_matrix = data.get_view_matrix();
+        self.projection_matrix = data.get_projection_matrix();
     }
 
-    fn create_uniform(&self) -> CameraUniform {
+    pub fn write_buffer(&self, queue: &wgpu::Queue) {
+        let uniform = Self::create_uniform(self.view_matrix, self.projection_matrix);
+        queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&[uniform]));
+    }
+
+    fn create_uniform(view_matrix: Mat4, projection_matrix: Mat4) -> CameraUniform {
+        let view_proj_matrix = projection_matrix * view_matrix;
         CameraUniform {
-            view_proj: self.view_projection_matrix().to_cols_array_2d(),
+            view_proj: view_proj_matrix.to_cols_array_2d(),
         }
     }
 
-    fn create_uniform_buffer(&self, device: &wgpu::Device) -> wgpu::Buffer {
-        let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    fn create_uniform_buffer(uniform: CameraUniform, device: &wgpu::Device) -> wgpu::Buffer {
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Camera buffer"),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            contents: bytemuck::cast_slice(&[self.create_uniform()]),
-        });
-
-        camera_buffer
+            contents: bytemuck::cast_slice(&[uniform]),
+        })
     }
 
     pub fn create_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
@@ -65,9 +101,8 @@ impl Camera {
         })
     }
 
-    pub fn create_bind_group(&self, device: &wgpu::Device) -> wgpu::BindGroup {
+    fn create_bind_group(buffer: &wgpu::Buffer, device: &wgpu::Device) -> wgpu::BindGroup {
         let layout = Self::create_bind_group_layout(device);
-        let buffer = self.create_uniform_buffer(device);
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Camera bind group"),
             layout: &layout,
@@ -79,6 +114,7 @@ impl Camera {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct OrthographicCameraData {
     pub eye_position: Vec3,
     pub target_position: Vec3,
@@ -96,12 +132,26 @@ pub enum CameraTransform {
         rotation_axis: Vec3,
         angle: f32,
     },
+    SetView {
+        eye_position: Vec3,
+        target_position: Vec3,
+        up_vector: Vec3,
+    },
 }
 
 impl OrthographicCameraData {
-    pub fn transform(mut self, transform: CameraTransform) -> Self {
+    pub fn set(mut self, eye_position: Vec3, target_position: Vec3, up_vector: Vec3) -> Self {
+        self.eye_position = eye_position;
+        self.target_position = target_position;
+        self.up_vector = up_vector;
+        self.zoom = 1.0; // Reset zoom to default
+        self
+    }
+
+    pub fn transform(&mut self, transform: CameraTransform) -> &mut Self {
         match transform {
             CameraTransform::Zoom(value) => {
+                //ToDo: Fix the zoom to never become negative
                 self.zoom += value;
             }
             CameraTransform::Pan(value) => {
@@ -116,6 +166,15 @@ impl OrthographicCameraData {
                 let (eye_position, target_position, up_vector) =
                     self.get_multi_rotation_data(pivot, rotation_axis, angle);
 
+                self.eye_position = eye_position;
+                self.target_position = target_position;
+                self.up_vector = up_vector;
+            }
+            CameraTransform::SetView {
+                eye_position,
+                target_position,
+                up_vector,
+            } => {
                 self.eye_position = eye_position;
                 self.target_position = target_position;
                 self.up_vector = up_vector;
@@ -179,7 +238,7 @@ impl Default for OrthographicCameraData {
                 z: 0.0,
             },
             near: -0.1,
-            far: 100.0,
+            far: 500.0,
             zoom: 1.0,
         }
     }
@@ -193,4 +252,53 @@ fn get_bounds_from_zoom(current_zoom: f32) -> (f32, f32, f32, f32) {
     let top = 1.0 / current_zoom;
 
     (left, right, bottom, top)
+}
+
+fn calculate_frustum_planes(projection_matrix: Mat4, view_matrix: Mat4) -> Frustum {
+    let clip_space_matrix = projection_matrix * view_matrix;
+    let matrix = clip_space_matrix.to_cols_array_2d();
+    //[4][4]
+
+    let plane = |i: usize, j: usize, sign: isize| {
+        //gribb-hartmann method for extracting planes from clip space matrix
+        // https://www.gamedevs.org/uploads/fast-extraction-viewing-frustum-planes-from-world-view-projection-matrix.pdf
+        let normal = Vec3::new(
+            matrix[0][i] + sign as f32 * matrix[0][j],
+            matrix[1][i] + sign as f32 * matrix[1][j],
+            matrix[2][i] + sign as f32 * matrix[2][j],
+        );
+
+        let distance = matrix[3][i] + sign as f32 * matrix[3][j];
+        Plane {
+            normal: normal.normalize(),
+            distance: distance / normal.length(),
+        }
+    };
+
+    let left = plane(3, 0, 1);
+    let right = plane(3, 0, -1);
+    let bottom = plane(3, 1, 1);
+    let top = plane(3, 1, -1);
+    let near = plane(2, 0, 0); //sign is 0 since its v*col3
+    let far = plane(3, 2, -1);
+
+    Frustum([left, right, bottom, top, near, far])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_frustum_planes_identity_matrices() {
+        let projection_matrix = Mat4::IDENTITY;
+        let view_matrix = Mat4::IDENTITY;
+        let frustum = calculate_frustum_planes(projection_matrix, view_matrix);
+        assert_eq!(frustum.0[0].normal, Vec3::new(1.0, 0.0, 0.0));
+        assert_eq!(frustum.0[1].normal, Vec3::new(-1.0, 0.0, 0.0));
+        assert_eq!(frustum.0[2].normal, Vec3::new(0.0, 1.0, 0.0));
+        assert_eq!(frustum.0[3].normal, Vec3::new(0.0, -1.0, 0.0));
+        assert_eq!(frustum.0[4].normal, Vec3::new(0.0, 0.0, 1.0));
+        assert_eq!(frustum.0[5].normal, Vec3::new(0.0, 0.0, -1.0));
+    }
 }

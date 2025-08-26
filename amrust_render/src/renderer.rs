@@ -1,5 +1,6 @@
 use image::{ImageBuffer, Rgba};
 
+use crate::camera::CameraData;
 use crate::prelude::*;
 
 use crate::{
@@ -44,6 +45,7 @@ pub struct Renderer {
     texture_bind_group_layout: wgpu::BindGroupLayout,
     texture_sampler: wgpu::Sampler,
     texture_array_bind_group_layout: wgpu::BindGroupLayout,
+    camera: Camera,
 
     // render pipelines
     render_pipeline_cache: HashMap<String, wgpu::RenderPipeline>,
@@ -54,7 +56,7 @@ pub const DEVICE_FEATURES: [wgpu::Features; 2] = [
     wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
 ];
 
-#[cfg(feature = "wgpu")]
+// #[cfg(feature = "wgpu")]
 pub const DEVICE_LIMITS: wgpu::Limits = wgpu::Limits {
     max_binding_array_elements_per_shader_stage:
         texture::MAX_BINDING_ARRAY_ELEMENTS_PER_SHADER_STAGE,
@@ -64,23 +66,24 @@ pub const DEVICE_LIMITS: wgpu::Limits = wgpu::Limits {
     ..wgpu::Limits::downlevel_defaults()
 };
 
-#[cfg(feature = "egui_wgpu")]
-pub const DEVICE_LIMITS: wgpu::Limits = wgpu::Limits {
-    max_texture_dimension_2d: texture::MAX_TEXTURE_SIZE,
-    ..wgpu::Limits::downlevel_defaults()
-};
+// #[cfg(feature = "egui_wgpu")]
+// pub const DEVICE_LIMITS: wgpu::Limits = wgpu::Limits {
+//     max_texture_dimension_2d: texture::MAX_TEXTURE_SIZE,
+//     ..wgpu::Limits::downlevel_defaults()
+// };
 
 impl Renderer {
     pub async fn from_existing_device_and_queue(
         device: wgpu::Device,
         queue: wgpu::Queue,
         texture_format: wgpu::TextureFormat,
-        texture_size: wgpu::Extent3d,
+        width: u32,
+        height: u32,
     ) -> Result<Self, WgpuError> {
         for features in DEVICE_FEATURES {
             if !device.features().contains(features) {
                 panic!(
-                    "Required feature {:?} is not supported by the device",
+                    "Required features {:?} are not supported by the device",
                     features
                 );
             }
@@ -94,6 +97,12 @@ impl Renderer {
                 DEVICE_LIMITS
             );
         }
+
+        let texture_size = wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        };
 
         Self::setup_new_renderer(device, queue, texture_format, texture_size, None)
     }
@@ -116,7 +125,6 @@ impl Renderer {
             .iter()
             .fold(wgpu::Features::empty(), |acc, &f| acc | f);
 
-        #[cfg(feature = "wgpu")]
         let device_descriptor = wgpu::DeviceDescriptor {
             label: Some("Gpu Device"),
             required_features,
@@ -125,22 +133,7 @@ impl Renderer {
             trace: wgpu::Trace::Off,
         };
 
-        #[cfg(feature = "egui_wgpu")]
-        let device_descriptor = wgpu::DeviceDescriptor {
-            label: Some("Gpu Device"),
-            required_features,
-            required_limits: DEVICE_LIMITS,
-            memory_hints: wgpu::MemoryHints::Performance,
-        };
-
-        #[cfg(feature = "wgpu")]
         let (device, queue) = adapter.request_device(&device_descriptor).await.unwrap();
-
-        #[cfg(feature = "egui_wgpu")]
-        let (device, queue) = adapter
-            .request_device(&device_descriptor, None)
-            .await
-            .unwrap();
 
         let texture_size = wgpu::Extent3d {
             width,
@@ -297,6 +290,8 @@ impl Renderer {
             texture_array_surface_render_pipeline,
         );
 
+        let camera = Camera::new(&device);
+
         Ok(Renderer {
             device,
             queue,
@@ -312,8 +307,19 @@ impl Renderer {
             texture_bind_group_layout: basic_texture_bind_group_layout,
             texture_array_bind_group_layout,
             texture_sampler,
+            camera,
             render_pipeline_cache,
         })
+    }
+
+    pub fn set_size(&mut self, width: u32, height: u32) {
+        let texture_size = wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        };
+
+        self.texture_size = texture_size;
     }
 
     pub fn create_render_texture_data(&self) -> RenderTextureData {
@@ -387,6 +393,12 @@ impl Renderer {
         (self.objects.len() - 1) as u32
     }
 
+    pub fn clear_all(&mut self) {
+        self.objects.clear();
+        self.meshes.clear();
+        self.local_bind_groups.clear();
+    }
+
     pub fn make_object_invisible(&mut self, object_id: usize) {
         self.invisible_objects.insert(object_id);
     }
@@ -407,10 +419,26 @@ impl Renderer {
         (self.local_bind_groups.len() - 1) as u32
     }
 
-    pub async fn render(
+    pub fn update_camera(&mut self, camera_data: &impl CameraData) {
+        self.camera.update(camera_data);
+        self.camera.write_buffer(&self.queue);
+    }
+
+    pub async fn render_to_texture(
+        &self,
+        render_texture_data: &RenderTextureData,
+    ) -> Result<(), WgpuError> {
+        //ToDO: validate the texture size
+        Self::render_internal(self, Some(render_texture_data)).await
+    }
+
+    pub async fn render(&self) -> Result<(), WgpuError> {
+        Self::render_internal(self, None).await
+    }
+
+    async fn render_internal(
         &self,
         render_texture_data: Option<&RenderTextureData>,
-        primary_camera_bind_group: &wgpu::BindGroup,
     ) -> Result<(), WgpuError> {
         let texture_data = match render_texture_data {
             Some(data) => data,
@@ -452,7 +480,7 @@ impl Renderer {
             };
             let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
 
-            render_pass.set_bind_group(0, primary_camera_bind_group, &[]);
+            render_pass.set_bind_group(0, &self.camera.bind_group, &[]);
             // set up global bind groups
             for (i, bind_group) in self.global_bind_groups.iter().enumerate() {
                 render_pass.set_bind_group((i + 1) as u32, bind_group, &[]);
@@ -524,27 +552,29 @@ impl Renderer {
                         tx.send(result).unwrap();
                     });
 
-                    #[cfg(feature = "wgpu")]
-                    match self.device.poll(wgpu::PollType::Wait) {
-                        Ok(status) => true,
-                        Err(_) => false,
-                    };
+                    let result = self.device.poll(wgpu::PollType::Wait);
 
-                    #[cfg(feature = "egui_wgpu")]
-                    self.device.poll(wgpu::Maintain::Wait).panic_on_timeout();
+                    match result {
+                        Ok(status) => {
+                            if status.wait_finished() {
+                                rx.receive().await.unwrap().unwrap();
 
-                    rx.receive().await.unwrap().unwrap();
+                                let data = buffer_slice.get_mapped_range();
 
-                    let data = buffer_slice.get_mapped_range();
+                                use image::{ImageBuffer, Rgba};
 
-                    use image::{ImageBuffer, Rgba};
-
-                    ImageBuffer::<Rgba<u8>, _>::from_raw(
-                        self.texture_size.width,
-                        self.texture_size.height,
-                        data.to_vec(),
-                    )
-                    .unwrap()
+                                ImageBuffer::<Rgba<u8>, _>::from_raw(
+                                    self.texture_size.width,
+                                    self.texture_size.height,
+                                    data.to_vec(),
+                                )
+                                .unwrap()
+                            } else {
+                                panic!("Polling GPU never returned");
+                            }
+                        }
+                        Err(e) => panic!("{}", e),
+                    }
                 };
                 buffer.unmap();
 

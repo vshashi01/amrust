@@ -22,7 +22,7 @@ impl eframe::App for MyApp {
         egui::TopBottomPanel::top("top panel")
             .resizable(false)
             .show(ctx, |ui| {
-                egui::menu::bar(ui, |ui| {
+                egui::MenuBar::new().ui(ui, |ui| {
                     ui.menu_button("File", |ui| {
                         if ui.button("Close File").clicked() {
                             self.clear_state(ctx);

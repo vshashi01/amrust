@@ -133,22 +133,20 @@ impl ThreemfPackage {
                 for value in 0..zip.len() {
                     let file = zip.by_index(value)?;
 
-                    if file.is_file() {
-                        if let Some(path) = file.enclosed_name() {
-                            if Some(OsStr::new(rels_ext)) == path.extension()
-                                && path != PathBuf::from(root_rels_filename)
-                            {
-                                match path.to_str() {
-                                    Some(path_str) => {
-                                        let rels = relationships_from_zipfile(file)?;
-                                        relationships.insert(format!("/{path_str}"), rels);
-                                    }
-                                    None => {
-                                        return Err(Error::ReadError(
-                                            "Failed to read the relationship file path".to_owned(),
-                                        ));
-                                    }
-                                }
+                    if file.is_file()
+                        && let Some(path) = file.enclosed_name()
+                        && Some(OsStr::new(rels_ext)) == path.extension()
+                        && path != PathBuf::from(root_rels_filename)
+                    {
+                        match path.to_str() {
+                            Some(path_str) => {
+                                let rels = relationships_from_zipfile(file)?;
+                                relationships.insert(format!("/{path_str}"), rels);
+                            }
+                            None => {
+                                return Err(Error::ReadError(
+                                    "Failed to read the relationship file path".to_owned(),
+                                ));
                             }
                         }
                     }
@@ -251,7 +249,9 @@ fn relationships_from_zip_by_name<R: Read + io::Seek>(
     }
 }
 
-fn relationships_from_zipfile(mut file: zip::read::ZipFile<'_>) -> Result<Relationships, Error> {
+fn relationships_from_zipfile<R: Read>(
+    mut file: zip::read::ZipFile<'_, R>,
+) -> Result<Relationships, Error> {
     let mut xml_string: String = Default::default();
     let _ = file.read_to_string(&mut xml_string)?;
     let rels = from_str::<Relationships>(&xml_string)?;
@@ -448,7 +448,7 @@ pub mod tests {
             writer
         };
 
-        assert_eq!(bytes.into_inner().len(), 961);
+        assert_eq!(bytes.into_inner().len(), 963);
     }
 
     #[test]

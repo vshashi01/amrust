@@ -24,4 +24,7 @@ pub enum Error {
 
     #[error("Derialization error from Instant-Xml")]
     InstantXmlError(#[from] instant_xml::Error),
+
+    #[error("Thumbnail error: {0}")]
+    ThumbnailError(String),
 }

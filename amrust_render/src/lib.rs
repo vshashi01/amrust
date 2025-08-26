@@ -4,6 +4,7 @@ mod prelude;
 pub use prelude::*;
 
 //export module
+pub mod bounding_box;
 pub mod camera;
 pub mod gpu_mesh;
 pub mod instance;
@@ -23,10 +24,9 @@ mod render_pass;
 pub enum WgpuError {
     #[error("Something went wrong with the Device request")]
     DeviceError(#[from] wgpu::RequestDeviceError),
-
-    #[cfg(feature = "wgpu")]
-    #[error("When something goes wrong with the adapter")]
-    AdapterError(#[from] wgpu::RequestAdapterError),
+    // #[cfg(feature = "wgpu")]
+    // #[error("When something goes wrong with the adapter")]
+    // AdapterError(#[from] wgpu::RequestAdapterError),
 }
 
 pub struct RenderObject {
@@ -52,11 +52,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        camera::{Camera, OrthographicCameraData},
-        gpu_mesh::MeshBuilder,
-        instance::InstanceDataBuilder,
-        material::Material,
-        transformation::Transformation,
+        camera::OrthographicCameraData, gpu_mesh::MeshBuilder, instance::InstanceDataBuilder,
+        material::Material, transformation::Transformation,
     };
     use normalized_box::{
         COLORS, INDEXED_POSITIONS_BOX_EDGE_INDICES, INDICES, ORDERED_POSITIONS,
@@ -75,8 +72,8 @@ mod tests {
                 .unwrap();
             let _wireframe_object_id = set_wireframe_mesh_object(&mut renderer);
 
-            let camera_bind_group = get_camera_bind_group(&renderer.device);
-            let _ = renderer.render(None, &camera_bind_group).await;
+            renderer.update_camera(&get_camera_data());
+            let _ = renderer.render().await;
             let image_buffer = renderer.present().await;
             // image_buffer.save("tests/data/wireframe_mesh.png").unwrap();
 
@@ -106,8 +103,8 @@ mod tests {
                 .unwrap();
             let (_mesh_object_id, _wireframe_object_id) = set_solid_mesh(&mut renderer);
 
-            let camera_bind_group = get_camera_bind_group(&renderer.device);
-            let _ = renderer.render(None, &camera_bind_group).await;
+            renderer.update_camera(&get_camera_data());
+            let _ = renderer.render().await;
             let image_buffer = renderer.present().await;
             // image_buffer.save("tests/data/solid_color_mesh.png").unwrap();
 
@@ -137,8 +134,8 @@ mod tests {
                 .unwrap();
             let (_mesh_object_id, _wireframe_object_id) = set_colored_mesh_object(&mut renderer);
 
-            let camera_bind_group = get_camera_bind_group(&renderer.device);
-            let _ = renderer.render(None, &camera_bind_group).await;
+            renderer.update_camera(&get_camera_data());
+            let _ = renderer.render().await;
             let image_buffer = renderer.present().await;
             // image_buffer
             //     .save("tests/data/vertex_color_mesh.png")
@@ -170,8 +167,8 @@ mod tests {
                 .unwrap();
             let (_mesh_object_id, _wireframe_object_id) = single_tex_mesh_object(&mut renderer);
 
-            let camera_bind_group = get_camera_bind_group(&renderer.device);
-            let _ = renderer.render(None, &camera_bind_group).await;
+            renderer.update_camera(&get_camera_data());
+            let _ = renderer.render().await;
             let image_buffer = renderer.present().await;
             // image_buffer.save("tests/data/single_tex_mesh.png").unwrap();
 
@@ -201,8 +198,8 @@ mod tests {
                 .unwrap();
             let (_mesh_object_id, _wireframe_object_id) = set_multi_tex_mesh_object(&mut renderer);
 
-            let camera_bind_group = get_camera_bind_group(&renderer.device);
-            let _ = renderer.render(None, &camera_bind_group).await;
+            renderer.update_camera(&get_camera_data());
+            let _ = renderer.render().await;
             let image_buffer = renderer.present().await;
             // image_buffer
             //     .save("tests/data/array_tex_mesh_new.png")
@@ -226,8 +223,9 @@ mod tests {
         });
     }
 
-    fn get_camera_bind_group(device: &wgpu::Device) -> wgpu::BindGroup {
-        let camera_data = OrthographicCameraData::default()
+    fn get_camera_data() -> OrthographicCameraData {
+        let mut camera = OrthographicCameraData::default();
+        camera
             .transform(camera::CameraTransform::Zoom(-0.80))
             .transform(camera::CameraTransform::Pan(Vec3 {
                 x: 0.5,
@@ -267,9 +265,7 @@ mod tests {
                 z: 0.0,
             }));
 
-        let camera = Camera::new(&camera_data);
-
-        camera.create_bind_group(device)
+        camera
     }
 
     fn create_texture_and_texture_bind_group(
