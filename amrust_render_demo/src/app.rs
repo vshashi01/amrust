@@ -392,14 +392,11 @@ impl App {
             if let Some(path) = state.file_dialog.take_picked() {
                 println!("File picked is: {:?}", path);
 
-                let total_bbox = load_3mf::add_mesh_from_3mf(
-                    &mut state.renderer_3d,
-                    path.clone(),
-                    &mut state.camera_data,
-                );
-                state.scene_bbox.get_or_insert(total_bbox);
-                state.egui_renderer.context().request_repaint();
-                state.picked_file = Some(path);
+                if let Some(ext) = path.extension()
+                    && let Some("3mf") = ext.to_str()
+                {
+                    load_parts_from_3mf(state, path);
+                }
             }
 
             state.egui_renderer.end_frame_and_draw(
@@ -415,6 +412,14 @@ impl App {
         state.queue.submit(Some(encoder.finish()));
         surface_texture.present();
     }
+}
+
+fn load_parts_from_3mf(state: &mut AppState, path: PathBuf) {
+    let total_bbox =
+        load_3mf::add_mesh_from_3mf(&mut state.renderer_3d, path.clone(), &mut state.camera_data);
+    state.scene_bbox.get_or_insert(total_bbox);
+    state.egui_renderer.context().request_repaint();
+    state.picked_file = Some(path);
 }
 
 impl ApplicationHandler for App {

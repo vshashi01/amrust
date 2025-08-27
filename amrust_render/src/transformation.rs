@@ -4,6 +4,7 @@ use crate::prelude::*;
 
 use crate::instance::InstanceFieldDescriptor;
 
+#[derive(Debug, Clone, Copy)]
 pub struct Transformation(pub Mat4);
 
 impl Transformation {

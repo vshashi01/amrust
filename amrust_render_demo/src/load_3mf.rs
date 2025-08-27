@@ -36,7 +36,7 @@ pub fn add_mesh_from_3mf(
     let mut gpu_mesh_map = HashMap::new();
 
     for item in &package.root.build.item {
-        let mesh_id = item.objectid;
+        let object_id = item.objectid;
         let transform = {
             if let Some(transform) = &item.transform {
                 Transformation(convert_transform_to_glam_matrix(transform))
@@ -45,55 +45,14 @@ pub fn add_mesh_from_3mf(
             }
         };
 
-        if let Entry::Vacant(e) = object_transform_map.entry(mesh_id) {
-            //process the mesh and create a GPU mesh
-            let object = package
-                .root
-                .resources
-                .object
-                .iter()
-                .find(|o| o.id == mesh_id);
-
-            if let Some(object) = object
-                && let Some(mesh) = &object.mesh
-            {
-                let positions = convert_vertices_to_position(&mesh.vertices);
-                println!("Number of vertices: {}", positions.len());
-                // let indices = convert_triangles_to_indices(&mesh.triangles);
-                let indices = convert_triangles_to_indices_sorted(&mesh.triangles);
-
-                println!("Number of triangles: {}", indices.len() / 3);
-
-                let color = convert_vertices_to_color(&mesh.vertices);
-                let wireframe_indices = convert_triangles_to_wireframe_indices(&mesh.triangles);
-
-                let gpu_mesh = MeshBuilder::new()
-                    .add_vertex_stream(positions.as_slice())
-                    .add_vertex_stream(color.as_slice())
-                    .add_mesh_index_stream(indices.as_slice())
-                    .add_wireframe_index_stream(wireframe_indices.as_slice())
-                    .build(&renderer.device);
-
-                let gpu_mesh_id = renderer.add_mesh(gpu_mesh);
-
-                gpu_mesh_map.insert(mesh_id, gpu_mesh_id);
-
-                //calculate bounding box
-                let bbox = calculate_bounding_box(&mesh.vertices);
-
-                e.insert(Data {
-                    bbox,
-                    transforms: vec![transform],
-                });
-            }
-        } else {
-            // add an additional instance transform
-            object_transform_map
-                .get_mut(&mesh_id)
-                .unwrap()
-                .transforms
-                .push(transform);
-        }
+        process_object_id(
+            renderer,
+            &package,
+            &mut object_transform_map,
+            &mut gpu_mesh_map,
+            object_id,
+            &transform,
+        );
     }
 
     //create render objects
@@ -155,6 +114,85 @@ pub fn add_mesh_from_3mf(
     total_bbox
 }
 
+fn process_object_id(
+    renderer: &mut renderer::Renderer,
+    package: &ThreemfPackage,
+    object_transform_map: &mut HashMap<usize, Data>,
+    gpu_mesh_map: &mut HashMap<usize, u32>,
+    object_id: usize,
+    transform: &Transformation,
+) {
+    if let Entry::Vacant(e) = object_transform_map.entry(object_id) {
+        //process the mesh and create a GPU mesh
+        let object = package
+            .root
+            .resources
+            .object
+            .iter()
+            .find(|o| o.id == object_id);
+
+        if let Some(object) = object {
+            if let Some(mesh) = &object.mesh {
+                create_gpu_mesh(renderer, gpu_mesh_map, object_id, transform, mesh, e);
+            } else if let Some(components) = &object.components {
+                for component in &components.component {
+                    println!("There components: {:?}", component);
+                    // process_object_id(
+                    //     renderer,
+                    //     package,
+                    //     object_transform_map,
+                    //     gpu_mesh_map,
+                    //     object_id,
+                    //     transform,
+                    // );
+                }
+            }
+        }
+    } else {
+        // add an additional instance transform
+        object_transform_map
+            .get_mut(&object_id)
+            .unwrap()
+            .transforms
+            .push(*transform);
+    }
+}
+
+fn create_gpu_mesh(
+    renderer: &mut renderer::Renderer,
+    gpu_mesh_map: &mut HashMap<usize, u32>,
+    mesh_id: usize,
+    transform: &Transformation,
+    mesh: &amrust_3mf::core::Mesh,
+    e: std::collections::hash_map::VacantEntry<'_, usize, Data>,
+) {
+    let positions = convert_vertices_to_position(&mesh.vertices);
+    // println!("Number of vertices: {}", positions.len());
+    let indices = convert_triangles_to_indices(&mesh.triangles);
+    // println!("Number of triangles: {}", indices.len() / 3);
+    let color = convert_vertices_to_color(&mesh.vertices);
+    let wireframe_indices = convert_triangles_to_wireframe_indices(&mesh.triangles);
+
+    let gpu_mesh = MeshBuilder::new()
+        .add_vertex_stream(positions.as_slice())
+        .add_vertex_stream(color.as_slice())
+        .add_mesh_index_stream(indices.as_slice())
+        .add_wireframe_index_stream(wireframe_indices.as_slice())
+        .build(&renderer.device);
+
+    let gpu_mesh_id = renderer.add_mesh(gpu_mesh);
+
+    gpu_mesh_map.insert(mesh_id, gpu_mesh_id);
+
+    //calculate bounding box
+    let bbox = calculate_bounding_box(&mesh.vertices);
+
+    e.insert(Data {
+        bbox,
+        transforms: vec![transform.clone()],
+    });
+}
+
 pub fn unzoom_bbox(camera: &mut impl CameraData, total_bbox: &BoundingBox) {
     let top_left_corner = Vec3::new(total_bbox.min.x, total_bbox.min.y, total_bbox.max.z);
     // println!("The top left corner is: {}", top_left_corner);
@@ -191,11 +229,11 @@ fn convert_vertices_to_position(vertices: &Vertices) -> Vec<Position> {
         .collect()
 }
 
-fn convert_triangles_to_indices(triangles: &Triangles) -> Vec<u16> {
+fn convert_triangles_to_indices(triangles: &Triangles) -> Vec<u32> {
     triangles
         .triangle
         .iter()
-        .flat_map(|t| vec![t.v1 as u16, t.v2 as u16, t.v3 as u16])
+        .flat_map(|t| vec![t.v1 as u32, t.v2 as u32, t.v3 as u32])
         .collect()
 }
 
