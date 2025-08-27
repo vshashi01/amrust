@@ -334,8 +334,6 @@ mod tests {
                 .await
                 .unwrap();
 
-            thumbnail.save("mgx-iron_giant_single.png");
-
             let ref_image = nv_flip::FlipImageRgb8::with_data(1280, 1080, &ref_image_data);
             let test_image = nv_flip::FlipImageRgb8::with_data(1280, 1080, &thumbnail);
 
