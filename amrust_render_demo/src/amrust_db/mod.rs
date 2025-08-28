@@ -1,3 +1,4 @@
+use std::fmt::{Debug, format};
 use std::{collections::HashMap, path::PathBuf};
 
 use amrust_3mf::{
@@ -10,8 +11,8 @@ use thiserror::Error;
 
 #[derive(Debug)]
 pub enum PartRep {
-    Mesh(usize),
-    ComposedPart(Vec<usize>),
+    Mesh(Box<Mesh>),
+    ComposedPart(Vec<usize>), //this is probably not great
 }
 
 #[derive(PartialEq, Debug)]
@@ -26,25 +27,34 @@ struct UniquePart(usize); //points to a part_rep_id
 #[derive(Debug)]
 pub struct Scene(Vec<Part>);
 
-#[derive(Debug)]
 pub struct Mesh {
     pub vertices: Vec<Vec3>,
     pub triangles: Vec<u32>,
     pub bbox: BoundingBox,
 }
 
+impl Debug for Mesh {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Mesh")
+            .field("vertices:", &self.vertices.len())
+            .field("triangles:", &self.triangles.len())
+            .field("bbox:", &self.bbox)
+            .finish()
+    }
+}
+
 #[derive(Debug)]
 pub struct Db {
-    pub meshes: Vec<Mesh>,
-    pub part_reps: Vec<PartRep>,
+    //meshes: Vec<Mesh>,
+    part_reps: Vec<PartRep>,
     unique_parts: Vec<UniquePart>,
-    pub scene: Option<Scene>,
+    scene: Option<Scene>,
 }
 
 #[derive(Debug, Error)]
 pub enum DbError {
-    #[error("No valid mesh found with the id: {0}")]
-    NoValidMeshFound(usize),
+    #[error("No valid part found with the id: {0}")]
+    InvalidPartId(usize),
 
     #[error("An invalid part rep is passed")]
     InvalidPartRep,
@@ -59,16 +69,10 @@ pub enum DbFrom3mfError {
 impl Db {
     pub fn new() -> Self {
         Db {
-            meshes: vec![],
             part_reps: vec![],
             unique_parts: vec![],
             scene: None,
         }
-    }
-
-    pub fn add_mesh(&mut self, mesh: Mesh) -> usize {
-        self.meshes.push(mesh);
-        self.meshes.len() - 1
     }
 
     // returns the part rep ID and the unique part ID
@@ -85,21 +89,31 @@ impl Db {
         Ok((part_rep_id, unique_part_id))
     }
 
+    pub fn get_part_rep(&mut self, part: Part) -> Option<&PartRep> {
+        let unique_part = self.unique_parts.get(part.unique_part);
+        match unique_part {
+            Some(part) => {
+                let part_rep = &self.part_reps[part.0];
+                Some(part_rep)
+            }
+            None => None,
+        }
+    }
+
     pub fn add_scene(&mut self, scene: Scene) {
         let _ = self.scene.insert(scene);
     }
 
     fn validate_part_rep(&self, part_rep: &PartRep) -> Result<bool, DbError> {
         match part_rep {
-            PartRep::Mesh(id) => {
-                if self.meshes.len() < *id {
-                    return Err(DbError::NoValidMeshFound(*id));
-                }
-            }
+            PartRep::Mesh(_) => {}
             PartRep::ComposedPart(parts) => {
                 for unique_part_id in parts {
-                    let unique_part = &self.unique_parts[*unique_part_id];
-                    self.validate_part(unique_part)?;
+                    let unique_part = self.unique_parts.get(*unique_part_id);
+                    match unique_part {
+                        Some(part) => return self.validate_part(part),
+                        None => return Err(DbError::InvalidPartId(*unique_part_id)),
+                    }
                 }
             }
         }
@@ -111,17 +125,13 @@ impl Db {
     }
 }
 
-struct Data {
-    pub bbox: BoundingBox,
-    pub transforms: Vec<Transformation>,
-}
 pub fn get_db_from_3mf(filepath: PathBuf) -> Result<Db, DbFrom3mfError> {
     let threemf = std::fs::File::open(filepath).unwrap();
     let package = ThreemfPackage::from_reader(threemf, true).unwrap();
 
     let mut db = Db::new();
     let mut items_transform_pair = vec![];
-    let mut part_rep_map = HashMap::<usize, (usize, usize)>::new(); //object id to part_rep id map
+    let mut part_rep_map = HashMap::<usize, (usize, usize)>::new(); //object id to (part_red_id, unique_part_id)
     let mut parts_in_scene = vec![];
 
     //collect all the object ids that do exist in the scene
@@ -139,6 +149,9 @@ pub fn get_db_from_3mf(filepath: PathBuf) -> Result<Db, DbFrom3mfError> {
     }
 
     //setup the Mesh, PartRep and Part based on the items on the scene
+    //what to do with objects that are not listed in the build?
+    //will the order of processing be objects always go such that all Components of a Composed Part
+    //is already a valid Part
     for item in items_transform_pair {
         if let Some(ids) = part_rep_map.get_key_value(&item.0) {
             parts_in_scene.push(Part {
@@ -155,31 +168,36 @@ pub fn get_db_from_3mf(filepath: PathBuf) -> Result<Db, DbFrom3mfError> {
 
             match object {
                 Some(object) => {
-                    if let Some(m) = &object.mesh {
-                        let mesh = Mesh {
-                            vertices: convert_3mf_vertices_to_mesh_vertices(&m.vertices.vertex),
-                            triangles: convert_3mf_triangles_to_mesh_triangles(
-                                &m.triangles.triangle,
-                            ),
-                            bbox: generate_bbox(&m.vertices.vertex),
-                        };
+                    let unique_part_id = {
+                        if let Some(m) = &object.mesh {
+                            process_mesh_object(&mut db, &mut part_rep_map, object.id, m)
+                        } else if let Some(comps) = &object.components {
+                            process_composed_object(&mut db, &mut part_rep_map, object.id, comps)
+                        } else {
+                            None
+                        }
+                    };
 
-                        let mesh_id = db.add_mesh(mesh);
-                        if let Ok(registered) = db.add_part_rep(PartRep::Mesh(mesh_id)) {
-                            part_rep_map.insert(object.id, registered);
-
+                    match unique_part_id {
+                        Some(part_id) => {
                             parts_in_scene.push(Part {
-                                unique_part: registered.1,
+                                unique_part: part_id,
                                 transform: item.1,
                             });
                         }
-                    } else if let Some(comps) = &object.components {
+                        None => {
+                            return Err(DbFrom3mfError::Unspecified(format!(
+                                "Invalid 3mf Object Id: {}",
+                                item.0
+                            )));
+                        }
                     }
                 }
                 None => {
-                    return Err(DbFrom3mfError::Unspecified(
-                        "Invalid 3mf Object Id".to_owned(),
-                    ));
+                    return Err(DbFrom3mfError::Unspecified(format!(
+                        "Invalid 3mf Object Id: {}",
+                        item.0
+                    )));
                 }
             }
         }
@@ -188,6 +206,51 @@ pub fn get_db_from_3mf(filepath: PathBuf) -> Result<Db, DbFrom3mfError> {
     db.add_scene(Scene(parts_in_scene));
 
     Ok(db)
+}
+
+fn process_mesh_object(
+    db: &mut Db,
+    part_rep_map: &mut HashMap<usize, (usize, usize)>,
+    object_id: usize,
+    m: &amrust_3mf::core::Mesh,
+) -> Option<usize> {
+    let mesh = Mesh {
+        vertices: convert_3mf_vertices_to_mesh_vertices(&m.vertices.vertex),
+        triangles: convert_3mf_triangles_to_mesh_triangles(&m.triangles.triangle),
+        bbox: generate_bbox(&m.vertices.vertex),
+    };
+
+    if let Ok(registered) = db.add_part_rep(PartRep::Mesh(Box::new(mesh))) {
+        part_rep_map.insert(object_id, registered);
+        Some(registered.1)
+    } else {
+        None
+    }
+}
+
+fn process_composed_object(
+    db: &mut Db,
+    part_rep_map: &mut HashMap<usize, (usize, usize)>,
+    object_id: usize,
+    comps: &amrust_3mf::core::component::Components,
+) -> Option<usize> {
+    let mut list_of_unique_part_id_per_component = vec![];
+    for comp in &comps.component {
+        if let Some(partids) = part_rep_map.get(&comp.objectid) {
+            list_of_unique_part_id_per_component.push(partids.1);
+        } //else need to look at other objects
+    }
+
+    if !list_of_unique_part_id_per_component.is_empty() {
+        if let Ok(registered) =
+            db.add_part_rep(PartRep::ComposedPart(list_of_unique_part_id_per_component))
+        {
+            part_rep_map.insert(object_id, registered);
+
+            return Some(registered.1);
+        }
+    }
+    None
 }
 
 fn generate_bbox(vertices: &[Vertex]) -> BoundingBox {
