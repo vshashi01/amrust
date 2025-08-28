@@ -26,6 +26,7 @@ egui-winit = { workspace = true }
 egui = { workspace = true }
 glam = { workspace = true }
 egui-file-dialog = { version = "0.11.0" }
+thiserror = { workspace = true }
 
 amrust_render = { workspace = true }
 amrust_lib = { workspace = true }

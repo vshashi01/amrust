@@ -1,3 +1,4 @@
+use crate::amrust_db::get_db_from_3mf;
 use crate::egui_tools::EguiRenderer;
 use crate::load_3mf;
 use amrust_render::bounding_box::BoundingBox;
@@ -395,7 +396,13 @@ impl App {
                 if let Some(ext) = path.extension()
                     && let Some("3mf") = ext.to_str()
                 {
-                    load_parts_from_3mf(state, path);
+                    load_parts_from_3mf(state, path.clone());
+                    let db = get_db_from_3mf(path);
+
+                    match db {
+                        Ok(db) => println!("Db contains: {:?}", db),
+                        Err(err) => println!("Error:{:?}", err),
+                    }
                 }
             }
 

@@ -1,3 +1,4 @@
+mod amrust_db;
 mod app;
 mod egui_tools;
 mod load_3mf;
