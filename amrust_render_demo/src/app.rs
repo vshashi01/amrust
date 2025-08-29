@@ -1,4 +1,4 @@
-use crate::amrust_db::get_db_from_3mf;
+use crate::amrust_db::{add_render_items_from_db, get_db_from_3mf};
 use crate::egui_tools::EguiRenderer;
 use crate::load_3mf;
 use amrust_render::bounding_box::BoundingBox;
@@ -17,6 +17,7 @@ use egui_wgpu::{ScreenDescriptor, wgpu};
 use glam::{Mat4, Vec3};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::thread::current;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
@@ -361,7 +362,7 @@ impl App {
                         }
 
                         if ui.button("Unzoom Scene").clicked() {
-                            load_3mf::unzoom_bbox(&mut state.camera_data, bbox);
+                            unzoom_bbox(&mut state.camera_data, bbox);
                             state.egui_renderer.context().request_repaint();
                         }
 
@@ -396,11 +397,31 @@ impl App {
                 if let Some(ext) = path.extension()
                     && let Some("3mf") = ext.to_str()
                 {
-                    load_parts_from_3mf(state, path.clone());
                     let db = get_db_from_3mf(path);
 
                     match db {
-                        Ok(db) => println!("Db contains: {:?}", db),
+                        Ok(db) => {
+                            println!("Db contains: {:?}", db);
+                            match add_render_items_from_db(&mut state.renderer_3d, &db) {
+                                Ok(new_bbox) => {
+                                    let bbox = match &mut state.scene_bbox {
+                                        Some(current_bbox) => {
+                                            current_bbox.unite(&new_bbox);
+                                            current_bbox.clone()
+                                        }
+                                        None => {
+                                            let bbox = &mut state.scene_bbox.insert(new_bbox);
+                                            bbox.clone()
+                                        }
+                                    };
+
+                                    unzoom_bbox(&mut state.camera_data, &bbox);
+                                }
+                                Err(err) => {
+                                    println!("Error: {:?}", err);
+                                }
+                            }
+                        }
                         Err(err) => println!("Error:{:?}", err),
                     }
                 }
@@ -580,4 +601,19 @@ fn get_camera_data() -> OrthographicCameraData {
         }));
 
     camera_data
+}
+
+pub fn unzoom_bbox(camera: &mut impl CameraData, total_bbox: &BoundingBox) {
+    let top_left_corner = Vec3::new(total_bbox.min.x, total_bbox.min.y, total_bbox.max.z);
+    // println!("The top left corner is: {}", top_left_corner);
+    camera
+        .transform(amrust_render::camera::CameraTransform::SetView {
+            eye_position: top_left_corner,
+            target_position: total_bbox.center(),
+            up_vector: Vec3::Z,
+        })
+        .transform(amrust_render::camera::CameraTransform::FitToExtent {
+            min: total_bbox.min,
+            max: total_bbox.max,
+        });
 }
