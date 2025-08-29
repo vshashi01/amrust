@@ -1,6 +1,6 @@
-use crate::amrust_db::{add_render_items_from_db, get_db_from_3mf};
+use crate::amrust_db::add_render_items_from_db;
 use crate::egui_tools::EguiRenderer;
-use crate::load_3mf;
+use crate::load_3mf::get_db_from_3mf;
 use amrust_render::bounding_box::BoundingBox;
 // use amrust_lib::widgets::dropped_files::DroppedFilesWidget;
 use amrust_render::camera::{self, CameraData, OrthographicCameraData};
@@ -17,7 +17,6 @@ use egui_wgpu::{ScreenDescriptor, wgpu};
 use glam::{Mat4, Vec3};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::thread::current;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
@@ -398,7 +397,6 @@ impl App {
                     && let Some("3mf") = ext.to_str()
                 {
                     let db = get_db_from_3mf(path);
-
                     match db {
                         Ok(db) => {
                             println!("Db contains: {:?}", db);
@@ -416,6 +414,7 @@ impl App {
                                     };
 
                                     unzoom_bbox(&mut state.camera_data, &bbox);
+                                    state.egui_renderer.context().request_repaint();
                                 }
                                 Err(err) => {
                                     println!("Error: {:?}", err);
@@ -440,14 +439,6 @@ impl App {
         state.queue.submit(Some(encoder.finish()));
         surface_texture.present();
     }
-}
-
-fn load_parts_from_3mf(state: &mut AppState, path: PathBuf) {
-    let total_bbox =
-        load_3mf::add_mesh_from_3mf(&mut state.renderer_3d, path.clone(), &mut state.camera_data);
-    state.scene_bbox.get_or_insert(total_bbox);
-    state.egui_renderer.context().request_repaint();
-    state.picked_file = Some(path);
 }
 
 impl ApplicationHandler for App {
@@ -485,15 +476,15 @@ impl ApplicationHandler for App {
             } => {
                 self.handle_dpi_changed(scale_factor);
             }
-            WindowEvent::HoveredFileCancelled => {
-                println!("Hovered file cancelled")
-            }
-            WindowEvent::HoveredFile(filepath) => {
-                println!("File hovered");
-            }
-            WindowEvent::DroppedFile(filepath) => {
-                println!("File dropped");
-            }
+            // WindowEvent::HoveredFileCancelled => {
+            //     println!("Hovered file cancelled")
+            // }
+            // WindowEvent::HoveredFile(filepath) => {
+            //     println!("File hovered");
+            // }
+            // WindowEvent::DroppedFile(filepath) => {
+            //     println!("File dropped");
+            // }
             _ => (),
         }
     }

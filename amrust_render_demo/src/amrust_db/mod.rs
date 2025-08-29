@@ -1,17 +1,13 @@
 use glam::{Mat4, Vec3};
 use thiserror::Error;
 
-use amrust_3mf::{
-    core::{Triangle, Vertex, transform::Transform},
-    io::ThreemfPackage,
-};
 use amrust_render::{
     RenderObject, bounding_box::BoundingBox, gpu_mesh::MeshBuilder, instance::InstanceDataBuilder,
     material::Material, renderer, transformation::Transformation, vertex::Position,
 };
 
+use std::collections::HashMap;
 use std::fmt::Debug;
-use std::{collections::HashMap, path::PathBuf};
 
 #[derive(Debug)]
 pub enum PartRep {
@@ -29,7 +25,7 @@ pub struct PartInstance {
 pub struct Part(usize); //points to a part_rep_id
 
 #[derive(Debug)]
-pub struct Scene(Vec<PartInstance>);
+pub struct Scene(pub Vec<PartInstance>);
 
 pub struct Mesh {
     pub vertices: Vec<Vec3>,
@@ -67,12 +63,6 @@ pub enum DbError {
 
     #[error("There is no scene set currently")]
     SceneNotSet,
-}
-
-#[derive(Debug, Error)]
-pub enum DbFrom3mfError {
-    #[error("Something went wrong: {0}")]
-    Unspecified(String),
 }
 
 impl Db {
@@ -344,166 +334,6 @@ fn convert_points_vec_to_position(points: &[Vec3]) -> Vec<Position> {
     points.iter().map(|p| Position([p.x, p.y, p.z])).collect()
 }
 
-pub fn get_db_from_3mf(filepath: PathBuf) -> Result<Db, DbFrom3mfError> {
-    let threemf = std::fs::File::open(filepath).unwrap();
-    let package = ThreemfPackage::from_reader(threemf, true).unwrap();
-
-    let mut db = Db::new();
-    let mut items_transform_pair = vec![];
-    let mut part_rep_map = HashMap::<usize, (usize, usize)>::new(); //object id to (part_red_id, unique_part_id)
-    let mut parts_in_scene = vec![];
-
-    //collect all the object ids that do exist in the scene
-    for item in &package.root.build.item {
-        let object_id = item.objectid;
-        let transform = {
-            if let Some(transform) = &item.transform {
-                Transformation(convert_transform_to_glam_matrix(transform))
-            } else {
-                Transformation(glam::Mat4::IDENTITY)
-            }
-        };
-
-        items_transform_pair.push((object_id, transform));
-    }
-
-    //setup the Mesh, PartRep and Part based on the items on the scene
-    //what to do with objects that are not listed in the build?
-    //will the order of processing be objects always go such that all Components of a Composed Part
-    //is already a valid Part
-    for item in items_transform_pair {
-        if let Some(ids) = part_rep_map.get_key_value(&item.0) {
-            parts_in_scene.push(PartInstance {
-                part_id: ids.1.1, //set the unique part id
-                transform: item.1,
-            });
-        } else {
-            let object = package
-                .root
-                .resources
-                .object
-                .iter()
-                .find(|o| o.id == item.0);
-
-            match object {
-                Some(object) => {
-                    let unique_part_id = {
-                        if let Some(m) = &object.mesh {
-                            process_mesh_object(&mut db, &mut part_rep_map, object.id, m)
-                        } else if let Some(comps) = &object.components {
-                            process_composed_object(&mut db, &mut part_rep_map, object.id, comps)
-                        } else {
-                            None
-                        }
-                    };
-
-                    match unique_part_id {
-                        Some(part_id) => {
-                            parts_in_scene.push(PartInstance {
-                                part_id,
-                                transform: item.1,
-                            });
-                        }
-                        None => {
-                            return Err(DbFrom3mfError::Unspecified(format!(
-                                "Invalid 3mf Object Id: {}",
-                                item.0
-                            )));
-                        }
-                    }
-                }
-                None => {
-                    return Err(DbFrom3mfError::Unspecified(format!(
-                        "Invalid 3mf Object Id: {}",
-                        item.0
-                    )));
-                }
-            }
-        }
-    }
-
-    db.add_scene(Scene(parts_in_scene));
-
-    Ok(db)
-}
-
-fn process_mesh_object(
-    db: &mut Db,
-    part_rep_map: &mut HashMap<usize, (usize, usize)>,
-    object_id: usize,
-    m: &amrust_3mf::core::Mesh,
-) -> Option<usize> {
-    let mesh = Mesh {
-        vertices: convert_3mf_vertices_to_mesh_vertices(&m.vertices.vertex),
-        triangles: convert_3mf_triangles_to_mesh_triangles(&m.triangles.triangle),
-        bbox: generate_bbox(&m.vertices.vertex),
-    };
-
-    if let Ok(registered) = db.add_part_rep(PartRep::Mesh(Box::new(mesh))) {
-        part_rep_map.insert(object_id, registered);
-        Some(registered.1)
-    } else {
-        None
-    }
-}
-
-fn process_composed_object(
-    db: &mut Db,
-    part_rep_map: &mut HashMap<usize, (usize, usize)>,
-    object_id: usize,
-    comps: &amrust_3mf::core::component::Components,
-) -> Option<usize> {
-    let mut list_of_unique_part_id_per_component = vec![];
-    for comp in &comps.component {
-        if let Some(partids) = part_rep_map.get(&comp.objectid) {
-            list_of_unique_part_id_per_component.push(PartInstance {
-                part_id: partids.1,
-                transform: match &comp.transform {
-                    Some(transform) => Transformation(convert_transform_to_glam_matrix(transform)),
-                    None => Transformation(Mat4::IDENTITY),
-                },
-            });
-        } //else need to look at other objects
-    }
-
-    if !list_of_unique_part_id_per_component.is_empty()
-        && let Ok(registered) =
-            db.add_part_rep(PartRep::ComposedPart(list_of_unique_part_id_per_component))
-    {
-        part_rep_map.insert(object_id, registered);
-
-        return Some(registered.1);
-    }
-    None
-}
-
-fn generate_bbox(vertices: &[Vertex]) -> BoundingBox {
-    let mut min = glam::Vec3::splat(f32::INFINITY);
-    let mut max = glam::Vec3::splat(f32::NEG_INFINITY);
-
-    for vertex in vertices {
-        let pos = glam::vec3(vertex.x as f32, vertex.y as f32, vertex.z as f32);
-        min = min.min(pos);
-        max = max.max(pos);
-    }
-
-    BoundingBox { min, max }
-}
-
-fn convert_3mf_triangles_to_mesh_triangles(triangles: &[Triangle]) -> Vec<u32> {
-    triangles
-        .iter()
-        .flat_map(|t| vec![t.v1 as u32, t.v2 as u32, t.v3 as u32])
-        .collect()
-}
-
-fn convert_3mf_vertices_to_mesh_vertices(vertices: &[Vertex]) -> Vec<Vec3> {
-    vertices
-        .iter()
-        .map(|v| Vec3::new(v.x as f32, v.y as f32, v.z as f32))
-        .collect()
-}
-
 fn convert_vertices_to_position(vertices: &[Vec3]) -> Vec<Position> {
     vertices.iter().map(|v| Position([v.x, v.y, v.z])).collect()
 }
@@ -532,33 +362,4 @@ fn convert_triangle_indices_to_wireframe_indices(triangles: &[u32]) -> Vec<u32> 
         }
     }
     indices
-}
-
-fn convert_transform_to_glam_matrix(transform: &Transform) -> glam::Mat4 {
-    glam::Mat4::from_cols_array_2d(&[
-        [
-            transform.0[0] as f32,
-            transform.0[1] as f32,
-            transform.0[2] as f32,
-            0.0,
-        ],
-        [
-            transform.0[3] as f32,
-            transform.0[4] as f32,
-            transform.0[5] as f32,
-            0.0,
-        ],
-        [
-            transform.0[6] as f32,
-            transform.0[7] as f32,
-            transform.0[8] as f32,
-            0.0,
-        ],
-        [
-            transform.0[9] as f32,
-            transform.0[10] as f32,
-            transform.0[11] as f32,
-            1.0,
-        ],
-    ])
 }
