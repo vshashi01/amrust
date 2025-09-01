@@ -8,6 +8,7 @@ use amrust_render::{
 
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::ops::Bound;
 
 #[derive(Debug)]
 pub enum PartRep {
@@ -93,13 +94,17 @@ impl Db {
     }
 
     pub fn get_part_rep(&self, part_instance: &PartInstance) -> Result<&PartRep, DbError> {
-        let unique_part = self.unique_parts.get(part_instance.part_id);
+        self.get_part_rep_from_part(part_instance.part_id)
+    }
+
+    pub fn get_part_rep_from_part(&self, part_id: usize) -> Result<&PartRep, DbError> {
+        let unique_part = self.unique_parts.get(part_id);
         match unique_part {
             Some(part) => {
                 let part_rep = &self.part_reps[part.0];
                 Ok(part_rep)
             }
-            None => Err(DbError::PartIdNotFound(part_instance.part_id)),
+            None => Err(DbError::PartIdNotFound(part_id)),
         }
     }
 
@@ -188,12 +193,9 @@ impl Db {
     }
 }
 
-struct RepData {
+struct InstanceData {
     pub gpu_mesh_id: u32,
     pub bbox: BoundingBox,
-}
-
-struct InstanceData {
     pub transforms: Vec<Transformation>,
 }
 
@@ -205,67 +207,34 @@ pub fn add_render_items_from_db(
     let mut total_bbox = BoundingBox::default();
 
     if let Ok(scene) = scene {
-        let mut mesh_rep_gpu_mesh_map = HashMap::<usize, RepData>::new(); //part_id to gpu_mesh_id
-        let mut part_id_instance_data = HashMap::<usize, InstanceData>::new();
+        let mut part_id_to_instance_data = HashMap::<usize, InstanceData>::new();
 
         //setup all the instance data
         for instance in &scene.0 {
-            if let Some(instance_data) = part_id_instance_data.get_mut(&instance.part_id) {
-                instance_data.transforms.push(instance.transform);
-            } else {
-                let part_rep = db.get_part_rep(instance);
-                match part_rep {
-                    Ok(rep) => match rep {
-                        PartRep::Mesh(mesh) => {
-                            let positions = convert_vertices_to_position(&mesh.vertices);
-                            // println!("Number of vertices: {}", positions.len());
-                            let indices = mesh.triangles.clone();
-                            // println!("Number of triangles: {}", indices.len() / 3);
-                            let color = convert_vertices_to_color(&mesh.vertices);
-                            let wireframe_indices =
-                                convert_triangle_indices_to_wireframe_indices(&mesh.triangles);
-
-                            let gpu_mesh = MeshBuilder::new()
-                                .add_vertex_stream(positions.as_slice())
-                                .add_vertex_stream(color.as_slice())
-                                .add_mesh_index_stream(indices.as_slice())
-                                .add_wireframe_index_stream(wireframe_indices.as_slice())
-                                .build(&renderer.device);
-
-                            let gpu_mesh_id = renderer.add_mesh(gpu_mesh);
-
-                            mesh_rep_gpu_mesh_map.insert(
-                                instance.part_id,
-                                RepData {
-                                    gpu_mesh_id,
-                                    bbox: mesh.bbox.clone(),
-                                },
-                            );
-
-                            part_id_instance_data.insert(
-                                instance.part_id,
-                                InstanceData {
-                                    transforms: vec![instance.transform],
-                                },
-                            );
-                        }
-                        PartRep::ComposedPart(part_instances) => {}
-                    },
-                    Err(err) => return Err(err),
-                }
+            match process_part_instance(
+                renderer,
+                db,
+                &mut part_id_to_instance_data,
+                instance,
+                &Transformation(Mat4::IDENTITY),
+            ) {
+                Ok(_) => {}
+                Err(err) => return Err(err),
             }
         }
 
         //add the instance data to the renderer
-        for (key, value) in part_id_instance_data {
-            let rep_data = &mesh_rep_gpu_mesh_map[&key];
-            add_render_object(renderer, &value, rep_data.gpu_mesh_id);
+        for (part_id, instance_data) in part_id_to_instance_data {
+            add_render_object(renderer, &instance_data);
 
             let mut instance_bbox = BoundingBox::default();
             //calculate bounding box
-            for transform in &value.transforms {
-                let mut default_bbox = rep_data.bbox.clone();
+            for transform in &instance_data.transforms {
+                let mut default_bbox = instance_data.bbox;
                 default_bbox.transform(transform);
+                println!("Part ID: {}, Bounding Box: {:?}", part_id, default_bbox);
+                add_bounding_box_wireframe(renderer, &default_bbox);
+
                 instance_bbox.unite(&default_bbox);
             }
 
@@ -273,12 +242,80 @@ pub fn add_render_items_from_db(
         }
     }
 
-    add_bounding_box_wireframe(renderer, &total_bbox);
+    // add_bounding_box_wireframe(renderer, &total_bbox);
+    println!("Total BBOX is {:?}", total_bbox);
 
     Ok(total_bbox)
 }
 
-fn add_render_object(renderer: &mut renderer::Renderer, data: &InstanceData, gpu_mesh_id: u32) {
+fn process_part_instance(
+    renderer: &mut renderer::Renderer,
+    db: &Db,
+    part_id_to_instance_data: &mut HashMap<usize, InstanceData>,
+    instance: &PartInstance,
+    parent_transform: &Transformation,
+) -> Result<(), DbError> {
+    let part_rep = db.get_part_rep(instance);
+    match part_rep {
+        Ok(rep) => match rep {
+            PartRep::Mesh(mesh) => {
+                let positions = convert_vertices_to_position(&mesh.vertices);
+                // println!("Number of vertices: {}", positions.len());
+                let indices = mesh.triangles.clone();
+                // println!("Number of triangles: {}", indices.len() / 3);
+                let color = convert_vertices_to_color(&mesh.vertices);
+                let wireframe_indices =
+                    convert_triangle_indices_to_wireframe_indices(&mesh.triangles);
+
+                let gpu_mesh = MeshBuilder::new()
+                    .add_vertex_stream(positions.as_slice())
+                    .add_vertex_stream(color.as_slice())
+                    .add_mesh_index_stream(indices.as_slice())
+                    .add_wireframe_index_stream(wireframe_indices.as_slice())
+                    .build(&renderer.device);
+
+                let gpu_mesh_id = renderer.add_mesh(gpu_mesh);
+
+                part_id_to_instance_data.insert(
+                    instance.part_id,
+                    InstanceData {
+                        gpu_mesh_id,
+                        bbox: mesh.bbox,
+                        transforms: vec![instance.transform],
+                    },
+                );
+            }
+            PartRep::ComposedPart(part_instances) => {
+                for i in part_instances {
+                    let combined_transform = Transformation(i.transform.0 * parent_transform.0);
+
+                    match part_id_to_instance_data.get_mut(&i.part_id) {
+                        //if the necessary data already exist just push transform
+                        Some(data) => data.transforms.push(combined_transform),
+                        None => {
+                            match process_part_instance(
+                                renderer,
+                                db,
+                                part_id_to_instance_data,
+                                i,
+                                &combined_transform,
+                            ) {
+                                Ok(_) => {}
+                                Err(err) => {
+                                    return Err(err);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        Err(err) => return Err(err),
+    }
+    Ok(())
+}
+
+fn add_render_object(renderer: &mut renderer::Renderer, data: &InstanceData) {
     let transformation_data = data
         .transforms
         .iter()
@@ -286,7 +323,7 @@ fn add_render_object(renderer: &mut renderer::Renderer, data: &InstanceData, gpu
         .collect::<Vec<_>>();
     let material_data = vec![Material::new(1.0, 1.0, 1.0).to_data(); transformation_data.len()];
     let object = RenderObject {
-        renderable: amrust_render::Renderable::ColoredMesh(gpu_mesh_id),
+        renderable: amrust_render::Renderable::ColoredMesh(data.gpu_mesh_id),
         instance: InstanceDataBuilder::new()
             .add_instance_stream(transformation_data.as_slice())
             .add_instance_stream(material_data.as_slice())
@@ -297,7 +334,7 @@ fn add_render_object(renderer: &mut renderer::Renderer, data: &InstanceData, gpu
     // println!("Colored Object id {}", object_id);
 
     let wireframe_object = RenderObject {
-        renderable: amrust_render::Renderable::WireframeMesh(gpu_mesh_id),
+        renderable: amrust_render::Renderable::WireframeMesh(data.gpu_mesh_id),
         instance: InstanceDataBuilder::new()
             .add_instance_stream(transformation_data.as_slice())
             .add_instance_stream(material_data.as_slice())

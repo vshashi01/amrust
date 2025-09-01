@@ -1,8 +1,11 @@
+use core::f32;
+use std::fmt::Debug;
+
 use glam::Vec3;
 
 use crate::transformation::Transformation;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy)]
 pub struct BoundingBox {
     pub min: Vec3,
     pub max: Vec3,
@@ -11,9 +14,19 @@ pub struct BoundingBox {
 impl Default for BoundingBox {
     fn default() -> Self {
         BoundingBox {
-            min: Vec3::ZERO,
-            max: Vec3::ZERO,
+            min: Vec3::splat(f32::INFINITY),
+            max: Vec3::splat(f32::NEG_INFINITY),
         }
+    }
+}
+
+impl Debug for BoundingBox {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BoundingBox")
+            .field("min", &self.min)
+            .field("max", &self.max)
+            .field("delta", &self.delta())
+            .finish()
     }
 }
 

@@ -227,7 +227,7 @@ impl App {
             && let Some(min) = window.is_minimized()
             && min
         {
-            println!("Window is minimized");
+            // println!("Window is minimized");
             return;
         }
 
@@ -367,6 +367,7 @@ impl App {
 
                         if ui.button("Clear all mesh").clicked() {
                             state.renderer_3d.clear_all();
+                            state.egui_renderer.context().request_repaint();
                         }
                     });
 
@@ -402,14 +403,16 @@ impl App {
                             println!("Db contains: {:?}", db);
                             match add_render_items_from_db(&mut state.renderer_3d, &db) {
                                 Ok(new_bbox) => {
+                                    // println!("New Bounding Box is {:?}", new_bbox);
                                     let bbox = match &mut state.scene_bbox {
                                         Some(current_bbox) => {
                                             current_bbox.unite(&new_bbox);
-                                            current_bbox.clone()
+                                            *current_bbox
                                         }
                                         None => {
+                                            //ToDo:: Fix this properly for the clear mesh case
                                             let bbox = &mut state.scene_bbox.insert(new_bbox);
-                                            bbox.clone()
+                                            **bbox
                                         }
                                     };
 

@@ -208,6 +208,29 @@ fn convert_transform_to_glam_matrix(transform: &Transform) -> glam::Mat4 {
     ])
 }
 
+// #[rustfmt::skip]
+// fn convert_transform_to_glam_matrix(transform: &Transform) -> glam::Mat4 {
+//     let m = &transform.0;
+//     glam::Mat4::from_cols_array(&[
+//         m[0] as f32,
+//         m[3] as f32,
+//         m[6] as f32,
+//         m[9] as f32,
+//         m[1] as f32,
+//         m[4] as f32,
+//         m[7] as f32,
+//         m[10] as f32,
+//         m[2] as f32,
+//         m[5] as f32,
+//         m[8] as f32,
+//         m[11] as f32,
+//         0.0,
+//         0.0,
+//         0.0,
+//         1.0,
+//     ])
+// }
+
 // struct Data {
 //     pub bbox: BoundingBox,
 //     pub transforms: Vec<Transformation>,
