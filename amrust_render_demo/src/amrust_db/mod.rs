@@ -8,7 +8,6 @@ use amrust_render::{
 
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::ops::Bound;
 
 #[derive(Debug)]
 pub enum PartRep {
@@ -228,7 +227,7 @@ pub fn add_render_items_from_db(
             add_render_object(renderer, &instance_data);
 
             let mut instance_bbox = BoundingBox::default();
-            //calculate bounding box
+            //calculate bounding box this is wrong and needs to be fixed
             for transform in &instance_data.transforms {
                 let mut default_bbox = instance_data.bbox;
                 default_bbox.transform(transform);
@@ -255,6 +254,13 @@ fn process_part_instance(
     instance: &PartInstance,
     parent_transform: &Transformation,
 ) -> Result<(), DbError> {
+    //if the necessary part is already created then just push new transform data to add an additional render object
+    if let Some(instance_data) = part_id_to_instance_data.get_mut(&instance.part_id) {
+        let combined_transform = Transformation(parent_transform.0 * instance.transform.0);
+        instance_data.transforms.push(combined_transform);
+        return Ok(());
+    }
+
     let part_rep = db.get_part_rep(instance);
     match part_rep {
         Ok(rep) => match rep {
@@ -276,18 +282,20 @@ fn process_part_instance(
 
                 let gpu_mesh_id = renderer.add_mesh(gpu_mesh);
 
+                let combined_transform = Transformation(parent_transform.0 * instance.transform.0);
                 part_id_to_instance_data.insert(
                     instance.part_id,
                     InstanceData {
                         gpu_mesh_id,
                         bbox: mesh.bbox,
-                        transforms: vec![instance.transform],
+                        transforms: vec![combined_transform],
                     },
                 );
             }
             PartRep::ComposedPart(part_instances) => {
                 for i in part_instances {
-                    let combined_transform = Transformation(i.transform.0 * parent_transform.0);
+                    let combined_transform =
+                        Transformation(i.transform.0 * parent_transform.0 * instance.transform.0);
 
                     match part_id_to_instance_data.get_mut(&i.part_id) {
                         //if the necessary data already exist just push transform

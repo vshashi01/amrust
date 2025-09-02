@@ -553,7 +553,10 @@ fn set_solid_mesh(renderer: &mut renderer::Renderer) -> (u32, u32) {
 }
 
 fn get_camera_data() -> OrthographicCameraData {
-    let mut camera_data = OrthographicCameraData::default();
+    let mut camera_data = OrthographicCameraData{
+        far: 5000.0,
+        ..Default::default()
+    };
     camera_data
         .transform(camera::CameraTransform::Zoom(-0.80))
         .transform(camera::CameraTransform::Pan(Vec3 {
