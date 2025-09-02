@@ -254,9 +254,10 @@ fn process_part_instance(
     instance: &PartInstance,
     parent_transform: &Transformation,
 ) -> Result<(), DbError> {
+    let combined_transform = Transformation(parent_transform.0 * instance.transform.0);
     //if the necessary part is already created then just push new transform data to add an additional render object
     if let Some(instance_data) = part_id_to_instance_data.get_mut(&instance.part_id) {
-        let combined_transform = Transformation(parent_transform.0 * instance.transform.0);
+        
         instance_data.transforms.push(combined_transform);
         return Ok(());
     }
@@ -281,8 +282,6 @@ fn process_part_instance(
                     .build(&renderer.device);
 
                 let gpu_mesh_id = renderer.add_mesh(gpu_mesh);
-
-                let combined_transform = Transformation(parent_transform.0 * instance.transform.0);
                 part_id_to_instance_data.insert(
                     instance.part_id,
                     InstanceData {
@@ -294,9 +293,6 @@ fn process_part_instance(
             }
             PartRep::ComposedPart(part_instances) => {
                 for i in part_instances {
-                    let combined_transform =
-                        Transformation(i.transform.0 * parent_transform.0 * instance.transform.0);
-
                     match process_part_instance(
                         renderer,
                         db,
