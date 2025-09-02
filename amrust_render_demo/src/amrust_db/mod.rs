@@ -297,23 +297,15 @@ fn process_part_instance(
                     let combined_transform =
                         Transformation(i.transform.0 * parent_transform.0 * instance.transform.0);
 
-                    match part_id_to_instance_data.get_mut(&i.part_id) {
-                        //if the necessary data already exist just push transform
-                        Some(data) => data.transforms.push(combined_transform),
-                        None => {
-                            match process_part_instance(
-                                renderer,
-                                db,
-                                part_id_to_instance_data,
-                                i,
-                                &combined_transform,
-                            ) {
-                                Ok(_) => {}
-                                Err(err) => {
-                                    return Err(err);
-                                }
-                            }
-                        }
+                    match process_part_instance(
+                        renderer,
+                        db,
+                        part_id_to_instance_data,
+                        i,
+                        &combined_transform,
+                    ) {
+                        Ok(_) => {}
+                        Err(err) => return Err(err),
                     }
                 }
             }
