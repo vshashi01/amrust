@@ -44,6 +44,11 @@ impl BoundingBox {
         self.max = self.max.max(other.max);
     }
 
+    pub fn expand_to_include(&mut self, point: &Vec3) {
+        self.min = self.min.min(*point);
+        self.max = self.max.max(*point);
+    }
+
     pub fn corners(&self) -> [Vec3; 8] {
         [
             Vec3::new(self.min.x, self.min.y, self.min.z),

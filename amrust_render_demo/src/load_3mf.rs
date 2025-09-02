@@ -4,7 +4,6 @@ use thiserror::Error;
 use amrust_3mf::core::transform::Transform;
 use amrust_3mf::core::{Triangle, Vertex};
 use amrust_3mf::io::ThreemfPackage;
-use amrust_render::bounding_box::BoundingBox;
 use amrust_render::transformation::Transformation;
 
 use crate::amrust_db::{Db, DbError, Mesh, PartInstance, PartRep, Scene};
@@ -88,11 +87,11 @@ fn process_object_and_register_unique_part(
     match object {
         Some(object) => {
             if let Some(m) = &object.mesh {
-                return process_mesh_object(db, part_rep_map, object.id, m);
+                process_mesh_object(db, part_rep_map, object.id, m)
             } else if let Some(comps) = &object.components {
-                return process_composed_object(db, part_rep_map, object.id, comps, package);
+                process_composed_object(db, part_rep_map, object.id, comps, package)
             } else {
-                return Err(DbFrom3mfError::EmptyObject(object_id));
+                Err(DbFrom3mfError::EmptyObject(object_id))
             }
         }
         None => Err(DbFrom3mfError::ObjectNotFound(object_id)),
@@ -108,7 +107,6 @@ fn process_mesh_object(
     let mesh = Mesh {
         vertices: convert_3mf_vertices_to_mesh_vertices(&m.vertices.vertex),
         triangles: convert_3mf_triangles_to_mesh_triangles(&m.triangles.triangle),
-        bbox: generate_bbox(&m.vertices.vertex),
     };
 
     let registered = db.add_part_rep(PartRep::Mesh(Box::new(mesh)))?;
@@ -144,23 +142,10 @@ fn process_composed_object(
             db.add_part_rep(PartRep::ComposedPart(list_of_unique_part_id_per_component))?;
         part_rep_map.insert(object_id, registered);
 
-        return Ok(registered.1);
+        Ok(registered.1)
     } else {
-        return Err(DbFrom3mfError::EmptyComposedPart(object_id));
+        Err(DbFrom3mfError::EmptyComposedPart(object_id))
     }
-}
-
-fn generate_bbox(vertices: &[Vertex]) -> BoundingBox {
-    let mut min = glam::Vec3::splat(f32::INFINITY);
-    let mut max = glam::Vec3::splat(f32::NEG_INFINITY);
-
-    for vertex in vertices {
-        let pos = glam::vec3(vertex.x as f32, vertex.y as f32, vertex.z as f32);
-        min = min.min(pos);
-        max = max.max(pos);
-    }
-
-    BoundingBox { min, max }
 }
 
 fn convert_3mf_triangles_to_mesh_triangles(triangles: &[Triangle]) -> Vec<u32> {
@@ -180,14 +165,13 @@ fn convert_3mf_vertices_to_mesh_vertices(vertices: &[Vertex]) -> Vec<Vec3> {
 fn get_transformation(
     transform: &Option<amrust_3mf::core::transform::Transform>,
 ) -> Transformation {
-    let transform = {
+    {
         if let Some(transform) = transform {
             Transformation(convert_transform_to_glam_matrix(transform))
         } else {
             Transformation(glam::Mat4::IDENTITY)
         }
-    };
-    transform
+    }
 }
 
 fn convert_transform_to_glam_matrix(transform: &Transform) -> glam::Mat4 {

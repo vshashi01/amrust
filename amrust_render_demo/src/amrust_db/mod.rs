@@ -30,7 +30,7 @@ pub struct Scene(pub Vec<PartInstance>);
 pub struct Mesh {
     pub vertices: Vec<Vec3>,
     pub triangles: Vec<u32>,
-    pub bbox: BoundingBox,
+    // pub bbox: BoundingBox,
 }
 
 impl Debug for Mesh {
@@ -38,7 +38,7 @@ impl Debug for Mesh {
         f.debug_struct("Mesh")
             .field("vertices:", &self.vertices.len())
             .field("triangles:", &self.triangles.len())
-            .field("bbox:", &self.bbox)
+            // .field("bbox:", &self.bbox)
             .finish()
     }
 }
@@ -194,7 +194,6 @@ impl Db {
 
 struct InstanceData {
     pub gpu_mesh_id: u32,
-    pub bbox: BoundingBox,
     pub transforms: Vec<Transformation>,
 }
 
@@ -207,6 +206,7 @@ pub fn add_render_items_from_db(
 
     if let Ok(scene) = scene {
         let mut part_id_to_instance_data = HashMap::<usize, InstanceData>::new();
+        let mut bboxes = vec![];
 
         //setup all the instance data
         for instance in &scene.0 {
@@ -220,28 +220,26 @@ pub fn add_render_items_from_db(
                 Ok(_) => {}
                 Err(err) => return Err(err),
             }
-        }
 
-        //add the instance data to the renderer
-        for (part_id, instance_data) in part_id_to_instance_data {
-            add_render_object(renderer, &instance_data);
-
-            let mut instance_bbox = BoundingBox::default();
-            //calculate bounding box this is wrong and needs to be fixed
-            for transform in &instance_data.transforms {
-                let mut default_bbox = instance_data.bbox;
-                default_bbox.transform(transform);
-                println!("Part ID: {}, Bounding Box: {:?}", part_id, default_bbox);
-                add_bounding_box_wireframe(renderer, &default_bbox);
-
-                instance_bbox.unite(&default_bbox);
+            match compute_instance_bbox(db, instance, &Transformation(Mat4::IDENTITY)) {
+                Ok(bbox) => bboxes.push(bbox),
+                Err(err) => return Err(err),
             }
-
-            total_bbox.unite(&instance_bbox);
         }
+
+        part_id_to_instance_data
+            .into_iter()
+            .for_each(|(_, instance_data)| {
+                add_render_object(renderer, &instance_data);
+            });
+
+        bboxes.iter().for_each(|bbox| {
+            add_bounding_box_wireframe(renderer, bbox);
+            total_bbox.unite(bbox)
+        });
     }
 
-    // add_bounding_box_wireframe(renderer, &total_bbox);
+    add_bounding_box_wireframe(renderer, &total_bbox);
     println!("Total BBOX is {:?}", total_bbox);
 
     Ok(total_bbox)
@@ -257,7 +255,6 @@ fn process_part_instance(
     let combined_transform = Transformation(parent_transform.0 * instance.transform.0);
     //if the necessary part is already created then just push new transform data to add an additional render object
     if let Some(instance_data) = part_id_to_instance_data.get_mut(&instance.part_id) {
-        
         instance_data.transforms.push(combined_transform);
         return Ok(());
     }
@@ -286,7 +283,6 @@ fn process_part_instance(
                     instance.part_id,
                     InstanceData {
                         gpu_mesh_id,
-                        bbox: mesh.bbox,
                         transforms: vec![combined_transform],
                     },
                 );
@@ -395,4 +391,41 @@ fn convert_triangle_indices_to_wireframe_indices(triangles: &[u32]) -> Vec<u32> 
         }
     }
     indices
+}
+
+fn compute_instance_bbox(
+    db: &Db,
+    instance: &PartInstance,
+    parent_transform: &Transformation,
+) -> Result<BoundingBox, DbError> {
+    let combined_transform = Transformation(parent_transform.0 * instance.transform.0);
+    let part_rep = db.get_part_rep(instance)?;
+
+    match part_rep {
+        PartRep::Mesh(mesh) => {
+            let bbox = compute_transformed_bounding_box_from_mesh(mesh, &combined_transform);
+            Ok(bbox)
+        }
+        PartRep::ComposedPart(children) => {
+            let mut bbox = BoundingBox::default();
+            for child in children {
+                let child_bbox = compute_instance_bbox(db, child, &combined_transform)?;
+                bbox.unite(&child_bbox);
+            }
+            Ok(bbox)
+        }
+    }
+}
+
+fn compute_transformed_bounding_box_from_mesh(
+    mesh: &Mesh,
+    transform: &Transformation,
+) -> BoundingBox {
+    let mut bbox = BoundingBox::default();
+    for v in &mesh.vertices {
+        let v4 = transform.0 * v.extend(1.0);
+        let transformed = Vec3::new(v4.x, v4.y, v4.z);
+        bbox.expand_to_include(&transformed);
+    }
+    bbox
 }
