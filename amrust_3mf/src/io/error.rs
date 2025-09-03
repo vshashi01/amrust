@@ -1,6 +1,8 @@
-use image::ImageError;
+use image::{ImageError, error};
 use thiserror::Error;
 use zip::result::ZipError;
+
+use crate::io::thumbnail::DbFrom3mfError;
 
 /// An error that can occur while writing a 3MF file
 #[derive(Debug, Error)]
@@ -27,4 +29,7 @@ pub enum Error {
 
     #[error("Thumbnail error: {0}")]
     ThumbnailError(String),
+
+    #[error("Db from 3mf error {0}")]
+    DbFrom3mfError(#[from] DbFrom3mfError),
 }

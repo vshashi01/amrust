@@ -39,41 +39,7 @@ pub mod tests {
                     assert!(!threemf.root.build.item.is_empty());
 
                     if golden_thumbnail_path.is_file() {
-                        const FLIP_MEAN_ERROR: f32 = 0.0;
-                        pollster::block_on(async {
-                            let ref_image_data =
-                                image::open(&golden_thumbnail_path).unwrap().into_rgba8();
-
-                            let thumbnail =
-                                thumbnail::render_package_thumbnail(&threemf, 1280, 1080)
-                                    .await
-                                    .unwrap();
-
-                            let ref_image =
-                                nv_flip::FlipImageRgb8::with_data(1280, 1080, &ref_image_data);
-                            let test_image =
-                                nv_flip::FlipImageRgb8::with_data(1280, 1080, &thumbnail);
-
-                            let error_map = nv_flip::flip(
-                                ref_image,
-                                test_image,
-                                nv_flip::DEFAULT_PIXELS_PER_DEGREE,
-                            );
-                            let pool = nv_flip::FlipPool::from_image(&error_map);
-                            if let Some(Ordering::Greater) =
-                                pool.mean().partial_cmp(&FLIP_MEAN_ERROR)
-                            {
-                                println!("Mean error {}", pool.mean());
-                                // thumbnail
-                                //     .save(format!("{}_golden_thumbnail.png", fixture.filepath))
-                                //     .unwrap();
-
-                                panic!(
-                                    "Something is wrong with the thumbnail: {:?}",
-                                    golden_thumbnail_path
-                                );
-                            }
-                        });
+                        run_image_comparison(golden_thumbnail_path, threemf, fixture.filepath);
                     } else {
                         println!(
                             "Skipped thumbnail comparison for: {:?}",
@@ -120,5 +86,37 @@ pub mod tests {
                 }
             }
         }
+    }
+
+    fn run_image_comparison(path: PathBuf, threemf: ThreemfPackage, fixture_filepath: String) {
+        const FLIP_MEAN_ERROR: f32 = 0.0;
+        pollster::block_on(async {
+            let ref_image_data = image::open(&path).unwrap().into_rgba8();
+
+            let thumbnail = thumbnail::render_package_thumbnail(&threemf, 1280, 1080).await;
+
+            match thumbnail {
+                Ok(thumbnail) => {
+                    let ref_image = nv_flip::FlipImageRgb8::with_data(1280, 1080, &ref_image_data);
+                    let test_image = nv_flip::FlipImageRgb8::with_data(1280, 1080, &thumbnail);
+
+                    let error_map =
+                        nv_flip::flip(ref_image, test_image, nv_flip::DEFAULT_PIXELS_PER_DEGREE);
+                    let pool = nv_flip::FlipPool::from_image(&error_map);
+                    if let Some(Ordering::Greater) = pool.mean().partial_cmp(&FLIP_MEAN_ERROR) {
+                        println!("Mean error {}", pool.mean());
+                        thumbnail
+                            .save(format!("{}_golden_thumbnail.png", fixture_filepath))
+                            .unwrap();
+
+                        panic!("Something is wrong with the thumbnail: {:?}", path);
+                    }
+                }
+                Err(err) => {
+                    println!("Failed to generate thumbnail for {:?}", path);
+                    panic!("{:?}", err);
+                }
+            }
+        });
     }
 }

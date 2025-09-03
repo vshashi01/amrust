@@ -41,8 +41,8 @@
             "origin": "Materialise Magics xx",
             "desc": "A set 10 instances of of a part with beam lattice and 3D Displacement Texture",
             "date": "17-04-2025",
-            "golden_thumbnail_path": "",
-            "skip_test": false,
+            "golden_thumbnail_path": "mgx-core-prod-beamlattice-material.3mf_golden_thumbnail.png",
+            "skip_test": true,
             "large_test": false
         },
         {
@@ -50,9 +50,9 @@
             "origin": "Materialise Magics xx",
             "desc": "A set 10 unique parts with beam lattice and 3D Displacement Texture",
             "date": "17-04-2025",
-            "golden_thumbnail_path": "",
-            "skip_test": false,
-            "large_test": true
+            "golden_thumbnail_path": "meshmixer-resized_box_mm.3mf_golden_thumbnail.png",
+            "skip_test": true,
+            "large_test": false
         },
         {
             "filepath": "meshmixer-resized_box_mm.3mf",

@@ -12,7 +12,7 @@ use std::fmt::Debug;
 #[derive(Debug)]
 pub enum PartRep {
     Mesh(Box<Mesh>),
-    ComposedPart(Vec<PartInstance>), //this is probably not great
+    ComposedPart(Vec<PartInstance>),
 }
 
 #[derive(Debug)]
@@ -30,7 +30,6 @@ pub struct Scene(pub Vec<PartInstance>);
 pub struct Mesh {
     pub vertices: Vec<Vec3>,
     pub triangles: Vec<u32>,
-    // pub bbox: BoundingBox,
 }
 
 impl Debug for Mesh {
