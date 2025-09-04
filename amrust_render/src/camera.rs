@@ -18,6 +18,8 @@ pub trait CameraData {
     fn get_frustum_planes(&self) -> Frustum {
         calculate_frustum_planes(self.get_projection_matrix(), self.get_view_matrix())
     }
+
+    fn set_viewport_size(&mut self, width: f32, height: f32);
 }
 
 #[derive(Debug)]
@@ -123,7 +125,8 @@ pub struct OrthographicCameraData {
     pub up_vector: Vec3,
     pub near: f32,
     pub far: f32,
-    pub zoom: f32, //1.0 is the default zoom
+    pub zoom: f32,         //1.0 is the default zoom
+    pub aspect_ratio: f32, // width/height
 }
 
 pub enum CameraTransform {
@@ -184,7 +187,7 @@ impl CameraData for OrthographicCameraData {
     }
 
     fn get_projection_matrix(&self) -> Mat4 {
-        let (left, right, bottom, top) = get_bounds_from_zoom(self.zoom);
+        let (left, right, bottom, top) = get_bounds_from_zoom(self.zoom, self.aspect_ratio);
         Mat4::orthographic_rh(left, right, bottom, top, self.near, self.far)
     }
 
@@ -232,6 +235,10 @@ impl CameraData for OrthographicCameraData {
 
         self
     }
+
+    fn set_viewport_size(&mut self, width: f32, height: f32) {
+        self.aspect_ratio = width/height;
+    }
 }
 
 impl Default for OrthographicCameraData {
@@ -255,16 +262,20 @@ impl Default for OrthographicCameraData {
             near: -0.1,
             far: 500.0,
             zoom: 1.0,
+            aspect_ratio: 1.0,
         }
     }
 }
 
 //calculates and returns the clip bounds (left, right, bottom, top)
-fn get_bounds_from_zoom(current_zoom: f32) -> (f32, f32, f32, f32) {
-    let left = -1.0 / current_zoom;
-    let right = 1.0 / current_zoom;
-    let bottom = -1.0 / current_zoom;
-    let top = 1.0 / current_zoom;
+fn get_bounds_from_zoom(current_zoom: f32, aspect_ratio: f32) -> (f32, f32, f32, f32) {
+    let half_width = 1.0 / current_zoom;
+    let half_height = half_width / aspect_ratio;
+
+    let left = -half_width;
+    let right = half_width;
+    let bottom = -half_height;
+    let top = half_height;
 
     (left, right, bottom, top)
 }

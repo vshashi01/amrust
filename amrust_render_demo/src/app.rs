@@ -212,6 +212,7 @@ impl App {
         if width > 0 && height > 0 {
             let state = self.state.as_mut().unwrap();
             state.resize_surface(width, height);
+            state.camera_data.set_viewport_size(width as f32, height as f32);
         }
     }
 
