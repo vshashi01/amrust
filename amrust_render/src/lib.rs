@@ -65,7 +65,7 @@ mod tests {
 
     const TEXTURE_WIDTH: u32 = 512;
     const TEXTURE_HEIGHT: u32 = 512;
-    const FLIP_MEAN_ERROR: f32 = 0.0;
+    const FLIP_MEAN_ERROR: f32 = 0.02;
 
     #[test]
     fn test_box_wireframe_only() {

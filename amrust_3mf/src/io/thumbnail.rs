@@ -13,6 +13,7 @@ use thiserror::Error;
 use crate::core::component::Components;
 use crate::core::transform::Transform;
 use crate::core::{Mesh, Triangles, Vertex};
+use crate::query::get_object_ref_from_id;
 
 pub use super::ThreemfPackage;
 pub use super::error::Error;
@@ -58,17 +59,15 @@ fn process_object_and_register_part_rep_data(
     package: &ThreemfPackage,
     renderer: &mut renderer::Renderer,
     parent_transformation: &Transformation,
+    path: &Option<String>,
+    parent_model: &Option<String>,
 ) -> Result<usize, DbFrom3mfError> {
     if let Some(data) = db.object_id_to_repdata.get_mut(&object_id) {
         data.transforms.push(*parent_transformation);
         Ok(object_id)
     } else {
-        let object = package
-            .root
-            .resources
-            .object
-            .iter()
-            .find(|o| o.id == object_id);
+        let (object, parent_model_path) =
+            get_object_ref_from_id(object_id, package, &path, &parent_model);
 
         match object {
             Some(object) => {
@@ -82,6 +81,7 @@ fn process_object_and_register_part_rep_data(
                         package,
                         renderer,
                         parent_transformation,
+                        &parent_model_path,
                     )
                 } else {
                     Err(DbFrom3mfError::EmptyObject(object_id))
@@ -129,6 +129,7 @@ fn process_composed_object(
     package: &ThreemfPackage,
     renderer: &mut renderer::Renderer,
     parent_transformation: &Transformation,
+    parent_model: &Option<String>,
 ) -> Result<usize, DbFrom3mfError> {
     // let mut list_of_unique_part_id_per_component = vec![];
     let mut components = vec![];
@@ -142,6 +143,8 @@ fn process_composed_object(
             package,
             renderer,
             &combined_transform,
+            &comp.path,
+            parent_model,
         )?;
 
         components.push(id);
@@ -189,6 +192,8 @@ pub async fn render_package_thumbnail(
             package,
             &mut renderer,
             &transform,
+            &None,
+            &None,
         )?;
 
         item_we_care_about.push(id);
@@ -515,10 +520,9 @@ mod tests {
             let pool = nv_flip::FlipPool::from_image(&error_map);
             if let Some(Ordering::Greater) = pool.mean().partial_cmp(&FLIP_MEAN_ERROR) {
                 println!("Mean error {}", pool.mean());
-                let generated_thumbnail_path = golden_thumbnail_path
-                    .clone()
-                    .join("_generated_thumbnail.png");
-                thumbnail.save(generated_thumbnail_path).unwrap();
+                thumbnail
+                    .save(format!("meshmixer-bunny.3mf_golden_thumbnail.png"))
+                    .unwrap();
 
                 panic!("Something is wrong with the thumbnail");
             }

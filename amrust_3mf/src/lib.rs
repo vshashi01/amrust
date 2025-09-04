@@ -24,4 +24,5 @@
 
 pub mod core;
 pub mod io;
+pub mod query;
 pub mod threemf_namespaces;

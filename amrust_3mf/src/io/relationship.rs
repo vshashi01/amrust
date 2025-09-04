@@ -105,7 +105,7 @@ pub mod tests {
     use pretty_assertions::assert_eq;
 
     use super::{
-        Relationship, RelationshipType, Relationships, MODEL_TYPE_NS, RELATIONSHIP_NS,
+        MODEL_TYPE_NS, RELATIONSHIP_NS, Relationship, RelationshipType, Relationships,
         THUMBNAIL_TYPE_NS,
     };
 

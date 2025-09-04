@@ -133,8 +133,8 @@ pub mod tests {
 
     use crate::{
         core::{
-            triangle_set::{TriangleRef, TriangleRefRange, TriangleSet, TriangleSets},
             Mesh, Triangle, Triangles, Vertex, Vertices,
+            triangle_set::{TriangleRef, TriangleRefRange, TriangleSet, TriangleSets},
         },
         threemf_namespaces::{CORE_NS, CORE_TRIANGLESET_NS, CORE_TRIANGLESET_PREFIX},
     };

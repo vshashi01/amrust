@@ -2,11 +2,11 @@ use instant_xml::{FromXml, ToXml};
 
 use crate::{
     core::{
+        Mesh,
         build::{Build, Item},
         metadata::Metadata,
         object::{Object, ObjectType},
         resources::Resources,
-        Mesh,
     },
     threemf_namespaces::{CORE_NS, CORE_TRIANGLESET_NS, PROD_NS},
 };
@@ -100,7 +100,7 @@ impl From<Mesh> for Model {
 
 #[cfg(test)]
 pub mod test {
-    use instant_xml::{from_str, to_string, FromXml, ToXml};
+    use instant_xml::{FromXml, ToXml, from_str, to_string};
     use pretty_assertions::assert_eq;
 
     use crate::{
@@ -131,7 +131,7 @@ pub mod test {
             recommendedextensions: None,
             metadata: vec![Metadata {
                 name: "Trial Metadata".to_owned(),
-                preserve:None,
+                preserve: None,
                 value: None,
             }],
             resources: Resources {
@@ -182,7 +182,7 @@ pub mod test {
                 recommendedextensions: None,
                 metadata: vec![Metadata {
                     name: "Trial Metadata".to_owned(),
-                    preserve:None,
+                    preserve: None,
                     value: None,
                 }],
                 resources: Resources {
@@ -239,7 +239,7 @@ pub mod test {
                 recommendedextensions: None,
                 metadata: vec![Metadata {
                     name: "Trial Metadata".to_owned(),
-                    preserve:None,
+                    preserve: None,
                     value: None,
                 }],
                 resources: Resources {

@@ -267,7 +267,7 @@ pub mod tests {
 
     #[test]
     pub fn from_reader_root_model_test() {
-        let bytes = include_bytes!("../../tests/data/P_XPX_0702_02.3mf");
+        let bytes = include_bytes!("../../tests/data/third-party/P_XPX_0702_02.3mf");
         let reader = Cursor::new(bytes);
 
         let result = ThreemfUnpacked::from_reader(reader, true);

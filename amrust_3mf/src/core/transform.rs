@@ -4,10 +4,10 @@ use std::ops::Index;
 
 const MATRIX_SIZE: usize = 12;
 
-// for a matrix in 3mf 
+// for a matrix in 3mf
 //
 // | m00 m01 m02 0.0 |
-// | m10 m11 m12 0.0 | 
+// | m10 m11 m12 0.0 |
 // | m20 m21 m22 0.0 |
 // | m30 m31 m32 1.0 |
 //
@@ -108,7 +108,7 @@ impl Index<usize> for Transform {
 
 #[cfg(test)]
 pub mod tests {
-    use instant_xml::{from_str, to_string, FromXml, ToXml};
+    use instant_xml::{FromXml, ToXml, from_str, to_string};
     use pretty_assertions::assert_eq;
 
     use super::Transform;

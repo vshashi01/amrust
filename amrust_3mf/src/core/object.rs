@@ -1,7 +1,7 @@
 use instant_xml::{FromXml, ToXml};
 
 use crate::{
-    core::{component::Components, Mesh},
+    core::{Mesh, component::Components},
     threemf_namespaces::{CORE_NS, PROD_NS},
 };
 
@@ -50,13 +50,13 @@ pub enum ObjectType {
 
 #[cfg(test)]
 pub mod test {
-    use instant_xml::{from_str, to_string, FromXml, ToXml};
+    use instant_xml::{FromXml, ToXml, from_str, to_string};
     use pretty_assertions::assert_eq;
 
     use crate::{
         core::{
-            component::{Component, Components},
             Mesh, Triangles, Vertices,
+            component::{Component, Components},
         },
         threemf_namespaces::{
             CORE_NS, CORE_TRIANGLESET_NS, CORE_TRIANGLESET_PREFIX, PROD_NS, PROD_PREFIX,

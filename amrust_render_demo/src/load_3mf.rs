@@ -1,5 +1,4 @@
-use amrust_3mf::core::model::Model;
-use amrust_3mf::core::object::Object;
+use amrust_3mf::query::get_object_ref_from_id;
 use glam::Vec3;
 use thiserror::Error;
 
@@ -83,13 +82,8 @@ fn process_object_and_register_unique_part(
     path: &Option<String>,
     parent_model: Option<String>,
 ) -> Result<usize, DbFrom3mfError> {
-    // let object = package
-    //     .root
-    //     .resources
-    //     .object
-    //     .iter()
-    //     .find(|o| o.id == object_id);
-    let (object, parent_model_path) = get_object(object_id, package, path, &parent_model);
+    let (object, parent_model_path) =
+        get_object_ref_from_id(object_id, package, path, &parent_model);
 
     match object {
         Some(object) => {
@@ -109,43 +103,6 @@ fn process_object_and_register_unique_part(
             }
         }
         None => Err(DbFrom3mfError::ObjectNotFound(object_id)),
-    }
-}
-
-fn get_object<'a>(
-    object_id: usize,
-    package: &'a ThreemfPackage,
-    path: &Option<String>,
-    parent_model: &Option<String>,
-) -> (Option<&'a Object>, Option<String>) {
-    fn get_object_from_model(object_id: usize, model: &Model) -> Option<&Object> {
-        model.resources.object.iter().find(|o| o.id == object_id)
-    }
-
-    match path {
-        Some(sub_model_path) => {
-            if let Some(model) = package.sub_models.get(sub_model_path) {
-                (
-                    get_object_from_model(object_id, model),
-                    Some(sub_model_path.clone()),
-                )
-            } else {
-                (None, None)
-            }
-        }
-        None => match parent_model {
-            Some(model_path) => {
-                if let Some(model) = package.sub_models.get(model_path) {
-                    (
-                        get_object_from_model(object_id, model),
-                        Some(model_path.clone()),
-                    )
-                } else {
-                    (None, None)
-                }
-            }
-            None => (get_object_from_model(object_id, &package.root), None),
-        },
     }
 }
 

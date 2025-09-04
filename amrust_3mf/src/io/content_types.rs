@@ -113,7 +113,7 @@ pub mod tests {
     use pretty_assertions::assert_eq;
 
     use super::{
-        ContentTypes, DefaultContentTypeEnum, DefaultContentTypes, CONTENT_TYPES_NS, JPEG_NS,
+        CONTENT_TYPES_NS, ContentTypes, DefaultContentTypeEnum, DefaultContentTypes, JPEG_NS,
         MODEL_NS, PNG_NS, RELATIONSHIP_NS,
     };
 

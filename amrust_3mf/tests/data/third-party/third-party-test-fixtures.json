@@ -71,6 +71,15 @@
             "golden_thumbnail_path": "mgx-iron_giant_single.3mf_golden_thumbnail.png",
             "skip_test": false,
             "large_test": true
+        },
+        {
+            "filepath": "P_XPX_0702_02.3mf",
+            "origin": "3md Test Case Repo",
+            "desc": "Composed Part with Object in a separate Submodel file",
+            "date": "04-09-2025",
+            "golden_thumbnail_path": "P_XPX_0702_02.3mf_golden_thumbnail.png",
+            "skip_test": false,
+            "large_test": false
         }
     ]
 }
