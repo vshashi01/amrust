@@ -238,6 +238,7 @@ pub async fn render_package_thumbnail(
         eye_position: top_left_corner,
         target_position: total_bbox.center(),
         up_vector: Vec3::Z,
+        aspect_ratio: width as f32 / height as f32,
         ..Default::default()
     };
 

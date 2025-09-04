@@ -3,18 +3,31 @@ pub mod tests {
 
     pub mod test_utilities;
 
+    use thiserror::Error;
+
     use amrust_3mf::io::ThreemfPackage;
     use amrust_3mf::io::ThreemfUnpacked;
+    use amrust_3mf::io::error::Error;
     use amrust_3mf::io::thumbnail;
 
     use std::cmp::Ordering;
     use std::fs::File;
     use std::path::PathBuf;
 
+    #[derive(Debug, Error)]
+    enum ImageTestError {
+        #[error("Failed to generate image for file {0}")]
+        ThumbnailGenerationFailed(#[from] Error),
+
+        #[error("Image dont match for file {0} with a Mean error {1}")]
+        ThumbnailComparisonFailed(PathBuf, f32),
+    }
+
     #[test]
     pub fn can_load_thirdparty_3mf_package() {
         let folder_path = PathBuf::from("./tests/data/third-party/");
         let fixtures = test_utilities::get_test_fixtures();
+        let mut failed_conditions: Vec<ImageTestError> = vec![];
 
         for fixture in fixtures {
             if fixture.skip_test || fixture.large_test {
@@ -39,7 +52,11 @@ pub mod tests {
                     assert!(!threemf.root.build.item.is_empty());
 
                     if golden_thumbnail_path.is_file() {
-                        run_image_comparison(golden_thumbnail_path, threemf, fixture.filepath);
+                        match run_image_comparison(golden_thumbnail_path, threemf, fixture.filepath)
+                        {
+                            Ok(_) => {}
+                            Err(err) => failed_conditions.push(err),
+                        }
                     } else {
                         println!(
                             "Skipped thumbnail comparison for: {:?}",
@@ -54,6 +71,10 @@ pub mod tests {
                     );
                 }
             }
+        }
+
+        if !failed_conditions.is_empty() {
+            panic!("Some thumbnail generations failed {:?}", failed_conditions)
         }
     }
 
@@ -88,7 +109,11 @@ pub mod tests {
         }
     }
 
-    fn run_image_comparison(path: PathBuf, threemf: ThreemfPackage, fixture_filepath: String) {
+    fn run_image_comparison(
+        path: PathBuf,
+        threemf: ThreemfPackage,
+        fixture_filepath: String,
+    ) -> Result<(), ImageTestError> {
         const FLIP_MEAN_ERROR: f32 = 0.021;
         pollster::block_on(async {
             let ref_image_data = image::open(&path).unwrap().into_rgba8();
@@ -109,14 +134,13 @@ pub mod tests {
                             .save(format!("{}_golden_thumbnail.png", fixture_filepath))
                             .unwrap();
 
-                        panic!("Something is wrong with the thumbnail: {:?}", path);
+                        Err(ImageTestError::ThumbnailComparisonFailed(path, pool.mean()))
+                    } else {
+                        Ok(())
                     }
                 }
-                Err(err) => {
-                    println!("Failed to generate thumbnail for {:?}", path);
-                    panic!("{:?}", err);
-                }
+                Err(err) => Err(ImageTestError::ThumbnailGenerationFailed(err)),
             }
-        });
+        })
     }
 }

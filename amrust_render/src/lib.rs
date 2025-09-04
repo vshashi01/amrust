@@ -227,7 +227,10 @@ mod tests {
     }
 
     fn get_camera_data() -> OrthographicCameraData {
-        let mut camera = OrthographicCameraData::default();
+        let mut camera = OrthographicCameraData {
+            aspect_ratio: TEXTURE_WIDTH as f32 / TEXTURE_HEIGHT as f32,
+            ..Default::default()
+        };
         camera
             .transform(camera::CameraTransform::Zoom(-0.80))
             .transform(camera::CameraTransform::Pan(Vec3 {
