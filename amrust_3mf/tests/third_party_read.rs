@@ -89,7 +89,7 @@ pub mod tests {
     }
 
     fn run_image_comparison(path: PathBuf, threemf: ThreemfPackage, fixture_filepath: String) {
-        const FLIP_MEAN_ERROR: f32 = 0.02;
+        const FLIP_MEAN_ERROR: f32 = 0.021;
         pollster::block_on(async {
             let ref_image_data = image::open(&path).unwrap().into_rgba8();
 

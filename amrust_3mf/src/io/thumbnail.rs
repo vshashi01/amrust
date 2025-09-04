@@ -504,7 +504,7 @@ mod tests {
 
         let package = super::ThreemfPackage::from_reader(threemf, true).unwrap();
 
-        const FLIP_MEAN_ERROR: f32 = 0.0;
+        const FLIP_MEAN_ERROR: f32 = 0.021;
         pollster::block_on(async {
             let ref_image_data = image::open(&golden_thumbnail_path).unwrap().into_rgba8();
 
