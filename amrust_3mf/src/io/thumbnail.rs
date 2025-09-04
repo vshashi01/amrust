@@ -1,6 +1,6 @@
 use amrust_render::bounding_box::BoundingBox;
 use amrust_render::camera::{CameraData, OrthographicCameraData};
-use amrust_render::gpu_mesh::{GpuMesh, MeshBuilder};
+use amrust_render::gpu_mesh::MeshBuilder;
 use amrust_render::instance::InstanceDataBuilder;
 use amrust_render::material::Material;
 use amrust_render::transformation::Transformation;
@@ -167,7 +167,7 @@ pub async fn render_package_thumbnail(
         .await
         .map_err(|e| Error::ThumbnailError(e.to_string()))?;
 
-    let mut renderDb = RenderDb {
+    let mut db = RenderDb {
         object_id_to_repdata: HashMap::new(),
         object_id_to_gpudata: HashMap::new(),
     };
@@ -184,7 +184,7 @@ pub async fn render_package_thumbnail(
         };
 
         let id = process_object_and_register_part_rep_data(
-            &mut renderDb,
+            &mut db,
             item.objectid,
             package,
             &mut renderer,
@@ -197,13 +197,13 @@ pub async fn render_package_thumbnail(
     let mut total_bbox = BoundingBox::default();
 
     //match instance data to the gpu data
-    for (id, data) in &renderDb.object_id_to_repdata {
+    for (id, data) in &db.object_id_to_repdata {
         match &data.part_rep {
             PartRep::Mesh {
                 vertices,
                 triangles: _,
             } => {
-                if let Some(gpu_mesh_id) = renderDb.object_id_to_gpudata.get(id) {
+                if let Some(gpu_mesh_id) = db.object_id_to_gpudata.get(id) {
                     add_mesh_render_object(&mut renderer, *gpu_mesh_id, &data.transforms);
                     for transform in &data.transforms {
                         let bbox = compute_transformed_bounding_box_from_mesh(vertices, transform);
@@ -215,7 +215,7 @@ pub async fn render_package_thumbnail(
                 for transform in &data.transforms {
                     process_composed_part_items(
                         &mut renderer,
-                        &renderDb,
+                        &db,
                         id,
                         items,
                         &mut total_bbox,
@@ -324,7 +324,7 @@ fn add_mesh_render_object(
 
 fn create_gpu_data(renderer: &mut renderer::Renderer, vertices: &[Vec3], triangles: &[u32]) -> u32 {
     let positions = convert_vertices_to_position(vertices);
-    let indices = triangles.clone();
+    let indices = triangles;
     let color = convert_vertices_to_color(vertices);
     let wireframe_indices = convert_triangles_to_wireframe_indices(triangles);
 

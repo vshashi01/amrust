@@ -1,3 +1,5 @@
+use amrust_3mf::core::model::Model;
+use amrust_3mf::core::object::Object;
 use glam::Vec3;
 use thiserror::Error;
 
@@ -40,7 +42,7 @@ pub fn get_db_from_3mf(filepath: PathBuf) -> Result<Db, DbFrom3mfError> {
     for item in &package.root.build.item {
         let object_id = item.objectid;
         let transform = get_transformation(&item.transform);
-        items_transform_pair.push((object_id, transform));
+        items_transform_pair.push((object_id, item.path.clone(), transform));
     }
 
     //setup the Mesh, PartRep and Part based on the items on the scene
@@ -49,7 +51,7 @@ pub fn get_db_from_3mf(filepath: PathBuf) -> Result<Db, DbFrom3mfError> {
         if let Some(ids) = part_rep_map.get_key_value(&item.0) {
             parts_in_scene.push(PartInstance {
                 part_id: ids.1.1, //set the unique part id
-                transform: item.1,
+                transform: item.2,
             });
         } else {
             let part_id = process_object_and_register_unique_part(
@@ -57,11 +59,13 @@ pub fn get_db_from_3mf(filepath: PathBuf) -> Result<Db, DbFrom3mfError> {
                 &mut part_rep_map,
                 item.0,
                 &package,
+                &item.1,
+                None,
             )?;
 
             parts_in_scene.push(PartInstance {
                 part_id,
-                transform: item.1,
+                transform: item.2,
             });
         }
     }
@@ -76,25 +80,72 @@ fn process_object_and_register_unique_part(
     part_rep_map: &mut HashMap<usize, (usize, usize)>,
     object_id: usize,
     package: &ThreemfPackage,
+    path: &Option<String>,
+    parent_model: Option<String>,
 ) -> Result<usize, DbFrom3mfError> {
-    let object = package
-        .root
-        .resources
-        .object
-        .iter()
-        .find(|o| o.id == object_id);
+    // let object = package
+    //     .root
+    //     .resources
+    //     .object
+    //     .iter()
+    //     .find(|o| o.id == object_id);
+    let (object, parent_model_path) = get_object(object_id, package, path, &parent_model);
 
     match object {
         Some(object) => {
             if let Some(m) = &object.mesh {
                 process_mesh_object(db, part_rep_map, object.id, m)
             } else if let Some(comps) = &object.components {
-                process_composed_object(db, part_rep_map, object.id, comps, package)
+                process_composed_object(
+                    db,
+                    part_rep_map,
+                    object.id,
+                    comps,
+                    package,
+                    parent_model_path,
+                )
             } else {
                 Err(DbFrom3mfError::EmptyObject(object_id))
             }
         }
         None => Err(DbFrom3mfError::ObjectNotFound(object_id)),
+    }
+}
+
+fn get_object<'a>(
+    object_id: usize,
+    package: &'a ThreemfPackage,
+    path: &Option<String>,
+    parent_model: &Option<String>,
+) -> (Option<&'a Object>, Option<String>) {
+    fn get_object_from_model(object_id: usize, model: &Model) -> Option<&Object> {
+        model.resources.object.iter().find(|o| o.id == object_id)
+    }
+
+    match path {
+        Some(sub_model_path) => {
+            if let Some(model) = package.sub_models.get(sub_model_path) {
+                (
+                    get_object_from_model(object_id, model),
+                    Some(sub_model_path.clone()),
+                )
+            } else {
+                (None, None)
+            }
+        }
+        None => match parent_model {
+            Some(model_path) => {
+                if let Some(model) = package.sub_models.get(model_path) {
+                    (
+                        get_object_from_model(object_id, model),
+                        Some(model_path.clone()),
+                    )
+                } else {
+                    (None, None)
+                }
+            }
+            None => (get_object_from_model(object_id, &package.root), None),
+        },
     }
 }
 
@@ -120,6 +171,7 @@ fn process_composed_object(
     object_id: usize,
     comps: &amrust_3mf::core::component::Components,
     package: &ThreemfPackage,
+    parent_model: Option<String>,
 ) -> Result<usize, DbFrom3mfError> {
     let mut list_of_unique_part_id_per_component = vec![];
     for comp in &comps.component {
@@ -131,8 +183,14 @@ fn process_composed_object(
                 transform,
             });
         } else {
-            let part_id =
-                process_object_and_register_unique_part(db, part_rep_map, comp.objectid, package)?;
+            let part_id = process_object_and_register_unique_part(
+                db,
+                part_rep_map,
+                comp.objectid,
+                package,
+                &comp.path,
+                parent_model.clone(),
+            )?;
             list_of_unique_part_id_per_component.push(PartInstance { part_id, transform });
         }
     }

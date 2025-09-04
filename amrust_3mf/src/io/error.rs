@@ -1,4 +1,4 @@
-use image::{ImageError, error};
+use image::ImageError;
 use thiserror::Error;
 use zip::result::ZipError;
 
