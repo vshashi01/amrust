@@ -1,7 +1,7 @@
-- [ ] Load all Composed Parts from 3mf and render
+- [ X ] Load all Composed Parts from 3mf and render
 - [ ] Render back faces for Meshes
 - [ ] Render lattices from 3mf
 - [ ] Render textures from 3mf
 - [ ] Handle the units from 3mf correctly in the renderer
-- [ ] Integrate rendering updates to 3mf thumbnail generation
-- [ ] Fix Bounding Box generation calculation (mgx-iron_giant_single.3mf)
+- [] Integrate rendering updates to 3mf thumbnail generation
+- [ X ] Fix Bounding Box generation calculation (mgx-iron_giant_single.3mf)

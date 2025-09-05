@@ -1984,7 +1984,7 @@ dependencies = [
 [[package]]
 name = "instant-xml"
 version = "0.6.0"
-source = "git+https://github.com/vshashi01/instant-xml?branch=fix_str_parsing#4c60812c2a41a9226a85cc970c3fbcb96848b2dd"
+source = "git+https://github.com/vshashi01/instant-xml?branch=main#88b33cda820a4e9a72550bf73800fe1cecc44043"
 dependencies = [
  "instant-xml-macros",
  "thiserror 2.0.12",
@@ -1994,7 +1994,7 @@ dependencies = [
 [[package]]
 name = "instant-xml-macros"
 version = "0.6.0"
-source = "git+https://github.com/vshashi01/instant-xml?branch=fix_str_parsing#4c60812c2a41a9226a85cc970c3fbcb96848b2dd"
+source = "git+https://github.com/vshashi01/instant-xml?branch=main#88b33cda820a4e9a72550bf73800fe1cecc44043"
 dependencies = [
  "heck",
  "proc-macro2",
