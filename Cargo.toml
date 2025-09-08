@@ -3,13 +3,7 @@ resolver = "3"
 package.edition = "2024"
 package.rust-version = "1.89"
 package.license = "MIT Or Apache-2.0"
-members = [
-    "amrust",
-    "amrust_lib",
-    "amrust_3mf",
-    "amrust_render",
-    "amrust_render_demo",
-]
+members = ["amrust", "amrust_lib", "amrust_render", "amrust_render_demo"]
 
 [workspace.dependencies]
 #egui related
@@ -54,7 +48,7 @@ nv-flip = { version = "0.1.2" }
 #shared libraries of amrust
 amrust_lib = { path = "amrust_lib" }
 amrust_render = { path = "amrust_render" }
-amrust_3mf = { path = "amrust_3mf" }
+amrust_3mf = { path = "../amrust_3mf" }
 
 
 # need to update the official version once a new version is released.
