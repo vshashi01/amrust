@@ -1,9 +1,9 @@
-use amrust_3mf::query::get_object_ref_from_id;
+use amrust_3mf::io::query::get_object_ref_from_id;
 use glam::Vec3;
 use thiserror::Error;
 
+use amrust_3mf::core::mesh::{Triangle, Vertex};
 use amrust_3mf::core::transform::Transform;
-use amrust_3mf::core::{Triangle, Vertex};
 use amrust_3mf::io::ThreemfPackage;
 use amrust_render::transformation::Transformation;
 
@@ -30,7 +30,8 @@ pub enum DbFrom3mfError {
 
 pub fn get_db_from_3mf(filepath: PathBuf) -> Result<Db, DbFrom3mfError> {
     let threemf = std::fs::File::open(filepath).unwrap();
-    let package = ThreemfPackage::from_reader(threemf, true).unwrap();
+    let package =
+        ThreemfPackage::from_reader_with_memory_optimized_deserializer(threemf, true).unwrap();
 
     let mut db = Db::new();
     let mut items_transform_pair = vec![];
@@ -58,7 +59,7 @@ pub fn get_db_from_3mf(filepath: PathBuf) -> Result<Db, DbFrom3mfError> {
                 &mut part_rep_map,
                 item.0,
                 &package,
-                &item.1,
+                item.1.clone(),
                 None,
             )?;
 
@@ -79,11 +80,11 @@ fn process_object_and_register_unique_part(
     part_rep_map: &mut HashMap<usize, (usize, usize)>,
     object_id: usize,
     package: &ThreemfPackage,
-    path: &Option<String>,
+    path: Option<String>,
     parent_model: Option<String>,
 ) -> Result<usize, DbFrom3mfError> {
     let (object, parent_model_path) =
-        get_object_ref_from_id(object_id, package, path, &parent_model);
+        get_object_ref_from_id(object_id, package, path, parent_model);
 
     match object {
         Some(object) => {
@@ -110,7 +111,7 @@ fn process_mesh_object(
     db: &mut Db,
     part_rep_map: &mut HashMap<usize, (usize, usize)>,
     object_id: usize,
-    m: &amrust_3mf::core::Mesh,
+    m: &amrust_3mf::core::mesh::Mesh,
 ) -> Result<usize, DbFrom3mfError> {
     let mesh = Mesh {
         vertices: convert_3mf_vertices_to_mesh_vertices(&m.vertices.vertex),
@@ -145,7 +146,7 @@ fn process_composed_object(
                 part_rep_map,
                 comp.objectid,
                 package,
-                &comp.path,
+                comp.path.clone(),
                 parent_model.clone(),
             )?;
             list_of_unique_part_id_per_component.push(PartInstance { part_id, transform });

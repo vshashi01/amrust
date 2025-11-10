@@ -73,3 +73,9 @@ impl DroppedFilesWidget {
         }
     }
 }
+
+impl Default for DroppedFilesWidget {
+    fn default() -> Self {
+        Self::new()
+    }
+}

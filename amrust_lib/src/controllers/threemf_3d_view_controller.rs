@@ -14,7 +14,8 @@ const TEXTURE_HEIGHT: u32 = 720;
 async fn load_and_render_3mf() {
     let filepath = PathBuf::from("value");
     let file = std::fs::File::open(&filepath).expect("Failed to open 3MF file");
-    let package = ThreemfPackage::from_reader(file, true).unwrap();
+    let package =
+        ThreemfPackage::from_reader_with_memory_optimized_deserializer(file, true).unwrap();
     let renderer = renderer::Renderer::from_new_device(TEXTURE_WIDTH, TEXTURE_HEIGHT)
         .await
         .unwrap();
