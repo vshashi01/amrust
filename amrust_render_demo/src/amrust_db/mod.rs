@@ -17,7 +17,7 @@ pub enum PartRep {
 
 #[derive(Debug)]
 pub struct PartInstance {
-    pub part_id: usize,
+    pub part_id: UniquePartId,
     pub transform: Transformation,
 }
 
@@ -41,6 +41,14 @@ impl Debug for Mesh {
             .finish()
     }
 }
+
+// strong type to get a UniquePartReference
+#[derive(Debug, Clone, Copy)]
+pub struct UniquePartId(usize);
+
+// strong type to get a PartRepReference
+#[derive(Debug, Clone, Copy)]
+pub struct PartRepId(usize);
 
 #[derive(Debug)]
 pub struct Db {
@@ -74,7 +82,10 @@ impl Db {
     }
 
     // returns the part rep ID and the unique part ID
-    pub fn add_part_rep(&mut self, part_rep: PartRep) -> Result<(usize, usize), DbError> {
+    pub fn add_part_rep(
+        &mut self,
+        part_rep: PartRep,
+    ) -> Result<(PartRepId, UniquePartId), DbError> {
         let valid = self.validate_part_rep(&part_rep)?;
         if !valid {
             return Err(DbError::InvalidPartRep);
@@ -88,11 +99,11 @@ impl Db {
         self.unique_parts.push(Part(part_rep_id));
         let unique_part_id = self.unique_parts.len() - 1;
 
-        Ok((part_rep_id, unique_part_id))
+        Ok((PartRepId(part_rep_id), UniquePartId(unique_part_id)))
     }
 
     pub fn get_part_rep(&self, part_instance: &PartInstance) -> Result<&PartRep, DbError> {
-        self.get_part_rep_from_part(part_instance.part_id)
+        self.get_part_rep_from_part(part_instance.part_id.0)
     }
 
     pub fn get_part_rep_from_part(&self, part_id: usize) -> Result<&PartRep, DbError> {
@@ -108,16 +119,16 @@ impl Db {
 
     pub fn get_new_part_instance_from_part_id(
         &self,
-        part_id: usize,
+        part_id: UniquePartId,
         transform: Transformation,
     ) -> Result<PartInstance, DbError> {
-        let unique_part = self.unique_parts.get(part_id);
+        let unique_part = self.unique_parts.get(part_id.0);
         match unique_part {
             Some(_) => {
                 let instance = PartInstance { part_id, transform };
                 Ok(instance)
             }
-            None => Err(DbError::PartIdNotFound(part_id)),
+            None => Err(DbError::PartIdNotFound(part_id.0)),
         }
     }
 
@@ -187,7 +198,7 @@ impl Db {
 
     fn validate_part_instance(&self, part_instance: &PartInstance) -> Result<bool, DbError> {
         //ToDo: introduce some unique identifier for PartInstance to Part tracking
-        Ok(part_instance.part_id < self.unique_parts.len())
+        Ok(part_instance.part_id.0 < self.unique_parts.len())
     }
 }
 
@@ -253,7 +264,7 @@ fn process_part_instance(
 ) -> Result<(), DbError> {
     let combined_transform = Transformation(parent_transform.0 * instance.transform.0);
     //if the necessary part is already created then just push new transform data to add an additional render object
-    if let Some(instance_data) = part_id_to_instance_data.get_mut(&instance.part_id) {
+    if let Some(instance_data) = part_id_to_instance_data.get_mut(&instance.part_id.0) {
         instance_data.transforms.push(combined_transform);
         return Ok(());
     }
@@ -279,7 +290,7 @@ fn process_part_instance(
 
                 let gpu_mesh_id = renderer.add_mesh(gpu_mesh);
                 part_id_to_instance_data.insert(
-                    instance.part_id,
+                    instance.part_id.0,
                     InstanceData {
                         gpu_mesh_id,
                         transforms: vec![combined_transform],

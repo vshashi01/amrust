@@ -1,4 +1,4 @@
-use amrust_3mf::io::query::get_object_ref_from_id;
+use amrust_3mf::io::query::{self};
 use glam::Vec3;
 use thiserror::Error;
 
@@ -7,7 +7,7 @@ use amrust_3mf::core::transform::Transform;
 use amrust_3mf::io::ThreemfPackage;
 use amrust_render::transformation::Transformation;
 
-use crate::amrust_db::{Db, DbError, Mesh, PartInstance, PartRep, Scene};
+use crate::amrust_db::{Db, DbError, Mesh, PartInstance, PartRep, PartRepId, Scene, UniquePartId};
 
 use core::f32;
 use std::collections::HashMap;
@@ -26,46 +26,187 @@ pub enum DbFrom3mfError {
 
     #[error("Object does not contain data {0}")]
     EmptyObject(usize),
+
+    #[error("Somethign wrong with threemf process")]
+    ThreemfProcessingError(#[from] amrust_3mf::io::Error),
 }
 
-pub fn get_db_from_3mf(filepath: PathBuf) -> Result<Db, DbFrom3mfError> {
-    let threemf = std::fs::File::open(filepath).unwrap();
-    let package =
-        ThreemfPackage::from_reader_with_memory_optimized_deserializer(threemf, true).unwrap();
+pub fn load(threemf: std::fs::File) -> Result<Db, DbFrom3mfError> {
+    let package = ThreemfPackage::from_reader_with_memory_optimized_deserializer(threemf, true)?;
 
+    get_db_from_3mf_new(&package)
+}
+
+// fn get_db_from_3mf_recursive(package: &ThreemfPackage) -> Result<Db, DbFrom3mfError> {
+//     let mut db = Db::new();
+//     let mut items_transform_pair = vec![];
+
+//     //object id to (part_red_id, unique_part_id)
+//     let mut part_rep_map = HashMap::<usize, (PartRepId, UniquePartId)>::new();
+//     let mut parts_in_scene = vec![];
+
+//     //collect all the object ids that do exist in the scene
+//     for item in &package.root.build.item {
+//         let object_id = item.objectid;
+//         let transform = get_transformation(&item.transform);
+//         items_transform_pair.push((object_id, item.path.clone(), transform));
+//     }
+
+//     //setup the Mesh, PartRep and Part based on the items on the scene
+//     //what to do with objects that are not listed in the build?
+//     for item in items_transform_pair {
+//         if let Some(ids) = part_rep_map.get_key_value(&item.0) {
+//             parts_in_scene.push(PartInstance {
+//                 part_id: ids.1.1, //set the unique part id
+//                 transform: item.2,
+//             });
+//         } else {
+//             let part_id = process_object_and_register_unique_part(
+//                 &mut db,
+//                 &mut part_rep_map,
+//                 item.0,
+//                 package,
+//                 item.1.clone(),
+//                 None,
+//             )?;
+
+//             parts_in_scene.push(PartInstance {
+//                 part_id,
+//                 transform: item.2,
+//             });
+//         }
+//     }
+
+//     db.add_scene(Scene(parts_in_scene));
+
+//     Ok(db)
+// }
+
+pub fn get_db_from_3mf_new(package: &ThreemfPackage) -> Result<Db, DbFrom3mfError> {
     let mut db = Db::new();
-    let mut items_transform_pair = vec![];
-    let mut part_rep_map = HashMap::<usize, (usize, usize)>::new(); //object id to (part_red_id, unique_part_id)
-    let mut parts_in_scene = vec![];
+    //object id to (part_red_id, unique_part_id)
+    #[derive(Debug, PartialEq, Eq, Hash)]
+    struct PartRepIdentity {
+        id: usize,
+        path: Option<String>,
+    }
+    let mut part_rep_map = HashMap::<PartRepIdentity, UniquePartId>::new();
 
-    //collect all the object ids that do exist in the scene
-    for item in &package.root.build.item {
-        let object_id = item.objectid;
-        let transform = get_transformation(&item.transform);
-        items_transform_pair.push((object_id, item.path.clone(), transform));
+    let mesh_objects = query::get_mesh_objects(package).collect::<Vec<_>>();
+
+    //process all mesh object first
+    for obj in mesh_objects {
+        // if let Some(mesh) = &obj.mesh {
+        let mesh = process_mesh_object(obj.entity)?;
+
+        let (_, unique_part_id) = db.add_part_rep(PartRep::Mesh(Box::new(mesh)))?;
+        let obj_path = match obj.origin_model_path {
+            Some(path) => Some(path.to_owned()),
+            None => None,
+        };
+        part_rep_map.insert(
+            PartRepIdentity {
+                id: obj.id,
+                path: obj_path,
+            },
+            unique_part_id,
+        );
+        // }
     }
 
-    //setup the Mesh, PartRep and Part based on the items on the scene
-    //what to do with objects that are not listed in the build?
-    for item in items_transform_pair {
-        if let Some(ids) = part_rep_map.get_key_value(&item.0) {
-            parts_in_scene.push(PartInstance {
-                part_id: ids.1.1, //set the unique part id
-                transform: item.2,
-            });
-        } else {
-            let part_id = process_object_and_register_unique_part(
-                &mut db,
-                &mut part_rep_map,
-                item.0,
-                &package,
-                item.1.clone(),
-                None,
-            )?;
+    //process composed parts in an iterative manner
+    let composed_parts = query::get_composedpart_objects(package).collect::<Vec<_>>();
+    let mut unprocessed_composed_parts_id = composed_parts.iter().map(|o| o.id).collect::<Vec<_>>();
 
+    loop {
+        if unprocessed_composed_parts_id.is_empty() {
+            break;
+        }
+
+        for o in &composed_parts {
+            if unprocessed_composed_parts_id.contains(&o.id) {
+                let mut instances: Vec<PartInstance> = vec![];
+                let mut comp_length = 0;
+                // if let Some(composed) = &o.entity {
+                comp_length = o.entity.component.len();
+
+                let all_components_processed = o.entity.component.iter().all(|c| {
+                    let comp_path = match &c.path {
+                        Some(path) => Some(path.clone()),
+                        None => o
+                            .origin_model_path
+                            .map(|parent_path| parent_path.to_owned()),
+                    };
+
+                    part_rep_map.contains_key(&PartRepIdentity {
+                        id: c.objectid,
+                        path: comp_path,
+                    })
+                });
+
+                if !all_components_processed {
+                    // if the part_rep_map does not contain the comp_id already then
+                    // its child component is not processed and registered yet, skip the whole composed part for now
+                    continue;
+                }
+
+                for comp in &o.entity.component {
+                    let comp_path = match &comp.path {
+                        Some(path) => Some(path.clone()),
+                        None => match o.origin_model_path {
+                            Some(parent_path) => Some(parent_path.to_owned()),
+                            None => None,
+                        },
+                    };
+                    if let Some(unique_part_id) = part_rep_map.get(&PartRepIdentity {
+                        id: comp.objectid,
+                        path: comp_path,
+                    }) {
+                        let transformation = get_transformation(&comp.transform);
+
+                        instances.push(PartInstance {
+                            part_id: *unique_part_id,
+                            transform: transformation,
+                        });
+                    } else {
+                        return Err(DbFrom3mfError::ObjectNotFound(comp.objectid));
+                    }
+                }
+                // }
+
+                if instances.len() == comp_length
+                    && !instances.is_empty()
+                    && let Ok((_, unique_part_id)) =
+                        db.add_part_rep(PartRep::ComposedPart(instances))
+                {
+                    let path = match o.origin_model_path {
+                        Some(parent_path) => Some(parent_path.to_owned()),
+                        None => None,
+                    };
+                    part_rep_map.insert(PartRepIdentity { id: o.id, path }, unique_part_id);
+
+                    if let Some(pos) = unprocessed_composed_parts_id
+                        .iter()
+                        .position(|id| *id == o.id)
+                    {
+                        unprocessed_composed_parts_id.swap_remove(pos);
+                    }
+                }
+            }
+        }
+    }
+
+    let mut parts_in_scene = vec![];
+
+    for item in &package.root.build.item {
+        if let Some(unique_part_id) = part_rep_map.get(&PartRepIdentity {
+            id: item.objectid,
+            path: item.path.clone(),
+        }) {
+            let transform = get_transformation(&item.transform);
             parts_in_scene.push(PartInstance {
-                part_id,
-                transform: item.2,
+                part_id: *unique_part_id,
+                transform,
             });
         }
     }
@@ -75,94 +216,109 @@ pub fn get_db_from_3mf(filepath: PathBuf) -> Result<Db, DbFrom3mfError> {
     Ok(db)
 }
 
-fn process_object_and_register_unique_part(
-    db: &mut Db,
-    part_rep_map: &mut HashMap<usize, (usize, usize)>,
-    object_id: usize,
-    package: &ThreemfPackage,
-    path: Option<String>,
-    parent_model: Option<String>,
-) -> Result<usize, DbFrom3mfError> {
-    let (object, parent_model_path) =
-        get_object_ref_from_id(object_id, package, path, parent_model);
+// fn process_object_and_register_unique_part(
+//     db: &mut Db,
+//     part_rep_map: &mut HashMap<usize, (PartRepId, UniquePartId)>,
+//     object_id: usize,
+//     package: &ThreemfPackage,
+//     path: Option<String>,
+//     parent_model: Option<String>,
+// ) -> Result<UniquePartId, DbFrom3mfError> {
+//     let (object, parent_model_path) =
+//         get_object_ref_from_id(object_id, package, path, parent_model);
 
-    match object {
-        Some(object) => {
-            if let Some(m) = &object.mesh {
-                process_mesh_object(db, part_rep_map, object.id, m)
-            } else if let Some(comps) = &object.components {
-                process_composed_object(
-                    db,
-                    part_rep_map,
-                    object.id,
-                    comps,
-                    package,
-                    parent_model_path,
-                )
-            } else {
-                Err(DbFrom3mfError::EmptyObject(object_id))
-            }
-        }
-        None => Err(DbFrom3mfError::ObjectNotFound(object_id)),
-    }
-}
+//     match object {
+//         Some(object) => {
+//             if let Some(m) = &object.mesh {
+//                 process_mesh_object(db, part_rep_map, object.id, m)
+//             } else if let Some(comps) = &object.components {
+//                 process_composed_object(
+//                     db,
+//                     part_rep_map,
+//                     object.id,
+//                     comps,
+//                     package,
+//                     parent_model_path,
+//                 )
+//             } else {
+//                 Err(DbFrom3mfError::EmptyObject(object_id))
+//             }
+//         }
+//         None => Err(DbFrom3mfError::ObjectNotFound(object_id)),
+//     }
+// }
 
-fn process_mesh_object(
-    db: &mut Db,
-    part_rep_map: &mut HashMap<usize, (usize, usize)>,
-    object_id: usize,
-    m: &amrust_3mf::core::mesh::Mesh,
-) -> Result<usize, DbFrom3mfError> {
+// //returns unique part id in the db
+// fn process_mesh_object(
+//     db: &mut Db,
+//     part_rep_map: &mut HashMap<usize, (PartRepId, UniquePartId)>,
+//     object_id: usize,
+//     m: &amrust_3mf::core::mesh::Mesh,
+// ) -> Result<UniquePartId, DbFrom3mfError> {
+//     let mesh = Mesh {
+//         vertices: convert_3mf_vertices_to_mesh_vertices(&m.vertices.vertex),
+//         triangles: convert_3mf_triangles_to_mesh_triangles(&m.triangles.triangle),
+//     };
+
+//     let registered = db.add_part_rep(PartRep::Mesh(Box::new(mesh)))?;
+//     part_rep_map.insert(object_id, registered);
+//     Ok(registered.1)
+// }
+
+//returns unique part id in the db
+fn process_mesh_object(m: &amrust_3mf::core::mesh::Mesh) -> Result<Mesh, DbFrom3mfError> {
     let mesh = Mesh {
         vertices: convert_3mf_vertices_to_mesh_vertices(&m.vertices.vertex),
         triangles: convert_3mf_triangles_to_mesh_triangles(&m.triangles.triangle),
     };
 
-    let registered = db.add_part_rep(PartRep::Mesh(Box::new(mesh)))?;
-    part_rep_map.insert(object_id, registered);
-    Ok(registered.1)
+    Ok(mesh)
+
+    // let registered = db.add_part_rep(PartRep::Mesh(Box::new(mesh)))?;
+    // part_rep_map.insert(object_id, registered);
+    // Ok(registered.1)
 }
 
-fn process_composed_object(
-    db: &mut Db,
-    part_rep_map: &mut HashMap<usize, (usize, usize)>,
-    object_id: usize,
-    comps: &amrust_3mf::core::component::Components,
-    package: &ThreemfPackage,
-    parent_model: Option<String>,
-) -> Result<usize, DbFrom3mfError> {
-    let mut list_of_unique_part_id_per_component = vec![];
-    for comp in &comps.component {
-        let transform = get_transformation(&comp.transform);
+// fn process_composed_object(
+//     db: &mut Db,
+//     part_rep_map: &mut HashMap<usize, (PartRepId, UniquePartId)>,
+//     object_id: usize,
+//     comps: &amrust_3mf::core::component::Components,
+//     package: &ThreemfPackage,
+//     parent_model: Option<String>,
+// ) -> Result<UniquePartId, DbFrom3mfError> {
+//     let mut list_of_unique_part_id_per_component = vec![];
+//     for comp in &comps.component {
+//         let transform = get_transformation(&comp.transform);
 
-        if let Some(partids) = part_rep_map.get(&comp.objectid) {
-            list_of_unique_part_id_per_component.push(PartInstance {
-                part_id: partids.1,
-                transform,
-            });
-        } else {
-            let part_id = process_object_and_register_unique_part(
-                db,
-                part_rep_map,
-                comp.objectid,
-                package,
-                comp.path.clone(),
-                parent_model.clone(),
-            )?;
-            list_of_unique_part_id_per_component.push(PartInstance { part_id, transform });
-        }
-    }
+//         if let Some(partids) = part_rep_map.get(&comp.objectid) {
+//             list_of_unique_part_id_per_component.push(PartInstance {
+//                 part_id: partids.1,
+//                 transform,
+//             });
+//         } else {
+//             let part_id = process_object_and_register_unique_part(
+//                 db,
+//                 part_rep_map,
+//                 comp.objectid,
+//                 package,
+//                 comp.path.clone(),
+//                 parent_model.clone(),
+//             )?;
+//             list_of_unique_part_id_per_component.push(PartInstance { part_id, transform });
+//         }
+//     }
 
-    if !list_of_unique_part_id_per_component.is_empty() {
-        let registered =
-            db.add_part_rep(PartRep::ComposedPart(list_of_unique_part_id_per_component))?;
-        part_rep_map.insert(object_id, registered);
+//     if !list_of_unique_part_id_per_component.is_empty() {
+//         let registered =
+//             db.add_part_rep(PartRep::ComposedPart(list_of_unique_part_id_per_component))?;
+//         part_rep_map.insert(object_id, registered);
 
-        Ok(registered.1)
-    } else {
-        Err(DbFrom3mfError::EmptyComposedPart(object_id))
-    }
-}
+//         Ok(registered.1)
+//     } else {
+//         Err(DbFrom3mfError::EmptyComposedPart(object_id))
+//     }
+// }
 
 fn convert_3mf_triangles_to_mesh_triangles(triangles: &[Triangle]) -> Vec<u32> {
     triangles

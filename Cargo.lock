@@ -1965,7 +1965,8 @@ dependencies = [
 [[package]]
 name = "instant-xml"
 version = "0.6.0"
-source = "git+https://github.com/vshashi01/instant-xml?branch=main#88b33cda820a4e9a72550bf73800fe1cecc44043"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e697f8b6f727bffca9f598fd94a4bba36096800cd7e563ff0d5ab3edcc36bcc2"
 dependencies = [
  "instant-xml-macros",
  "thiserror 2.0.12",
@@ -1975,7 +1976,8 @@ dependencies = [
 [[package]]
 name = "instant-xml-macros"
 version = "0.6.0"
-source = "git+https://github.com/vshashi01/instant-xml?branch=main#88b33cda820a4e9a72550bf73800fe1cecc44043"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7af20da3bd5eadb454a00c1965765648abd0e4c17dac72a8290c09e4c5657c8d"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -4938,9 +4940,9 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "4.4.0"
+version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d5649b9d3f6261c498410f5a25c95c4a7b0f4b84143a403fafa4e33a66178817"
+checksum = "eb2a05c7c36fde6c09b08576c9f7fb4cda705990f73b58fe011abf7dfb24168b"
 dependencies = [
  "arbitrary",
  "crc32fast",

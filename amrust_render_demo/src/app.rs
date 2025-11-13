@@ -1,6 +1,5 @@
 use crate::amrust_db::add_render_items_from_db;
 use crate::egui_tools::EguiRenderer;
-use crate::load_3mf::get_db_from_3mf;
 use amrust_render::bounding_box::BoundingBox;
 // use amrust_lib::widgets::dropped_files::DroppedFilesWidget;
 use amrust_render::camera::{self, CameraData, OrthographicCameraData};
@@ -212,7 +211,9 @@ impl App {
         if width > 0 && height > 0 {
             let state = self.state.as_mut().unwrap();
             state.resize_surface(width, height);
-            state.camera_data.set_viewport_size(width as f32, height as f32);
+            state
+                .camera_data
+                .set_viewport_size(width as f32, height as f32);
         }
     }
 
@@ -398,7 +399,8 @@ impl App {
                 if let Some(ext) = path.extension()
                     && let Some("3mf") = ext.to_str()
                 {
-                    let db = get_db_from_3mf(path);
+                    let threemf = std::fs::File::open(path).unwrap();
+                    let db = crate::load_3mf::load(threemf);
                     match db {
                         Ok(db) => {
                             println!("Db contains: {:?}", db);
