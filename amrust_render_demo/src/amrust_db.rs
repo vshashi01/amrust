@@ -6,6 +6,7 @@ use amrust_render::{
     material::Material, renderer, transformation::Transformation, vertex::Position,
 };
 
+use core::fmt;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
@@ -21,12 +22,55 @@ pub struct PartInstance {
     pub transform: Transformation,
 }
 
+impl PartInstance {
+    pub fn new(part_id: UniquePartId, transform: Option<Transformation>) -> PartInstance {
+        PartInstance {
+            part_id,
+            transform: transform.unwrap_or_default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PartInstanceId(usize);
+
+impl fmt::Display for PartInstanceId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0.to_string())
+    }
+}
+
 #[derive(PartialEq, Debug)]
 pub struct Part(usize); //points to a part_rep_id
 
 #[derive(Debug)]
-pub struct Scene(pub Vec<PartInstance>);
+pub struct Scene {
+    pub instances: Vec<PartInstance>,
+}
 
+impl Scene {
+    pub fn new() -> Self {
+        Scene { instances: vec![] }
+    }
+
+    pub fn new_from_instances(instances: Vec<PartInstance>) -> Self {
+        let mut scene = Scene::new();
+        scene.instances = instances;
+
+        scene
+    }
+
+    pub fn add_part_instance(&mut self, instance: PartInstance) -> PartInstanceId {
+        self.instances.push(instance);
+        PartInstanceId(self.instances.len() - 1)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.instances.is_empty()
+    }
+}
+
+#[derive(Clone)]
 pub struct Mesh {
     pub vertices: Vec<Vec3>,
     pub triangles: Vec<u32>,
@@ -43,12 +87,24 @@ impl Debug for Mesh {
 }
 
 // strong type to get a UniquePartReference
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UniquePartId(usize);
+
+impl fmt::Display for UniquePartId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0.to_string())
+    }
+}
 
 // strong type to get a PartRepReference
 #[derive(Debug, Clone, Copy)]
 pub struct PartRepId(usize);
+
+impl fmt::Display for PartRepId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0.to_string())
+    }
+}
 
 #[derive(Debug)]
 pub struct Db {
@@ -102,58 +158,81 @@ impl Db {
         Ok((PartRepId(part_rep_id), UniquePartId(unique_part_id)))
     }
 
-    pub fn get_part_rep(&self, part_instance: &PartInstance) -> Result<&PartRep, DbError> {
-        self.get_part_rep_from_part(part_instance.part_id.0)
+    pub fn get_unique_parts(&self) -> impl Iterator<Item = (UniquePartId, &PartRep)> {
+        self.unique_parts.iter().enumerate().map(|(index, _)| {
+            let part_id = UniquePartId(index);
+            let part_rep = self.get_part_rep_from_part(&part_id);
+
+            match part_rep {
+                Ok(rep) => (part_id, rep),
+                Err(_) => panic!("Part Rep not found"),
+            }
+        })
     }
 
-    pub fn get_part_rep_from_part(&self, part_id: usize) -> Result<&PartRep, DbError> {
-        let unique_part = self.unique_parts.get(part_id);
+    pub fn get_part_rep(&self, part_instance: &PartInstance) -> Result<&PartRep, DbError> {
+        self.get_part_rep_from_part(&part_instance.part_id)
+    }
+
+    pub fn get_part_rep_from_part(&self, part_id: &UniquePartId) -> Result<&PartRep, DbError> {
+        let unique_part = self.unique_parts.get(part_id.0);
         match unique_part {
             Some(part) => {
                 let part_rep = &self.part_reps[part.0];
                 Ok(part_rep)
             }
-            None => Err(DbError::PartIdNotFound(part_id)),
+            None => Err(DbError::PartIdNotFound(part_id.0)),
         }
     }
 
     pub fn get_new_part_instance_from_part_id(
         &self,
         part_id: UniquePartId,
-        transform: Transformation,
+        transform: Option<Transformation>,
     ) -> Result<PartInstance, DbError> {
         let unique_part = self.unique_parts.get(part_id.0);
         match unique_part {
             Some(_) => {
-                let instance = PartInstance { part_id, transform };
+                let instance = PartInstance::new(part_id, transform);
                 Ok(instance)
             }
             None => Err(DbError::PartIdNotFound(part_id.0)),
         }
     }
 
-    pub fn add_scene(&mut self, scene: Scene) {
-        let _ = self.scene.insert(scene);
+    pub fn add_scene(&mut self, scene: Scene) -> Result<(), DbError> {
+        let first_not_valid = scene
+            .instances
+            .iter()
+            .find(|i| !self.validate_part_instance(i));
+
+        match first_not_valid {
+            Some(i) => Err(DbError::PartIdNotFound(i.part_id.0)),
+            None => {
+                let _ = self.scene.insert(scene);
+                Ok(())
+            }
+        }
     }
 
     pub fn add_part_instance_to_scene(
         &mut self,
         part_instance: PartInstance,
-    ) -> Result<bool, DbError> {
-        let valid = self.validate_part_instance(&part_instance)?;
+    ) -> Result<PartInstanceId, DbError> {
+        let valid = self.validate_part_instance(&part_instance);
         if valid {
             match &mut self.scene {
-                Some(scene) => {
-                    scene.0.push(part_instance);
-                    Ok(true)
-                }
+                Some(scene) => Ok(scene.add_part_instance(part_instance)),
                 None => {
-                    self.scene.get_or_insert(Scene(vec![part_instance]));
-                    Ok(true)
+                    let mut scene = Scene::new();
+                    let id = scene.add_part_instance(part_instance);
+                    self.scene.get_or_insert(scene);
+
+                    Ok(id)
                 }
             }
         } else {
-            Ok(false)
+            Err(DbError::PartIdNotFound(part_instance.part_id.0))
         }
     }
 
@@ -164,6 +243,128 @@ impl Db {
         }
     }
 
+    pub fn append(&mut self, other: Db) -> Result<(), DbError> {
+        if other.is_scene_empty() {
+            return Err(DbError::SceneNotSet);
+        }
+
+        let mut unique_part_other_to_unique_part_self: HashMap<UniquePartId, UniquePartId> =
+            HashMap::new();
+
+        //process all the mesh unique parts first
+        let unique_mesh_parts = other
+            .get_unique_parts()
+            .filter(|(_, part_rep)| matches!(part_rep, PartRep::Mesh(_)))
+            .collect::<Vec<_>>();
+
+        for (unique_part_id, mesh_part) in unique_mesh_parts {
+            if let PartRep::Mesh(mesh) = mesh_part {
+                let (_, new_unique_part_id) = self.add_part_rep(PartRep::Mesh(mesh.clone()))?;
+
+                unique_part_other_to_unique_part_self.insert(unique_part_id, new_unique_part_id);
+            }
+        }
+
+        //process all unique composed parts
+        let unique_composed_parts = other
+            .get_unique_parts()
+            .filter(|(_, part_rep)| matches!(part_rep, PartRep::ComposedPart(_)))
+            .collect::<Vec<_>>();
+
+        let mut unprocessed_unique_composed_parts = unique_composed_parts
+            .iter()
+            .map(|(u, _)| u)
+            .collect::<Vec<_>>();
+
+        loop {
+            //if all is processed then just exit
+            if unprocessed_unique_composed_parts.is_empty() {
+                break;
+            }
+
+            for (unique_part_id, composed_parts) in &unique_composed_parts {
+                //if its not in the list then skip because its already processed.
+                if !unprocessed_unique_composed_parts.contains(&unique_part_id) {
+                    continue;
+                }
+
+                if let PartRep::ComposedPart(instances) = composed_parts {
+                    let can_process = instances
+                        .iter()
+                        .all(|i| unique_part_other_to_unique_part_self.contains_key(&i.part_id));
+
+                    if !can_process {
+                        continue;
+                    }
+
+                    let mut new_instances = vec![];
+                    for i in instances {
+                        if let Some(new_unique_part_id) =
+                            unique_part_other_to_unique_part_self.get(&i.part_id)
+                        {
+                            let new_instance = self.get_new_part_instance_from_part_id(
+                                *new_unique_part_id,
+                                Some(i.transform),
+                            )?;
+
+                            new_instances.push(new_instance);
+                        }
+                    }
+
+                    if new_instances.len() == instances.len() {
+                        let (_, new_unique_part_id) =
+                            self.add_part_rep(PartRep::ComposedPart(new_instances))?;
+
+                        unique_part_other_to_unique_part_self
+                            .insert(*unique_part_id, new_unique_part_id);
+
+                        let item_index = unprocessed_unique_composed_parts
+                            .iter()
+                            .enumerate()
+                            .find(|(_, u)| u.0 == unique_part_id.0)
+                            .map(|(index, _)| index);
+
+                        if let Some(index) = item_index {
+                            unprocessed_unique_composed_parts.remove(index);
+                        }
+                    }
+                }
+            }
+        }
+
+        //now actually add the part instances
+        if let Some(scene) = &other.scene {
+            for i in &scene.instances {
+                if let Some(new_unique_part_id) =
+                    unique_part_other_to_unique_part_self.get(&i.part_id)
+                {
+                    let new_instance = self.get_new_part_instance_from_part_id(
+                        *new_unique_part_id,
+                        Some(i.transform),
+                    )?;
+
+                    self.add_part_instance_to_scene(new_instance)?;
+                }
+            }
+        }
+
+        drop(other);
+        Ok(())
+    }
+
+    pub fn is_scene_empty(&self) -> bool {
+        match &self.scene {
+            Some(scene) => scene.is_empty(),
+            None => true,
+        }
+    }
+
+    pub fn clear_all(&mut self) {
+        self.scene = None;
+        self.part_reps.clear();
+        self.unique_parts.clear();
+    }
+
     fn validate_part_rep(&self, part_rep: &PartRep) -> Result<bool, DbError> {
         match part_rep {
             PartRep::Mesh(_) => {}
@@ -171,23 +372,15 @@ impl Db {
                 let mut invalid_part_instances = vec![];
                 for instance in part_instances {
                     let validated = self.validate_part_instance(instance);
-                    match validated {
-                        Ok(valid) => {
-                            if !valid {
-                                invalid_part_instances.push(instance);
-                            }
-                        }
-                        Err(err) => return Err(err),
+                    if !validated {
+                        invalid_part_instances.push(instance);
                     }
                 }
 
                 if !invalid_part_instances.is_empty() {
                     let invalid_instances = invalid_part_instances
                         .iter()
-                        .map(|i| PartInstance {
-                            part_id: i.part_id,
-                            transform: i.transform,
-                        })
+                        .map(|i| PartInstance::new(i.part_id, Some(i.transform)))
                         .collect();
                     return Err(DbError::PartInstancesNotFound(invalid_instances));
                 }
@@ -196,9 +389,9 @@ impl Db {
         Ok(true)
     }
 
-    fn validate_part_instance(&self, part_instance: &PartInstance) -> Result<bool, DbError> {
+    fn validate_part_instance(&self, part_instance: &PartInstance) -> bool {
         //ToDo: introduce some unique identifier for PartInstance to Part tracking
-        Ok(part_instance.part_id.0 < self.unique_parts.len())
+        part_instance.part_id.0 < self.unique_parts.len()
     }
 }
 
@@ -219,7 +412,7 @@ pub fn add_render_items_from_db(
         let mut bboxes = vec![];
 
         //setup all the instance data
-        for instance in &scene.0 {
+        for instance in &scene.instances {
             match process_part_instance(
                 renderer,
                 db,

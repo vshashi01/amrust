@@ -1,5 +1,6 @@
-use crate::amrust_db::add_render_items_from_db;
+use crate::amrust_db::{Db, add_render_items_from_db};
 use crate::egui_tools::EguiRenderer;
+use crate::save_3mf::save;
 use amrust_render::bounding_box::BoundingBox;
 // use amrust_lib::widgets::dropped_files::DroppedFilesWidget;
 use amrust_render::camera::{self, CameraData, OrthographicCameraData};
@@ -36,9 +37,11 @@ pub struct AppState {
     pub render_texture_data: renderer::RenderTextureData,
     pub texture_id: epaint::TextureId,
     // pub dropped_files: DroppedFilesWidget,
-    pub file_dialog: FileDialog,
+    pub load_file_dlg: FileDialog,
+    pub save_file_dlg: FileDialog,
     pub picked_file: Option<PathBuf>,
     pub scene_bbox: Option<BoundingBox>,
+    pub db: Db,
 }
 
 impl AppState {
@@ -118,7 +121,13 @@ impl AppState {
 
         // let dropped_files_widget = DroppedFilesWidget::new();
 
-        let file_dialog = FileDialog::new();
+        let load_file_dlg = FileDialog::new()
+            .add_file_filter_extensions("3MF", vec!["3mf"])
+            .default_file_filter("3MF");
+
+        let save_file_dlg = FileDialog::new()
+            .add_save_extension("3MF file", "3mf")
+            .default_save_extension("3MF file");
 
         Self {
             device: Arc::new(device),
@@ -132,9 +141,11 @@ impl AppState {
             render_texture_data,
             texture_id,
             // dropped_files: dropped_files_widget,
-            file_dialog,
+            load_file_dlg,
+            save_file_dlg,
             picked_file: None,
             scene_bbox: None,
+            db: Db::new(),
         }
     }
 
@@ -354,7 +365,7 @@ impl App {
 
                     ui.horizontal(|ui| {
                         if ui.button("Pick File").clicked() {
-                            state.file_dialog.pick_file();
+                            state.load_file_dlg.pick_file();
                         }
 
                         if ui.button("Add Test Mesh").clicked() {
@@ -367,10 +378,17 @@ impl App {
                             state.egui_renderer.context().request_repaint();
                         }
 
-                        if ui.button("Clear all mesh").clicked() {
-                            state.renderer_3d.clear_all();
-                            state.egui_renderer.context().request_repaint();
-                        }
+                        ui.add_enabled_ui(!state.db.is_scene_empty(), |ui| {
+                            if ui.button("Clear all mesh").clicked() {
+                                state.renderer_3d.clear_all();
+                                state.db.clear_all();
+                                state.egui_renderer.context().request_repaint();
+                            }
+
+                            if ui.button("Save to 3mf").clicked() {
+                                state.save_file_dlg.save_file();
+                            }
+                        })
                     });
 
                     ui.separator();
@@ -382,7 +400,7 @@ impl App {
                         );
 
                         ui.add(
-                            egui::Label::new(format!("Bounding boz size: {:?}", bbox.delta(),))
+                            egui::Label::new(format!("Bounding box size: {:?}", bbox.delta(),))
                                 .wrap(),
                         );
                     })
@@ -391,9 +409,9 @@ impl App {
             // state
             //     .dropped_files
             //     .run(state.egui_renderer.context(), &|test| false);
-            state.file_dialog.update(state.egui_renderer.context());
 
-            if let Some(path) = state.file_dialog.take_picked() {
+            state.load_file_dlg.update(state.egui_renderer.context());
+            if let Some(path) = state.load_file_dlg.take_picked() {
                 println!("File picked is: {:?}", path);
 
                 if let Some(ext) = path.extension()
@@ -404,31 +422,60 @@ impl App {
                     match db {
                         Ok(db) => {
                             println!("Db contains: {:?}", db);
-                            match add_render_items_from_db(&mut state.renderer_3d, &db) {
-                                Ok(new_bbox) => {
-                                    // println!("New Bounding Box is {:?}", new_bbox);
-                                    let bbox = match &mut state.scene_bbox {
-                                        Some(current_bbox) => {
-                                            current_bbox.unite(&new_bbox);
-                                            *current_bbox
-                                        }
-                                        None => {
-                                            //ToDo:: Fix this properly for the clear mesh case
-                                            let bbox = &mut state.scene_bbox.insert(new_bbox);
-                                            **bbox
-                                        }
-                                    };
+                            let appended = state.db.append(db);
+                            match appended {
+                                Ok(_) => {
+                                    state.renderer_3d.clear_all();
+                                    match add_render_items_from_db(
+                                        &mut state.renderer_3d,
+                                        &state.db,
+                                    ) {
+                                        Ok(new_bbox) => {
+                                            // println!("New Bounding Box is {:?}", new_bbox);
+                                            let bbox = match &mut state.scene_bbox {
+                                                Some(current_bbox) => {
+                                                    current_bbox.unite(&new_bbox);
+                                                    *current_bbox
+                                                }
+                                                None => {
+                                                    //ToDo:: Fix this properly for the clear mesh case
+                                                    let bbox =
+                                                        &mut state.scene_bbox.insert(new_bbox);
+                                                    **bbox
+                                                }
+                                            };
 
-                                    unzoom_bbox(&mut state.camera_data, &bbox);
-                                    state.egui_renderer.context().request_repaint();
+                                            unzoom_bbox(&mut state.camera_data, &bbox);
+                                            state.egui_renderer.context().request_repaint();
+                                        }
+                                        Err(err) => {
+                                            println!("Error: {:?}", err);
+                                        }
+                                    }
                                 }
                                 Err(err) => {
-                                    println!("Error: {:?}", err);
+                                    println!("{err:?}")
                                 }
                             }
                         }
                         Err(err) => println!("Error:{:?}", err),
                     }
+                }
+            }
+
+            state.save_file_dlg.update(state.egui_renderer.context());
+            if let Some(save_file_path) = state.save_file_dlg.take_picked() {
+                println!("File path to save to is {save_file_path:?}");
+
+                let file = std::fs::File::create_new(save_file_path);
+
+                match file {
+                    Ok(file) => {
+                        if let Err(err) = save(&state.db, file) {
+                            println!("{err:?}");
+                        }
+                    }
+                    Err(err) => println!("{err:?}"),
                 }
             }
 
