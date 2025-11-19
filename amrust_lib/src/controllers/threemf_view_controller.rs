@@ -1,6 +1,7 @@
 use amrust_3mf::io::{CachePolicy, ThreemfPackageLazyReader};
 use anyhow::{Result, anyhow};
 use egui::{ColorImage, TextureHandle};
+use image::load_from_memory;
 use roxmltree::{Document, NodeId};
 
 use crate::widgets::{file_tree::FileTree, start_page::start_page};
@@ -156,7 +157,8 @@ impl ThreemfViewController {
     fn process_thumbnail_path(&self, path: &str, ctx: &egui::Context) -> Option<TextureHandle> {
         //let bytes = self.unpacked.thumbnails.get(path);
         let texture_handle = self.unpacked.with_thumbnail(path, |img| {
-            create_texturehandle_from_image(ctx, path, img.clone())
+            let image = load_from_memory(&img.data).unwrap();
+            create_texturehandle_from_image(ctx, path, image)
         });
 
         match texture_handle {

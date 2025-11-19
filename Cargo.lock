@@ -165,7 +165,6 @@ dependencies = [
 name = "amrust_3mf"
 version = "0.1.0"
 dependencies = [
- "image",
  "instant-xml",
  "once_cell",
  "thiserror 2.0.12",

@@ -10,7 +10,7 @@ use amrust_render::material::Material;
 use amrust_render::normalized_box::{ORDERED_POSITIONS, ORDERED_POSITIONS_BOX_EDGE_INDICES};
 use amrust_render::renderer::RenderTextureData;
 use amrust_render::transformation::Transformation;
-use egui::{Image, Vec2, epaint};
+use egui::{Frame, Id, Image, Margin, Vec2, epaint};
 use egui_file_dialog::FileDialog;
 use egui_wgpu::wgpu::SurfaceError;
 use egui_wgpu::{ScreenDescriptor, wgpu};
@@ -112,9 +112,6 @@ impl AppState {
 
         //when the size change we need to create a new render texture data and register a new egui texture.
         let render_texture_data = renderer_3d.create_render_texture_data();
-
-        // let (_mesh_object_id, _wireframe_object_id) = set_solid_mesh(&mut renderer_3d);
-
         let texture_id = egui_renderer.register_texture(&device, &render_texture_data.texture_view);
         let camera_data = get_camera_data();
         render_frame(&mut renderer_3d, &camera_data, &render_texture_data).await;
@@ -285,6 +282,44 @@ impl App {
 
             let default_bbox = BoundingBox::default();
             let bbox = state.scene_bbox.as_ref().unwrap_or(&default_bbox);
+            egui::TopBottomPanel::top("top panel")
+                .resizable(false)
+                .show(state.egui_renderer.context(), |ui| {
+                    egui::MenuBar::new().ui(ui, |ui| {
+                        if ui.button("Import Part").clicked() {
+                            state.load_file_dlg.pick_file();
+                        }
+
+                        // if ui.button("Add Test Mesh").clicked() {
+                        //     set_solid_mesh(&mut state.renderer_3d);
+                        //     state.egui_renderer.context().request_repaint();
+                        // }
+
+                        ui.add_enabled_ui(!state.db.is_scene_empty(), |ui| {
+                            if ui.button("Unzoom Scene").clicked() {
+                                unzoom_bbox(&mut state.camera_data, bbox);
+                                state.egui_renderer.context().request_repaint();
+                            }
+
+                            if ui.button("Clear All").clicked() {
+                                state.renderer_3d.clear_all();
+                                state.db.clear_all();
+                                state.egui_renderer.context().request_repaint();
+                            }
+
+                            if ui.button("Save to 3mf").clicked() {
+                                state.save_file_dlg.save_file();
+                            }
+                        })
+                    });
+                });
+
+            // egui::SidePanel::left(Id::new("object list")).show(
+            //     state.egui_renderer.context(),
+            //     |ui| {
+            //         ui.label("Left Panel");
+            //     },
+            // );
 
             egui::CentralPanel::default().show(state.egui_renderer.context(), |ui| {
                 let dpi_factor = state.egui_renderer.context().pixels_per_point();
@@ -304,7 +339,6 @@ impl App {
 
                 if response.dragged() {
                     let delta = response.drag_delta();
-                    // Example: rotate camera based on drag
                     state
                         .camera_data
                         .transform(camera::CameraTransform::Rotate {
@@ -331,80 +365,12 @@ impl App {
                     state.egui_renderer.context().request_repaint();
                 }
 
-                ui.image(image_texture.source(state.egui_renderer.context()));
+                Frame::new()
+                    .inner_margin(Margin::symmetric(5, 5))
+                    .show(ui, |ui| {
+                        ui.image(image_texture.source(state.egui_renderer.context()));
+                    });
             });
-
-            egui::Window::new("View Controls")
-                .resizable(true)
-                .vscroll(true)
-                .default_open(false)
-                .show(state.egui_renderer.context(), |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(format!("DPI Factor: {}", state.dpi_factor));
-                        let camera_data =
-                            format!("Camera data currently is: {:?}", state.camera_data);
-                        ui.add(egui::Label::new(camera_data).wrap());
-
-                        ui.separator();
-
-                        if ui.button("-").clicked() {
-                            state
-                                .camera_data
-                                .transform(camera::CameraTransform::Zoom(-0.1));
-                            println!("Minus pressed");
-                        }
-                        if ui.button("+").clicked() {
-                            state
-                                .camera_data
-                                .transform(camera::CameraTransform::Zoom(0.1));
-                            println!("Plus pressed");
-                        }
-                    });
-
-                    ui.separator();
-
-                    ui.horizontal(|ui| {
-                        if ui.button("Pick File").clicked() {
-                            state.load_file_dlg.pick_file();
-                        }
-
-                        if ui.button("Add Test Mesh").clicked() {
-                            set_solid_mesh(&mut state.renderer_3d);
-                            state.egui_renderer.context().request_repaint();
-                        }
-
-                        if ui.button("Unzoom Scene").clicked() {
-                            unzoom_bbox(&mut state.camera_data, bbox);
-                            state.egui_renderer.context().request_repaint();
-                        }
-
-                        ui.add_enabled_ui(!state.db.is_scene_empty(), |ui| {
-                            if ui.button("Clear all mesh").clicked() {
-                                state.renderer_3d.clear_all();
-                                state.db.clear_all();
-                                state.egui_renderer.context().request_repaint();
-                            }
-
-                            if ui.button("Save to 3mf").clicked() {
-                                state.save_file_dlg.save_file();
-                            }
-                        })
-                    });
-
-                    ui.separator();
-
-                    ui.vertical(|ui| {
-                        ui.add(
-                            egui::Label::new(format!("Bounding Box points are: {:?}", bbox,))
-                                .wrap(),
-                        );
-
-                        ui.add(
-                            egui::Label::new(format!("Bounding box size: {:?}", bbox.delta(),))
-                                .wrap(),
-                        );
-                    })
-                });
 
             // state
             //     .dropped_files
