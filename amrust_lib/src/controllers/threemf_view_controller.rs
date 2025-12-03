@@ -1,8 +1,8 @@
-use amrust_3mf::io::{CachePolicy, ThreemfPackageLazyReader};
 use anyhow::{Result, anyhow};
 use egui::{ColorImage, TextureHandle};
 use image::load_from_memory;
 use roxmltree::{Document, NodeId};
+use threemf2::io::{CachePolicy, ThreemfPackageLazyReader};
 
 use crate::widgets::{file_tree::FileTree, start_page::start_page};
 
@@ -65,7 +65,7 @@ impl ThreemfViewController {
                     || n.tag_name().name().to_lowercase() == "object"
                     || n.tag_name().name().to_lowercase() == "build"
             }) {
-                let uuid = node.attribute((amrust_3mf::threemf_namespaces::PROD_NS, "UUID"));
+                let uuid = node.attribute((threemf2::threemf_namespaces::PROD_NS, "UUID"));
                 if let Some(uuid) = uuid {
                     if !uuid_map.contains_key(uuid) {
                         uuid_map.insert(uuid.to_owned(), node.id());

@@ -2,6 +2,7 @@ mod amrust_db;
 mod app;
 mod egui_tools;
 mod load_3mf;
+mod object_tree;
 mod save_3mf;
 
 use winit::event_loop::{ControlFlow, EventLoop};

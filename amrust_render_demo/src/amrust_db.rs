@@ -13,10 +13,10 @@ use std::fmt::Debug;
 #[derive(Debug)]
 pub enum PartRep {
     Mesh(Box<Mesh>),
-    ComposedPart(Vec<PartInstance>),
+    ComposedPart(Vec<PartInstanceId>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PartInstance {
     pub part_id: UniquePartId,
     pub transform: Transformation,
@@ -31,7 +31,7 @@ impl PartInstance {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct PartInstanceId(usize);
 
 impl fmt::Display for PartInstanceId {
@@ -45,7 +45,7 @@ pub struct Part(usize); //points to a part_rep_id
 
 #[derive(Debug)]
 pub struct Scene {
-    pub instances: Vec<PartInstance>,
+    pub instances: Vec<PartInstanceId>,
 }
 
 impl Scene {
@@ -53,16 +53,16 @@ impl Scene {
         Scene { instances: vec![] }
     }
 
-    pub fn new_from_instances(instances: Vec<PartInstance>) -> Self {
+    pub fn new_from_instances(instances: Vec<PartInstanceId>) -> Self {
         let mut scene = Scene::new();
         scene.instances = instances;
 
         scene
     }
 
-    pub fn add_part_instance(&mut self, instance: PartInstance) -> PartInstanceId {
-        self.instances.push(instance);
-        PartInstanceId(self.instances.len() - 1)
+    pub fn add_part_instance(&mut self, instance: PartInstanceId) {
+        self.instances.push(instance.clone());
+        // PartInstanceId(self.instances.len() - 1)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -108,8 +108,19 @@ impl fmt::Display for PartRepId {
 
 #[derive(Debug)]
 pub struct Db {
+    /// Default list of all the PartReps that currently exists in the DB
     part_reps: Vec<PartRep>,
+
+    /// List of all unique Part configurations
+    /// A Part points to the PartRep in the part_reps
+    /// Its an extra layer of indirection, not sure if it is actually needed.
     unique_parts: Vec<Part>,
+
+    /// Part Instances point to a Part in unique_parts
+    /// What essentially users will interact with are Part Instances in practical sense
+    part_instances: Vec<PartInstance>,
+
+    /// The main scene
     scene: Option<Scene>,
 }
 
@@ -118,11 +129,14 @@ pub enum DbError {
     #[error("No valid part found with the id: {0}")]
     PartIdNotFound(usize),
 
+    #[error("No valid part instance found with the id: {0}")]
+    PartInstanceIdNotFound(usize),
+
     #[error("An invalid part rep is passed")]
     InvalidPartRep,
 
     #[error("Invalid Part Instances found")]
-    PartInstancesNotFound(Vec<PartInstance>),
+    PartInstancesNotFound(Vec<PartInstanceId>),
 
     #[error("There is no scene set currently")]
     SceneNotSet,
@@ -133,6 +147,7 @@ impl Db {
         Db {
             part_reps: vec![],
             unique_parts: vec![],
+            part_instances: vec![],
             scene: None,
         }
     }
@@ -170,8 +185,53 @@ impl Db {
         })
     }
 
-    pub fn get_part_rep(&self, part_instance: &PartInstance) -> Result<&PartRep, DbError> {
-        self.get_part_rep_from_part(&part_instance.part_id)
+    pub fn get_part_instances(
+        &self,
+    ) -> impl Iterator<Item = (PartInstanceId, &PartInstance, &PartRep)> {
+        self.part_instances
+            .iter()
+            .enumerate()
+            .map(|(index, instance_data)| {
+                let part_rep = self.get_part_rep_from_part(&instance_data.part_id);
+
+                match part_rep {
+                    Ok(rep) => (PartInstanceId(index), instance_data, rep),
+                    Err(_) => panic!("Part Rep not found"),
+                }
+            })
+    }
+
+    pub fn get_part_instance_data<'a>(
+        &'a self,
+        part_instance: &PartInstanceId,
+    ) -> Result<&'a PartInstance, DbError> {
+        let instance = self.part_instances.get(part_instance.0);
+        match instance {
+            Some(i) => Ok(i),
+            None => Err(DbError::PartInstanceIdNotFound(part_instance.0)),
+        }
+    }
+
+    pub fn get_unique_part_from_part_instance(
+        &self,
+        part_instance: &PartInstanceId,
+    ) -> Result<UniquePartId, DbError> {
+        let instance = self.part_instances.get(part_instance.0);
+        match instance {
+            Some(i) => Ok(i.part_id.clone()),
+            None => Err(DbError::PartInstanceIdNotFound(part_instance.0)),
+        }
+    }
+
+    pub fn get_part_rep_from_part_instance(
+        &self,
+        part_instance: &PartInstanceId,
+    ) -> Result<&PartRep, DbError> {
+        let instance = self.part_instances.get(part_instance.0);
+        match instance {
+            Some(i) => self.get_part_rep_from_part(&i.part_id),
+            None => Err(DbError::PartInstanceIdNotFound(part_instance.0)),
+        }
     }
 
     pub fn get_part_rep_from_part(&self, part_id: &UniquePartId) -> Result<&PartRep, DbError> {
@@ -186,15 +246,16 @@ impl Db {
     }
 
     pub fn get_new_part_instance_from_part_id(
-        &self,
-        part_id: UniquePartId,
+        &mut self,
+        part_id: &UniquePartId,
         transform: Option<Transformation>,
-    ) -> Result<PartInstance, DbError> {
+    ) -> Result<PartInstanceId, DbError> {
         let unique_part = self.unique_parts.get(part_id.0);
         match unique_part {
             Some(_) => {
-                let instance = PartInstance::new(part_id, transform);
-                Ok(instance)
+                let instance = PartInstance::new(part_id.clone(), transform);
+                self.part_instances.push(instance);
+                Ok(PartInstanceId(self.part_instances.len() - 1))
             }
             None => Err(DbError::PartIdNotFound(part_id.0)),
         }
@@ -207,7 +268,7 @@ impl Db {
             .find(|i| !self.validate_part_instance(i));
 
         match first_not_valid {
-            Some(i) => Err(DbError::PartIdNotFound(i.part_id.0)),
+            Some(i) => Err(DbError::PartInstanceIdNotFound(i.0)),
             None => {
                 let _ = self.scene.insert(scene);
                 Ok(())
@@ -217,22 +278,22 @@ impl Db {
 
     pub fn add_part_instance_to_scene(
         &mut self,
-        part_instance: PartInstance,
-    ) -> Result<PartInstanceId, DbError> {
+        part_instance: PartInstanceId,
+    ) -> Result<(), DbError> {
         let valid = self.validate_part_instance(&part_instance);
         if valid {
             match &mut self.scene {
                 Some(scene) => Ok(scene.add_part_instance(part_instance)),
                 None => {
                     let mut scene = Scene::new();
-                    let id = scene.add_part_instance(part_instance);
+                    let _ = scene.add_part_instance(part_instance);
                     self.scene.get_or_insert(scene);
 
-                    Ok(id)
+                    Ok(())
                 }
             }
         } else {
-            Err(DbError::PartIdNotFound(part_instance.part_id.0))
+            Err(DbError::PartInstanceIdNotFound(part_instance.0))
         }
     }
 
@@ -248,6 +309,7 @@ impl Db {
             return Err(DbError::SceneNotSet);
         }
 
+        //key is from other, and the value is from current
         let mut unique_part_other_to_unique_part_self: HashMap<UniquePartId, UniquePartId> =
             HashMap::new();
 
@@ -289,9 +351,13 @@ impl Db {
                 }
 
                 if let PartRep::ComposedPart(instances) = composed_parts {
-                    let can_process = instances
-                        .iter()
-                        .all(|i| unique_part_other_to_unique_part_self.contains_key(&i.part_id));
+                    let can_process = instances.iter().all(|i| {
+                        let part_id = &other.get_unique_part_from_part_instance(i);
+                        match part_id {
+                            Ok(id) => unique_part_other_to_unique_part_self.contains_key(id),
+                            Err(_) => false,
+                        }
+                    });
 
                     if !can_process {
                         continue;
@@ -299,12 +365,15 @@ impl Db {
 
                     let mut new_instances = vec![];
                     for i in instances {
+                        let part_instance = &other.get_part_instance_data(i)?;
+                        // let part_id = &other.get_unique_part_from_part_instance(i)?;
+
                         if let Some(new_unique_part_id) =
-                            unique_part_other_to_unique_part_self.get(&i.part_id)
+                            unique_part_other_to_unique_part_self.get(&part_instance.part_id)
                         {
                             let new_instance = self.get_new_part_instance_from_part_id(
-                                *new_unique_part_id,
-                                Some(i.transform),
+                                new_unique_part_id,
+                                Some(part_instance.transform),
                             )?;
 
                             new_instances.push(new_instance);
@@ -335,12 +404,13 @@ impl Db {
         //now actually add the part instances
         if let Some(scene) = &other.scene {
             for i in &scene.instances {
+                let part_instance = &other.get_part_instance_data(i)?;
                 if let Some(new_unique_part_id) =
-                    unique_part_other_to_unique_part_self.get(&i.part_id)
+                    unique_part_other_to_unique_part_self.get(&part_instance.part_id)
                 {
                     let new_instance = self.get_new_part_instance_from_part_id(
-                        *new_unique_part_id,
-                        Some(i.transform),
+                        new_unique_part_id,
+                        Some(part_instance.transform),
                     )?;
 
                     self.add_part_instance_to_scene(new_instance)?;
@@ -373,25 +443,25 @@ impl Db {
                 for instance in part_instances {
                     let validated = self.validate_part_instance(instance);
                     if !validated {
-                        invalid_part_instances.push(instance);
+                        invalid_part_instances.push(instance.clone());
                     }
                 }
 
                 if !invalid_part_instances.is_empty() {
-                    let invalid_instances = invalid_part_instances
-                        .iter()
-                        .map(|i| PartInstance::new(i.part_id, Some(i.transform)))
-                        .collect();
-                    return Err(DbError::PartInstancesNotFound(invalid_instances));
+                    // let invalid_instances = invalid_part_instances
+                    //     .iter()
+                    //     .map(|i| PartInstance::new(i.part_id, Some(i.transform)))
+                    //     .collect();
+                    return Err(DbError::PartInstancesNotFound(invalid_part_instances));
                 }
             }
         }
         Ok(true)
     }
 
-    fn validate_part_instance(&self, part_instance: &PartInstance) -> bool {
+    fn validate_part_instance(&self, part_instance: &PartInstanceId) -> bool {
         //ToDo: introduce some unique identifier for PartInstance to Part tracking
-        part_instance.part_id.0 < self.unique_parts.len()
+        part_instance.0 < self.part_instances.len()
     }
 }
 
@@ -413,18 +483,19 @@ pub fn add_render_items_from_db(
 
         //setup all the instance data
         for instance in &scene.instances {
+            let instance_data = db.get_part_instance_data(instance)?;
             match process_part_instance(
                 renderer,
                 db,
                 &mut part_id_to_instance_data,
-                instance,
+                instance_data,
                 &Transformation(Mat4::IDENTITY),
             ) {
                 Ok(_) => {}
                 Err(err) => return Err(err),
             }
 
-            match compute_instance_bbox(db, instance, &Transformation(Mat4::IDENTITY)) {
+            match compute_instance_bbox(db, instance_data, &Transformation(Mat4::IDENTITY)) {
                 Ok(bbox) => bboxes.push(bbox),
                 Err(err) => return Err(err),
             }
@@ -462,7 +533,7 @@ fn process_part_instance(
         return Ok(());
     }
 
-    let part_rep = db.get_part_rep(instance);
+    let part_rep = db.get_part_rep_from_part(&instance.part_id);
     match part_rep {
         Ok(rep) => match rep {
             PartRep::Mesh(mesh) => {
@@ -492,11 +563,12 @@ fn process_part_instance(
             }
             PartRep::ComposedPart(part_instances) => {
                 for i in part_instances {
+                    let child_instance_data = db.get_part_instance_data(i)?;
                     match process_part_instance(
                         renderer,
                         db,
                         part_id_to_instance_data,
-                        i,
+                        child_instance_data,
                         &combined_transform,
                     ) {
                         Ok(_) => {}
@@ -602,7 +674,7 @@ fn compute_instance_bbox(
     parent_transform: &Transformation,
 ) -> Result<BoundingBox, DbError> {
     let combined_transform = Transformation(parent_transform.0 * instance.transform.0);
-    let part_rep = db.get_part_rep(instance)?;
+    let part_rep = db.get_part_rep_from_part(&instance.part_id)?;
 
     match part_rep {
         PartRep::Mesh(mesh) => {
@@ -612,7 +684,9 @@ fn compute_instance_bbox(
         PartRep::ComposedPart(children) => {
             let mut bbox = BoundingBox::default();
             for child in children {
-                let child_bbox = compute_instance_bbox(db, child, &combined_transform)?;
+                let child_instance_data = db.get_part_instance_data(child)?;
+                let child_bbox =
+                    compute_instance_bbox(db, child_instance_data, &combined_transform)?;
                 bbox.unite(&child_bbox);
             }
             Ok(bbox)

@@ -18,5 +18,5 @@ image = { workspace = true, default-features = true }
 glam = { workspace = true }
 egui_extras = { workspace = true, features = ["default", "image"] }
 
-amrust_3mf = { workspace = true }
+threemf2 = { workspace = true }
 amrust_render = { workspace = true }

@@ -30,4 +30,4 @@ thiserror = { workspace = true }
 
 amrust_render = { workspace = true }
 amrust_lib = { workspace = true }
-amrust_3mf = { workspace = true }
+threemf2 = { workspace = true }

@@ -162,20 +162,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "amrust_3mf"
-version = "0.1.0"
-dependencies = [
- "instant-xml",
- "once_cell",
- "thiserror 2.0.12",
- "zip",
-]
-
-[[package]]
 name = "amrust_lib"
 version = "0.1.0"
 dependencies = [
- "amrust_3mf",
  "amrust_render",
  "anyhow",
  "egui",
@@ -184,6 +173,7 @@ dependencies = [
  "image",
  "log",
  "roxmltree",
+ "threemf2",
 ]
 
 [[package]]
@@ -207,7 +197,6 @@ dependencies = [
 name = "amrust_render_demo"
 version = "0.1.0"
 dependencies = [
- "amrust_3mf",
  "amrust_lib",
  "amrust_render",
  "anyhow",
@@ -222,6 +211,7 @@ dependencies = [
  "log",
  "pollster",
  "thiserror 2.0.12",
+ "threemf2",
  "wgpu",
  "winit",
 ]
@@ -3572,6 +3562,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "threemf2"
+version = "0.1.2"
+dependencies = [
+ "instant-xml",
+ "once_cell",
+ "thiserror 2.0.12",
+ "zip",
 ]
 
 [[package]]

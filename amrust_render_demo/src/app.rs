@@ -1,5 +1,6 @@
 use crate::amrust_db::{Db, add_render_items_from_db};
 use crate::egui_tools::EguiRenderer;
+use crate::object_tree::ObjectTree;
 use crate::save_3mf::save;
 use amrust_render::bounding_box::BoundingBox;
 // use amrust_lib::widgets::dropped_files::DroppedFilesWidget;
@@ -42,6 +43,7 @@ pub struct AppState {
     pub picked_file: Option<PathBuf>,
     pub scene_bbox: Option<BoundingBox>,
     pub db: Db,
+    pub object_tree: Option<ObjectTree>,
 }
 
 impl AppState {
@@ -143,6 +145,7 @@ impl AppState {
             picked_file: None,
             scene_bbox: None,
             db: Db::new(),
+            object_tree: None,
         }
     }
 
@@ -304,6 +307,7 @@ impl App {
                             if ui.button("Clear All").clicked() {
                                 state.renderer_3d.clear_all();
                                 state.db.clear_all();
+                                state.object_tree = None;
                                 state.egui_renderer.context().request_repaint();
                             }
 
@@ -314,12 +318,14 @@ impl App {
                     });
                 });
 
-            // egui::SidePanel::left(Id::new("object list")).show(
-            //     state.egui_renderer.context(),
-            //     |ui| {
-            //         ui.label("Left Panel");
-            //     },
-            // );
+            if let Some(tree) = &state.object_tree {
+                egui::SidePanel::left(Id::new("object list")).show(
+                    state.egui_renderer.context(),
+                    |ui| {
+                        tree.ui(ui);
+                    },
+                );
+            }
 
             egui::CentralPanel::default().show(state.egui_renderer.context(), |ui| {
                 let dpi_factor = state.egui_renderer.context().pixels_per_point();
@@ -389,6 +395,11 @@ impl App {
                         Ok(db) => {
                             println!("Db contains: {:?}", db);
                             let appended = state.db.append(db);
+                            if let Some(tree) = ObjectTree::new(&state.db) {
+                                let _ = state.object_tree.insert(tree);
+                                state.egui_renderer.context().request_repaint();
+                            }
+
                             match appended {
                                 Ok(_) => {
                                     state.renderer_3d.clear_all();

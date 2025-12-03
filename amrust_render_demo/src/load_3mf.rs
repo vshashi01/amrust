@@ -1,13 +1,13 @@
-use amrust_3mf::io::query::{self};
 use glam::Vec3;
 use thiserror::Error;
+use threemf2::io::query::{self};
 
-use amrust_3mf::core::mesh::{Triangle, Vertex};
-use amrust_3mf::core::transform::Transform;
-use amrust_3mf::io::ThreemfPackage;
 use amrust_render::transformation::Transformation;
+use threemf2::core::mesh::{Triangle, Vertex};
+use threemf2::core::transform::Transform;
+use threemf2::io::ThreemfPackage;
 
-use crate::amrust_db::{Db, DbError, Mesh, PartInstance, PartRep, Scene, UniquePartId};
+use crate::amrust_db::{Db, DbError, Mesh, PartRep, Scene, UniquePartId};
 
 use core::f32;
 use std::collections::HashMap;
@@ -21,7 +21,7 @@ pub enum DbFrom3mfError {
     DbError(#[from] DbError),
 
     #[error("Somethign wrong with threemf process")]
-    ThreemfProcessingError(#[from] amrust_3mf::io::Error),
+    ThreemfProcessingError(#[from] threemf2::io::Error),
 }
 
 pub fn load(threemf: std::fs::File) -> Result<Db, DbFrom3mfError> {
@@ -43,7 +43,7 @@ fn get_db_from_3mf(package: &ThreemfPackage) -> Result<Db, DbFrom3mfError> {
     let mesh_objects = query::get_mesh_objects(package).collect::<Vec<_>>();
     process_mesh_objects(&mut db, &mut part_rep_map, mesh_objects)?;
 
-    let composed_parts = query::get_composedpart_objects(package).collect::<Vec<_>>();
+    let composed_parts = query::get_components_objects(package).collect::<Vec<_>>();
     process_composed_parts(&mut db, &mut part_rep_map, composed_parts)?;
 
     let mut parts_in_scene = vec![];
@@ -55,7 +55,9 @@ fn get_db_from_3mf(package: &ThreemfPackage) -> Result<Db, DbFrom3mfError> {
             path: item.path.clone(),
         }) {
             let transform = get_transformation(&item.transform);
-            parts_in_scene.push(PartInstance::new(*unique_part_id, Some(transform)));
+            let instance_id =
+                db.get_new_part_instance_from_part_id(unique_part_id, Some(transform))?;
+            parts_in_scene.push(instance_id);
         }
     }
 
@@ -69,7 +71,7 @@ fn get_db_from_3mf(package: &ThreemfPackage) -> Result<Db, DbFrom3mfError> {
 fn process_composed_parts(
     db: &mut Db,
     part_rep_map: &mut HashMap<PartRepIdentity, UniquePartId>,
-    composed_parts: Vec<query::ComposedPartObjectRef<'_>>,
+    composed_parts: Vec<query::ComponentsObjectRef<'_>>,
 ) -> Result<(), DbFrom3mfError> {
     let mut unprocessed_composed_parts_id = composed_parts.iter().map(|o| o.id).collect::<Vec<_>>();
 
@@ -80,7 +82,7 @@ fn process_composed_parts(
 
         for o in &composed_parts {
             if unprocessed_composed_parts_id.contains(&o.id) {
-                let mut instances: Vec<PartInstance> = vec![];
+                let mut instances = vec![];
                 let components = o.components().collect::<Vec<_>>();
                 let num_of_comps = components.len();
 
@@ -103,8 +105,11 @@ fn process_composed_parts(
                         path: comp.path_to_look_for.clone(),
                     }) {
                         let transformation = get_transformation(&comp.transform);
-
-                        instances.push(PartInstance::new(*unique_part_id, Some(transformation)));
+                        let instance_id = db.get_new_part_instance_from_part_id(
+                            unique_part_id,
+                            Some(transformation),
+                        )?;
+                        instances.push(instance_id);
                     } else {
                         return Err(DbFrom3mfError::ObjectNotFound(comp.objectid));
                     }
@@ -156,7 +161,7 @@ fn process_mesh_objects(
 }
 
 //returns unique part id in the db
-fn get_amrust_mesh(m: &amrust_3mf::core::mesh::Mesh) -> Result<Mesh, DbFrom3mfError> {
+fn get_amrust_mesh(m: &threemf2::core::mesh::Mesh) -> Result<Mesh, DbFrom3mfError> {
     let mesh = Mesh {
         vertices: convert_3mf_vertices_to_mesh_vertices(&m.vertices.vertex),
         triangles: convert_3mf_triangles_to_mesh_triangles(&m.triangles.triangle),
@@ -179,9 +184,7 @@ fn convert_3mf_vertices_to_mesh_vertices(vertices: &[Vertex]) -> Vec<Vec3> {
         .collect()
 }
 
-fn get_transformation(
-    transform: &Option<amrust_3mf::core::transform::Transform>,
-) -> Transformation {
+fn get_transformation(transform: &Option<threemf2::core::transform::Transform>) -> Transformation {
     {
         if let Some(transform) = transform {
             Transformation(convert_transform_to_glam_matrix(transform))

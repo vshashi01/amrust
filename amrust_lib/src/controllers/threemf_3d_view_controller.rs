@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
-use amrust_3mf::io::ThreemfPackage;
 use amrust_render::renderer;
 use glam::Mat4;
+use threemf2::io::ThreemfPackage;
 
 pub struct Threemf3DViewController {
     package: Option<ThreemfPackage>,

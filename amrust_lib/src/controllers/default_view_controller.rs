@@ -10,22 +10,12 @@ use super::{
 
 use std::{ffi::OsStr, fs, path::PathBuf};
 
+#[derive(Default)]
 pub struct DefaultViewController {
     current_controller: Option<Box<dyn StandardFileViewController>>,
     pub file_name: Option<String>,
     dropped_files: DroppedFilesWidget,
     make_render: bool,
-}
-
-impl Default for DefaultViewController {
-    fn default() -> Self {
-        Self {
-            current_controller: Default::default(),
-            file_name: Default::default(),
-            dropped_files: DroppedFilesWidget::new(),
-            make_render: false,
-        }
-    }
 }
 
 impl DefaultViewController {
