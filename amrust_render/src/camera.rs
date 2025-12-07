@@ -196,6 +196,9 @@ impl CameraData for OrthographicCameraData {
             CameraTransform::Zoom(value) => {
                 //ToDo: Fix the zoom to never become negative
                 self.zoom += value;
+                if self.zoom < 0.0 {
+                    self.zoom = 0.0001;
+                }
             }
             CameraTransform::Pan(value) => {
                 self.eye_position += value;
@@ -237,7 +240,7 @@ impl CameraData for OrthographicCameraData {
     }
 
     fn set_viewport_size(&mut self, width: f32, height: f32) {
-        self.aspect_ratio = width/height;
+        self.aspect_ratio = width / height;
     }
 }
 

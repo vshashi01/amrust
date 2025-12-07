@@ -8,7 +8,9 @@ use amrust_render::{
 
 use core::fmt;
 use std::collections::HashMap;
-use std::fmt::Debug;
+use std::fmt::{Debug, format};
+
+use crate::tree_item_viewer::TreeItem;
 
 #[derive(Debug)]
 pub enum PartRep {
@@ -33,6 +35,14 @@ impl PartInstance {
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct PartInstanceId(usize);
+
+/// We only want to be able to change a PartInstanceId to usize, and not the other way around
+#[allow(clippy::from_over_into)]
+impl Into<usize> for PartInstanceId {
+    fn into(self) -> usize {
+        self.0
+    }
+}
 
 impl fmt::Display for PartInstanceId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -218,7 +228,7 @@ impl Db {
     ) -> Result<UniquePartId, DbError> {
         let instance = self.part_instances.get(part_instance.0);
         match instance {
-            Some(i) => Ok(i.part_id.clone()),
+            Some(i) => Ok(i.part_id),
             None => Err(DbError::PartInstanceIdNotFound(part_instance.0)),
         }
     }
@@ -253,7 +263,7 @@ impl Db {
         let unique_part = self.unique_parts.get(part_id.0);
         match unique_part {
             Some(_) => {
-                let instance = PartInstance::new(part_id.clone(), transform);
+                let instance = PartInstance::new(*part_id, transform);
                 self.part_instances.push(instance);
                 Ok(PartInstanceId(self.part_instances.len() - 1))
             }
@@ -283,10 +293,13 @@ impl Db {
         let valid = self.validate_part_instance(&part_instance);
         if valid {
             match &mut self.scene {
-                Some(scene) => Ok(scene.add_part_instance(part_instance)),
+                Some(scene) => {
+                    let _: () = scene.add_part_instance(part_instance);
+                    Ok(())
+                }
                 None => {
                     let mut scene = Scene::new();
-                    let _ = scene.add_part_instance(part_instance);
+                    scene.add_part_instance(part_instance);
                     self.scene.get_or_insert(scene);
 
                     Ok(())
@@ -465,53 +478,282 @@ impl Db {
     }
 }
 
+pub fn create_build_scene_tree(db: &Db) -> Result<Vec<TreeItem>, DbError> {
+    let scene = db.get_scene()?;
+
+    let mut tree_items = vec![];
+    for i in &scene.instances {
+        let rep = db.get_part_rep_from_part_instance(i)?;
+        let item = match rep {
+            PartRep::Mesh(_) => TreeItem::Leaf {
+                id: i.clone().into(),
+                name: format!("Mesh: {:?}", i),
+                selectable: true,
+            },
+            PartRep::ComposedPart(_) => TreeItem::Leaf {
+                id: i.clone().into(),
+                name: format!("Composed Part: {:?}", i),
+                selectable: true,
+            },
+        };
+
+        tree_items.push(item);
+    }
+
+    Ok(tree_items)
+}
+
+pub fn create_scene_tree_items_by_instances(db: &Db) -> Result<Vec<TreeItem>, DbError> {
+    let scene = db.get_scene()?;
+    let mut items: Vec<TreeItem> = vec![];
+
+    let mut instance_id_to_tree_item_map: HashMap<PartInstanceId, TreeItem> = HashMap::new();
+
+    let mut unprocessed_instances = vec![];
+
+    // process all the items one round first
+    for (id, _, rep) in db.get_part_instances() {
+        match rep {
+            PartRep::Mesh(_) => {
+                instance_id_to_tree_item_map.insert(
+                    id.clone(),
+                    TreeItem::Leaf {
+                        id: id.clone().into(),
+                        name: format!("Mesh: {:?}", id),
+                        selectable: true,
+                    },
+                );
+            }
+            PartRep::ComposedPart(part_instance_ids) => {
+                let mut tree_items = vec![];
+                for id in part_instance_ids {
+                    if let Some(item) = instance_id_to_tree_item_map.get(id) {
+                        tree_items.push(item.clone());
+                    }
+                }
+
+                if tree_items.len() != part_instance_ids.len() {
+                    unprocessed_instances.push(id);
+                    continue;
+                } else {
+                    let node = TreeItem::Node {
+                        id: id.clone().into(),
+                        name: format!("Composed Part: {:?}", id),
+                        childs: tree_items,
+                        selectable: true,
+                    };
+                    instance_id_to_tree_item_map.insert(id, node);
+                }
+            }
+        }
+    }
+
+    //ToDo: Process unprocessed items
+
+    for i in &scene.instances {
+        if let Some(item) = instance_id_to_tree_item_map.get(i) {
+            items.push(item.clone());
+        }
+    }
+
+    Ok(items)
+}
+
+pub fn create_scene_tree_items_by_unique_parts(db: &Db) -> Result<Vec<TreeItem>, DbError> {
+    let scene = db.get_scene()?;
+
+    let mut instance_id_to_tree_item_map: HashMap<PartInstanceId, TreeItem> = HashMap::new();
+
+    let mut unprocessed_instances = vec![];
+
+    // process all the items one round first
+    for (id, _, rep) in db.get_part_instances() {
+        match rep {
+            PartRep::Mesh(_) => {
+                instance_id_to_tree_item_map.insert(
+                    id.clone(),
+                    TreeItem::Leaf {
+                        id: id.clone().into(),
+                        name: format!("Mesh: {:?}", id),
+                        selectable: true,
+                    },
+                );
+            }
+            PartRep::ComposedPart(part_instance_ids) => {
+                let mut tree_items = vec![];
+                for id in part_instance_ids {
+                    if let Some(item) = instance_id_to_tree_item_map.get(id) {
+                        tree_items.push(item.clone());
+                    }
+                }
+
+                if tree_items.len() != part_instance_ids.len() {
+                    unprocessed_instances.push(id);
+                    continue;
+                } else {
+                    let node = TreeItem::Node {
+                        id: id.clone().into(),
+                        name: format!("Composed Part: {:?}", id),
+                        childs: tree_items,
+                        selectable: true,
+                    };
+                    instance_id_to_tree_item_map.insert(id, node);
+                }
+            }
+        }
+    }
+
+    //ToDo: Process unprocessed items
+
+    let mut unique_part_id_to_instance_tree_item: HashMap<UniquePartId, TreeItem> = HashMap::new();
+    for i in &scene.instances {
+        let instance_data = db.get_part_instance_data(i)?;
+
+        if let Some(item) = instance_id_to_tree_item_map.get(i) {
+            if let Some(unique_item) =
+                unique_part_id_to_instance_tree_item.get_mut(&instance_data.part_id)
+            {
+                //unique part entry should always be a node
+                if let TreeItem::Node { childs, .. } = unique_item {
+                    childs.push(item.clone());
+                }
+            } else {
+                let tree_item = TreeItem::InertNode {
+                    id: 1000,
+                    name: format!("Unique Part: {:?}", instance_data.part_id),
+                    childs: vec![item.clone()],
+                };
+
+                unique_part_id_to_instance_tree_item.insert(instance_data.part_id, tree_item);
+                // items.push(item.clone());
+            }
+        }
+    }
+
+    let items = unique_part_id_to_instance_tree_item
+        .into_values()
+        .collect::<Vec<_>>();
+
+    Ok(items)
+}
+
 struct InstanceData {
     pub gpu_mesh_id: u32,
     pub transforms: Vec<Transformation>,
 }
 
-pub fn add_render_items_from_db(
+/// This creates a 3D scene based on the unique parts
+pub fn add_render_items_from_unique_parts(
     renderer: &mut renderer::Renderer,
     db: &Db,
 ) -> Result<BoundingBox, DbError> {
-    let scene = db.get_scene();
-    let mut total_bbox = BoundingBox::default();
+    let mut part_id_to_instance_data = HashMap::<usize, InstanceData>::new();
+    let mut bboxes = vec![];
 
-    if let Ok(scene) = scene {
-        let mut part_id_to_instance_data = HashMap::<usize, InstanceData>::new();
-        let mut bboxes = vec![];
-
-        //setup all the instance data
-        for instance in &scene.instances {
-            let instance_data = db.get_part_instance_data(instance)?;
-            match process_part_instance(
-                renderer,
-                db,
-                &mut part_id_to_instance_data,
-                instance_data,
-                &Transformation(Mat4::IDENTITY),
-            ) {
-                Ok(_) => {}
-                Err(err) => return Err(err),
+    //setup all the instance data
+    for (part_id, rep) in db.get_unique_parts() {
+        match rep {
+            PartRep::Mesh(mesh) => {
+                let gpu_mesh_id = create_mesh_gpu_data(renderer, mesh);
+                let transform = Transformation(Mat4::IDENTITY);
+                let bbox = compute_transformed_bounding_box_from_mesh(mesh, &transform);
+                bboxes.push(bbox);
+                part_id_to_instance_data.insert(
+                    part_id.0,
+                    InstanceData {
+                        gpu_mesh_id,
+                        transforms: vec![transform],
+                    },
+                );
             }
+            PartRep::ComposedPart(part_instance_ids) => {
+                for instance in part_instance_ids {
+                    let instance_data = db.get_part_instance_data(instance)?;
+                    match process_part_instance(
+                        renderer,
+                        db,
+                        &mut part_id_to_instance_data,
+                        instance_data,
+                        &Transformation(Mat4::IDENTITY),
+                    ) {
+                        Ok(_) => {}
+                        Err(err) => return Err(err),
+                    }
 
-            match compute_instance_bbox(db, instance_data, &Transformation(Mat4::IDENTITY)) {
-                Ok(bbox) => bboxes.push(bbox),
-                Err(err) => return Err(err),
+                    match compute_instance_bbox(db, instance_data, &Transformation(Mat4::IDENTITY))
+                    {
+                        Ok(bbox) => bboxes.push(bbox),
+                        Err(err) => return Err(err),
+                    }
+                }
             }
         }
 
-        part_id_to_instance_data
-            .into_iter()
-            .for_each(|(_, instance_data)| {
-                add_render_object(renderer, &instance_data);
-            });
-
-        bboxes.iter().for_each(|bbox| {
-            add_bounding_box_wireframe(renderer, bbox);
-            total_bbox.unite(bbox)
-        });
+        // match compute_instance_bbox(db, instance_data, &Transformation(Mat4::IDENTITY)) {
+        //     Ok(bbox) => bboxes.push(bbox),
+        //     Err(err) => return Err(err),
+        // }
     }
+
+    part_id_to_instance_data
+        .into_iter()
+        .for_each(|(_, instance_data)| {
+            add_render_object(renderer, &instance_data);
+        });
+
+    let mut total_bbox = BoundingBox::default();
+    bboxes.iter().for_each(|bbox| {
+        add_bounding_box_wireframe(renderer, bbox);
+        total_bbox.unite(bbox)
+    });
+
+    add_bounding_box_wireframe(renderer, &total_bbox);
+    println!("Total BBOX is {:?}", total_bbox);
+
+    Ok(total_bbox)
+}
+
+/// This creates a 3D scene based on the Scene object
+pub fn add_render_items_from_scene(
+    renderer: &mut renderer::Renderer,
+    db: &Db,
+) -> Result<BoundingBox, DbError> {
+    let scene = db.get_scene()?;
+    let mut total_bbox = BoundingBox::default();
+
+    let mut part_id_to_instance_data = HashMap::<usize, InstanceData>::new();
+    let mut bboxes = vec![];
+
+    //setup all the instance data
+    for instance in &scene.instances {
+        let instance_data = db.get_part_instance_data(instance)?;
+        match process_part_instance(
+            renderer,
+            db,
+            &mut part_id_to_instance_data,
+            instance_data,
+            &Transformation(Mat4::IDENTITY),
+        ) {
+            Ok(_) => {}
+            Err(err) => return Err(err),
+        }
+
+        match compute_instance_bbox(db, instance_data, &Transformation(Mat4::IDENTITY)) {
+            Ok(bbox) => bboxes.push(bbox),
+            Err(err) => return Err(err),
+        }
+    }
+
+    part_id_to_instance_data
+        .into_iter()
+        .for_each(|(_, instance_data)| {
+            add_render_object(renderer, &instance_data);
+        });
+
+    bboxes.iter().for_each(|bbox| {
+        add_bounding_box_wireframe(renderer, bbox);
+        total_bbox.unite(bbox)
+    });
 
     add_bounding_box_wireframe(renderer, &total_bbox);
     println!("Total BBOX is {:?}", total_bbox);
@@ -537,22 +779,7 @@ fn process_part_instance(
     match part_rep {
         Ok(rep) => match rep {
             PartRep::Mesh(mesh) => {
-                let positions = convert_vertices_to_position(&mesh.vertices);
-                // println!("Number of vertices: {}", positions.len());
-                let indices = mesh.triangles.clone();
-                // println!("Number of triangles: {}", indices.len() / 3);
-                let color = convert_vertices_to_color(&mesh.vertices);
-                let wireframe_indices =
-                    convert_triangle_indices_to_wireframe_indices(&mesh.triangles);
-
-                let gpu_mesh = MeshBuilder::new()
-                    .add_vertex_stream(positions.as_slice())
-                    .add_vertex_stream(color.as_slice())
-                    .add_mesh_index_stream(indices.as_slice())
-                    .add_wireframe_index_stream(wireframe_indices.as_slice())
-                    .build(&renderer.device);
-
-                let gpu_mesh_id = renderer.add_mesh(gpu_mesh);
+                let gpu_mesh_id = create_mesh_gpu_data(renderer, mesh);
                 part_id_to_instance_data.insert(
                     instance.part_id.0,
                     InstanceData {
@@ -580,6 +807,24 @@ fn process_part_instance(
         Err(err) => return Err(err),
     }
     Ok(())
+}
+
+fn create_mesh_gpu_data(renderer: &mut renderer::Renderer, mesh: &Mesh) -> u32 {
+    let positions = convert_vertices_to_position(&mesh.vertices);
+    // println!("Number of vertices: {}", positions.len());
+    let indices = mesh.triangles.clone();
+    // println!("Number of triangles: {}", indices.len() / 3);
+    let color = convert_vertices_to_color(&mesh.vertices);
+    let wireframe_indices = convert_triangle_indices_to_wireframe_indices(&mesh.triangles);
+
+    let gpu_mesh = MeshBuilder::new()
+        .add_vertex_stream(positions.as_slice())
+        .add_vertex_stream(color.as_slice())
+        .add_mesh_index_stream(indices.as_slice())
+        .add_wireframe_index_stream(wireframe_indices.as_slice())
+        .build(&renderer.device);
+
+    renderer.add_mesh(gpu_mesh)
 }
 
 fn add_render_object(renderer: &mut renderer::Renderer, data: &InstanceData) {

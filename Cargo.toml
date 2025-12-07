@@ -13,6 +13,7 @@ egui_extras = { version = "0.32.1" }
 egui_logger = { version = "0.8.0" }
 egui-winit = { version = "0.32.1" }
 egui-wgpu = { version = "0.32.1" }
+egui_dock = { version = "0.17.0" }
 
 #app building
 log = { version = "0.4.22" }

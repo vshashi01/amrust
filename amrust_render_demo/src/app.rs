@@ -1,7 +1,13 @@
-use crate::amrust_db::{Db, add_render_items_from_db};
+use crate::amrust_db::{
+    Db, add_render_items_from_scene, add_render_items_from_unique_parts, create_build_scene_tree,
+    create_scene_tree_items_by_instances, create_scene_tree_items_by_unique_parts,
+};
 use crate::egui_tools::EguiRenderer;
-use crate::object_tree::ObjectTree;
+use crate::part_list::PartList;
 use crate::save_3mf::save;
+use crate::toolsheets::Toolsheets;
+use crate::tree_item_viewer::TreeItemViewer;
+use crate::viewport::Viewport3D;
 use amrust_render::bounding_box::BoundingBox;
 // use amrust_lib::widgets::dropped_files::DroppedFilesWidget;
 use amrust_render::camera::{self, CameraData, OrthographicCameraData};
@@ -11,7 +17,8 @@ use amrust_render::material::Material;
 use amrust_render::normalized_box::{ORDERED_POSITIONS, ORDERED_POSITIONS_BOX_EDGE_INDICES};
 use amrust_render::renderer::RenderTextureData;
 use amrust_render::transformation::Transformation;
-use egui::{Frame, Id, Image, Margin, Vec2, epaint};
+use egui::{Frame, Id, Image, Layout, Margin, Vec2, epaint};
+use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 use egui_file_dialog::FileDialog;
 use egui_wgpu::wgpu::SurfaceError;
 use egui_wgpu::{ScreenDescriptor, wgpu};
@@ -26,7 +33,16 @@ use winit::window::{Window, WindowId};
 
 use amrust_render::{RenderObject, Renderable, renderer};
 
-pub struct AppState {
+/// This sets how the renderer and the part list behaves
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum AppMode {
+    /// Modeler mode represents the Objects as it is (Unique Parts only)
+    Modeler,
+
+    /// Build mode represent the Objects as they will be printed with printed positions
+    Build,
+}
+struct AppState {
     pub device: Arc<wgpu::Device>,
     pub queue: Arc<wgpu::Queue>,
     pub surface_config: wgpu::SurfaceConfiguration,
@@ -43,7 +59,12 @@ pub struct AppState {
     pub picked_file: Option<PathBuf>,
     pub scene_bbox: Option<BoundingBox>,
     pub db: Db,
-    pub object_tree: Option<ObjectTree>,
+    pub toolsheets: Option<Toolsheets>,
+    pub selected_items: Vec<usize>,
+    pub viewport_3d: Viewport3D,
+    pub current_app_mode: AppMode,
+    pub current_render_mode: AppMode,
+    pub need_viewport_update: bool,
 }
 
 impl AppState {
@@ -145,7 +166,12 @@ impl AppState {
             picked_file: None,
             scene_bbox: None,
             db: Db::new(),
-            object_tree: None,
+            toolsheets: None,
+            selected_items: vec![],
+            viewport_3d: Viewport3D {},
+            current_app_mode: AppMode::Build,
+            current_render_mode: AppMode::Build,
+            need_viewport_update: false,
         }
     }
 
@@ -179,22 +205,33 @@ pub struct App {
     instance: wgpu::Instance,
     state: Option<AppState>,
     window: Option<Arc<Window>>,
+    toolsheets_dock_tree: DockState<String>,
 }
 
 impl App {
     pub fn new() -> Self {
         let instance = egui_wgpu::wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+
+        let mut toolsheets_dock_tree = DockState::new(vec!["Part List".to_owned()]);
+
+        toolsheets_dock_tree.main_surface_mut().split_below(
+            NodeIndex::root(),
+            0.5,
+            vec!["Object Tree".to_owned()],
+        );
+
         Self {
             instance,
             state: None,
             window: None,
+            toolsheets_dock_tree,
         }
     }
 
     async fn set_window(&mut self, window: Window) {
         let window = Arc::new(window);
-        let initial_width = 1360;
-        let initial_height = 768;
+        let initial_width = 1920;
+        let initial_height = 1080;
 
         let _ = window.request_inner_size(PhysicalSize::new(initial_width, initial_height));
         let scale_factor = window.scale_factor();
@@ -293,10 +330,11 @@ impl App {
                             state.load_file_dlg.pick_file();
                         }
 
-                        // if ui.button("Add Test Mesh").clicked() {
-                        //     set_solid_mesh(&mut state.renderer_3d);
-                        //     state.egui_renderer.context().request_repaint();
-                        // }
+                        #[cfg(debug_assertions)]
+                        if ui.button("Add Test Mesh").clicked() {
+                            set_solid_mesh(&mut state.renderer_3d);
+                            state.egui_renderer.context().request_repaint();
+                        }
 
                         ui.add_enabled_ui(!state.db.is_scene_empty(), |ui| {
                             if ui.button("Unzoom Scene").clicked() {
@@ -307,75 +345,45 @@ impl App {
                             if ui.button("Clear All").clicked() {
                                 state.renderer_3d.clear_all();
                                 state.db.clear_all();
-                                state.object_tree = None;
+                                state.toolsheets = None;
                                 state.egui_renderer.context().request_repaint();
                             }
 
                             if ui.button("Save to 3mf").clicked() {
                                 state.save_file_dlg.save_file();
                             }
-                        })
+                        });
+
+                        ui.with_layout(Layout::right_to_left(egui::Align::RIGHT), |ui| {
+                            ui.radio_value(
+                                &mut state.current_app_mode,
+                                AppMode::Modeler,
+                                "Modeler Mode",
+                            );
+                            ui.radio_value(
+                                &mut state.current_app_mode,
+                                AppMode::Build,
+                                "Build Mode",
+                            );
+                        });
                     });
                 });
 
-            if let Some(tree) = &state.object_tree {
-                egui::SidePanel::left(Id::new("object list")).show(
-                    state.egui_renderer.context(),
-                    |ui| {
-                        tree.ui(ui);
-                    },
-                );
+            if let Some(tree) = &mut state.toolsheets {
+                egui::SidePanel::left(Id::new("object list"))
+                    .min_width(400.0)
+                    .show(state.egui_renderer.context(), |ui| {
+                        DockArea::new(&mut self.toolsheets_dock_tree)
+                            .show_leaf_close_all_buttons(false)
+                            .show_close_buttons(false)
+                            .show_inside(ui, tree);
+                    });
             }
 
             egui::CentralPanel::default().show(state.egui_renderer.context(), |ui| {
-                let dpi_factor = state.egui_renderer.context().pixels_per_point();
-                let image_texture = Image::new((
-                    state.texture_id,
-                    Vec2::new(
-                        (state.surface_config.width as f32 / dpi_factor) - 10.0,
-                        (state.surface_config.height as f32 / dpi_factor) - 10.0,
-                    ),
-                ));
-
-                let response = ui.interact(
-                    ui.max_rect(),
-                    ui.id().with("3d_viewport"),
-                    egui::Sense::drag(),
-                );
-
-                if response.dragged() {
-                    let delta = response.drag_delta();
-                    state
-                        .camera_data
-                        .transform(camera::CameraTransform::Rotate {
-                            pivot: bbox.center(),
-                            rotation_axis: glam::Vec3::Y,
-                            angle: delta.x * 0.01, // adjust sensitivity as needed
-                        });
-                    state
-                        .camera_data
-                        .transform(camera::CameraTransform::Rotate {
-                            pivot: bbox.center(),
-                            rotation_axis: glam::Vec3::X,
-                            angle: delta.y * 0.01,
-                        });
-                    state.egui_renderer.context().request_repaint();
-                }
-
-                // Track scroll for zoom
-                if ui.ctx().input(|i| i.raw_scroll_delta.y != 0.0) {
-                    let scroll = ui.ctx().input(|i| i.raw_scroll_delta.y);
-                    state
-                        .camera_data
-                        .transform(camera::CameraTransform::Zoom(scroll * 0.001));
-                    state.egui_renderer.context().request_repaint();
-                }
-
-                Frame::new()
-                    .inner_margin(Margin::symmetric(5, 5))
-                    .show(ui, |ui| {
-                        ui.image(image_texture.source(state.egui_renderer.context()));
-                    });
+                state
+                    .viewport_3d
+                    .ui(ui, state.texture_id, &mut state.camera_data, bbox);
             });
 
             // state
@@ -395,40 +403,10 @@ impl App {
                         Ok(db) => {
                             println!("Db contains: {:?}", db);
                             let appended = state.db.append(db);
-                            if let Some(tree) = ObjectTree::new(&state.db) {
-                                let _ = state.object_tree.insert(tree);
-                                state.egui_renderer.context().request_repaint();
-                            }
 
                             match appended {
                                 Ok(_) => {
-                                    state.renderer_3d.clear_all();
-                                    match add_render_items_from_db(
-                                        &mut state.renderer_3d,
-                                        &state.db,
-                                    ) {
-                                        Ok(new_bbox) => {
-                                            // println!("New Bounding Box is {:?}", new_bbox);
-                                            let bbox = match &mut state.scene_bbox {
-                                                Some(current_bbox) => {
-                                                    current_bbox.unite(&new_bbox);
-                                                    *current_bbox
-                                                }
-                                                None => {
-                                                    //ToDo:: Fix this properly for the clear mesh case
-                                                    let bbox =
-                                                        &mut state.scene_bbox.insert(new_bbox);
-                                                    **bbox
-                                                }
-                                            };
-
-                                            unzoom_bbox(&mut state.camera_data, &bbox);
-                                            state.egui_renderer.context().request_repaint();
-                                        }
-                                        Err(err) => {
-                                            println!("Error: {:?}", err);
-                                        }
-                                    }
+                                    state.need_viewport_update = true;
                                 }
                                 Err(err) => {
                                     println!("{err:?}")
@@ -454,6 +432,38 @@ impl App {
                     }
                     Err(err) => println!("{err:?}"),
                 }
+            }
+
+            if state.current_app_mode != state.current_render_mode || state.need_viewport_update {
+                state.renderer_3d.clear_all();
+                let bbox = match &state.current_app_mode {
+                    AppMode::Modeler => {
+                        add_render_items_from_unique_parts(&mut state.renderer_3d, &state.db)
+                    }
+                    AppMode::Build => {
+                        add_render_items_from_scene(&mut state.renderer_3d, &state.db)
+                    }
+                };
+
+                match bbox {
+                    Ok(bbox) => {
+                        unzoom_bbox(&mut state.camera_data, &bbox);
+                        let _ = state.scene_bbox.insert(bbox);
+
+                        // update toolsheets
+                        let tree_items = create_scene_tree_items_by_unique_parts(&state.db);
+                        if let Ok(items) = tree_items {
+                            let part_list = PartList::new(items);
+                            let _ = state.toolsheets.insert(Toolsheets { part_list });
+                            state.egui_renderer.context().request_repaint();
+                        }
+                    }
+                    Err(err) => println!("Something wrong with adding Render Items: {err:?}"),
+                }
+
+                state.need_viewport_update = false;
+                state.current_render_mode = state.current_app_mode;
+                state.egui_renderer.context().request_repaint();
             }
 
             state.egui_renderer.end_frame_and_draw(

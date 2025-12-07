@@ -2,8 +2,11 @@ mod amrust_db;
 mod app;
 mod egui_tools;
 mod load_3mf;
-mod object_tree;
+mod part_list;
 mod save_3mf;
+mod toolsheets;
+mod tree_item_viewer;
+mod viewport;
 
 use winit::event_loop::{ControlFlow, EventLoop};
 
