@@ -118,15 +118,3 @@ where
         self.selected_items = temp_selected_items;
     }
 }
-
-// impl egui_dock::TabViewer for ObjectTree {
-//     type Tab = String;
-
-//     fn title(&mut self, _tab: &mut Self::Tab) -> egui::WidgetText {
-//         egui::WidgetText::Text(self.name.clone())
-//     }
-
-//     fn ui(&mut self, ui: &mut egui::Ui, _tab: &mut Self::Tab) {
-//         self.core_ui(ui);
-//     }
-// }
