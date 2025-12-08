@@ -1,7 +1,10 @@
-use crate::tree_item_viewer::{TreeItem, TreeItemViewer};
+use crate::{
+    amrust_db::Identifiable,
+    tree_item_viewer::{TreeItem, TreeItemViewer},
+};
 
 pub struct PartList {
-    pub object_tree: TreeItemViewer,
+    pub object_tree: TreeItemViewer<Identifiable>,
 
     current_view_mode: ViewMode,
 }
@@ -13,7 +16,7 @@ enum ViewMode {
 }
 
 impl PartList {
-    pub fn new(tree_items: Vec<TreeItem>) -> Self {
+    pub fn new(tree_items: Vec<TreeItem<Identifiable>>) -> Self {
         Self {
             object_tree: TreeItemViewer {
                 name: "Part List".to_owned(),

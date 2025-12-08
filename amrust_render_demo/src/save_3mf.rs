@@ -11,14 +11,14 @@ use threemf2::io::ThreemfPackage;
 use crate::amrust_db;
 use crate::amrust_db::Db;
 use crate::amrust_db::DbError;
+use crate::amrust_db::PartId;
 use crate::amrust_db::PartInstance;
 use crate::amrust_db::PartRep;
-use crate::amrust_db::UniquePartId;
 
 #[derive(Debug, Error)]
 pub enum DbTo3mfError {
     #[error("Unique part not found: {0}")]
-    UniquePartNotFound(UniquePartId),
+    UniquePartNotFound(PartId),
 
     #[error("Error with database")]
     DbError(#[from] DbError),
@@ -55,12 +55,12 @@ fn create_3mf_package(db: &Db) -> Result<ThreemfPackage, DbTo3mfError> {
     }
 
     let mut model_builder = ModelBuilder::new(Unit::Millimeter, true);
-    let mut unique_part_to_object_map: HashMap<UniquePartId, ObjectId> = HashMap::new();
+    let mut unique_part_to_object_map: HashMap<PartId, ObjectId> = HashMap::new();
     let mut already_processed_composed_part = vec![];
 
     //try to process all unique parts.
-    for (part_id, part_rep) in db.get_unique_parts() {
-        match part_rep {
+    for (part_id, part) in db.get_parts() {
+        match part.get_rep() {
             PartRep::Mesh(mesh) => {
                 let object_id = process_and_insert_mesh_object(&mut model_builder, mesh)?;
                 unique_part_to_object_map.insert(part_id, object_id);
@@ -86,8 +86,8 @@ fn create_3mf_package(db: &Db) -> Result<ThreemfPackage, DbTo3mfError> {
 
     //process remaining composed parts
     let all_composed_parts = db
-        .get_unique_parts()
-        .filter(|(_, part_rep)| matches!(part_rep, PartRep::ComposedPart(_)))
+        .get_parts()
+        .filter(|(_, part)| matches!(part.get_rep(), PartRep::ComposedPart(_)))
         .collect::<Vec<_>>();
 
     loop {
@@ -95,13 +95,13 @@ fn create_3mf_package(db: &Db) -> Result<ThreemfPackage, DbTo3mfError> {
             break;
         }
 
-        for (part_id, composed_rep) in &all_composed_parts {
+        for (part_id, part) in &all_composed_parts {
             if already_processed_composed_part.contains(part_id) {
                 continue;
             }
 
             //only cares about the processed entity
-            if let PartRep::ComposedPart(instances) = composed_rep {
+            if let PartRep::ComposedPart(instances) = part.get_rep() {
                 let mut instances_data = vec![];
                 for i in instances {
                     let instance_data = db.get_part_instance_data(i)?;
@@ -143,7 +143,7 @@ fn create_3mf_package(db: &Db) -> Result<ThreemfPackage, DbTo3mfError> {
 fn process_composed_part_and_insert_component_object(
     model_builder: &mut ModelBuilder,
     instances: &[&PartInstance],
-    unique_part_to_object_map: &HashMap<UniquePartId, ObjectId>,
+    unique_part_to_object_map: &HashMap<PartId, ObjectId>,
 ) -> Result<ObjectId, DbTo3mfError> {
     let can_process = instances
         .iter()

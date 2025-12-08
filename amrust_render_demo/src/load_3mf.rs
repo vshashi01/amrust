@@ -7,7 +7,7 @@ use threemf2::core::mesh::{Triangle, Vertex};
 use threemf2::core::transform::Transform;
 use threemf2::io::ThreemfPackage;
 
-use crate::amrust_db::{Db, DbError, Mesh, PartRep, Scene, UniquePartId};
+use crate::amrust_db::{Db, DbError, Mesh, PartId, PartRep, Scene};
 
 use core::f32;
 use std::collections::HashMap;
@@ -38,7 +38,7 @@ struct PartRepIdentity {
 
 fn get_db_from_3mf(package: &ThreemfPackage) -> Result<Db, DbFrom3mfError> {
     let mut db = Db::new();
-    let mut part_rep_map = HashMap::<PartRepIdentity, UniquePartId>::new();
+    let mut part_rep_map = HashMap::<PartRepIdentity, PartId>::new();
 
     let mesh_objects = query::get_mesh_objects(package).collect::<Vec<_>>();
     process_mesh_objects(&mut db, &mut part_rep_map, mesh_objects)?;
@@ -56,7 +56,7 @@ fn get_db_from_3mf(package: &ThreemfPackage) -> Result<Db, DbFrom3mfError> {
         }) {
             let transform = get_transformation(&item.transform);
             let instance_id =
-                db.get_new_part_instance_from_part_id(unique_part_id, Some(transform))?;
+                db.make_new_part_instance_from_part(unique_part_id, Some(transform))?;
             parts_in_scene.push(instance_id);
         }
     }
@@ -70,7 +70,7 @@ fn get_db_from_3mf(package: &ThreemfPackage) -> Result<Db, DbFrom3mfError> {
 
 fn process_composed_parts(
     db: &mut Db,
-    part_rep_map: &mut HashMap<PartRepIdentity, UniquePartId>,
+    part_rep_map: &mut HashMap<PartRepIdentity, PartId>,
     composed_parts: Vec<query::ComponentsObjectRef<'_>>,
 ) -> Result<(), DbFrom3mfError> {
     let mut unprocessed_composed_parts_id = composed_parts.iter().map(|o| o.id).collect::<Vec<_>>();
@@ -105,7 +105,7 @@ fn process_composed_parts(
                         path: comp.path_to_look_for.clone(),
                     }) {
                         let transformation = get_transformation(&comp.transform);
-                        let instance_id = db.get_new_part_instance_from_part_id(
+                        let instance_id = db.make_new_part_instance_from_part(
                             unique_part_id,
                             Some(transformation),
                         )?;
@@ -117,8 +117,7 @@ fn process_composed_parts(
 
                 if instances.len() == num_of_comps
                     && !instances.is_empty()
-                    && let Ok((_, unique_part_id)) =
-                        db.add_part_rep(PartRep::ComposedPart(instances))
+                    && let Ok(unique_part_id) = db.add_part_rep(PartRep::ComposedPart(instances))
                 {
                     let path = o
                         .origin_model_path
@@ -141,13 +140,13 @@ fn process_composed_parts(
 
 fn process_mesh_objects(
     db: &mut Db,
-    part_rep_map: &mut HashMap<PartRepIdentity, UniquePartId>,
+    part_rep_map: &mut HashMap<PartRepIdentity, PartId>,
     mesh_objects: Vec<query::MeshObjectRef<'_>>,
 ) -> Result<(), DbFrom3mfError> {
     let _: () = for obj in mesh_objects {
         let mesh = get_amrust_mesh(obj.mesh())?;
 
-        let (_, unique_part_id) = db.add_part_rep(PartRep::Mesh(Box::new(mesh)))?;
+        let unique_part_id = db.add_part_rep(PartRep::Mesh(Box::new(mesh)))?;
         let obj_path = obj.origin_model_path.map(|path| path.to_owned());
         part_rep_map.insert(
             PartRepIdentity {

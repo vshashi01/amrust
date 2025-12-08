@@ -1,25 +1,28 @@
 #[derive(Debug, Clone)]
-pub enum TreeItem {
+pub enum TreeItem<T: std::cmp::PartialEq + Copy> {
     Leaf {
-        id: usize,
+        id: T,
         name: String,
         selectable: bool,
     },
     Node {
-        id: usize,
+        id: T,
         name: String,
-        childs: Vec<TreeItem>,
+        childs: Vec<TreeItem<T>>,
         selectable: bool,
     },
     InertNode {
-        id: usize,
+        id: T,
         name: String,
-        childs: Vec<TreeItem>,
+        childs: Vec<TreeItem<T>>,
     },
 }
 
-impl TreeItem {
-    pub fn id(&self) -> usize {
+impl<T> TreeItem<T>
+where
+    T: std::cmp::PartialEq + Copy,
+{
+    pub fn id(&self) -> T {
         match self {
             TreeItem::Leaf { id, .. } => *id,
             TreeItem::Node { id, .. } => *id,
@@ -27,7 +30,7 @@ impl TreeItem {
         }
     }
 
-    fn draw_ui(&self, ui: &mut egui::Ui, selected_items: &mut Vec<usize>, skip_inert_node: bool) {
+    fn draw_ui(&self, ui: &mut egui::Ui, selected_items: &mut Vec<T>, skip_inert_node: bool) {
         match self {
             TreeItem::Leaf {
                 id,
@@ -84,15 +87,18 @@ impl TreeItem {
     }
 }
 
-pub struct TreeItemViewer {
+pub struct TreeItemViewer<T: PartialEq + Copy> {
     pub name: String,
-    pub childs: Vec<TreeItem>,
+    pub childs: Vec<TreeItem<T>>,
 
-    pub selected_items: Vec<usize>,
+    pub selected_items: Vec<T>,
     pub skip_inert_node: bool,
 }
 
-impl TreeItemViewer {
+impl<T> TreeItemViewer<T>
+where
+    T: PartialEq + Copy,
+{
     pub fn core_ui(&mut self, ui: &mut egui::Ui) {
         ui.vertical(|ui| {
             egui::ScrollArea::both()
