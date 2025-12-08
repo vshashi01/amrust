@@ -484,15 +484,16 @@ pub fn create_build_scene_tree(db: &Db) -> Result<Vec<TreeItem>, DbError> {
     let mut tree_items = vec![];
     for i in &scene.instances {
         let rep = db.get_part_rep_from_part_instance(i)?;
+        let instance_data = db.get_part_instance_data(i)?;
         let item = match rep {
             PartRep::Mesh(_) => TreeItem::Leaf {
                 id: i.clone().into(),
-                name: format!("Mesh: {:?}", i),
+                name: format!("Mesh: {:?}", instance_data.part_id),
                 selectable: true,
             },
             PartRep::ComposedPart(_) => TreeItem::Leaf {
                 id: i.clone().into(),
-                name: format!("Composed Part: {:?}", i),
+                name: format!("Composed Part: {:?}", instance_data.part_id),
                 selectable: true,
             },
         };
@@ -501,62 +502,6 @@ pub fn create_build_scene_tree(db: &Db) -> Result<Vec<TreeItem>, DbError> {
     }
 
     Ok(tree_items)
-}
-
-pub fn create_scene_tree_items_by_instances(db: &Db) -> Result<Vec<TreeItem>, DbError> {
-    let scene = db.get_scene()?;
-    let mut items: Vec<TreeItem> = vec![];
-
-    let mut instance_id_to_tree_item_map: HashMap<PartInstanceId, TreeItem> = HashMap::new();
-
-    let mut unprocessed_instances = vec![];
-
-    // process all the items one round first
-    for (id, _, rep) in db.get_part_instances() {
-        match rep {
-            PartRep::Mesh(_) => {
-                instance_id_to_tree_item_map.insert(
-                    id.clone(),
-                    TreeItem::Leaf {
-                        id: id.clone().into(),
-                        name: format!("Mesh: {:?}", id),
-                        selectable: true,
-                    },
-                );
-            }
-            PartRep::ComposedPart(part_instance_ids) => {
-                let mut tree_items = vec![];
-                for id in part_instance_ids {
-                    if let Some(item) = instance_id_to_tree_item_map.get(id) {
-                        tree_items.push(item.clone());
-                    }
-                }
-
-                if tree_items.len() != part_instance_ids.len() {
-                    unprocessed_instances.push(id);
-                    continue;
-                } else {
-                    let node = TreeItem::Node {
-                        id: id.clone().into(),
-                        name: format!("Composed Part: {:?}", id),
-                        childs: tree_items,
-                        selectable: true,
-                    };
-                    instance_id_to_tree_item_map.insert(id, node);
-                }
-            }
-        }
-    }
-
-    //ToDo: Process unprocessed items
-
-    for i in &scene.instances {
-        if let Some(item) = instance_id_to_tree_item_map.get(i) {
-            items.push(item.clone());
-        }
-    }
-
-    Ok(items)
 }
 
 pub fn create_scene_tree_items_by_unique_parts(db: &Db) -> Result<Vec<TreeItem>, DbError> {

@@ -1,5 +1,6 @@
 mod amrust_db;
 mod app;
+mod app_mode;
 mod egui_tools;
 mod load_3mf;
 mod part_list;

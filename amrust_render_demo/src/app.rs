@@ -1,12 +1,12 @@
 use crate::amrust_db::{
     Db, add_render_items_from_scene, add_render_items_from_unique_parts, create_build_scene_tree,
-    create_scene_tree_items_by_instances, create_scene_tree_items_by_unique_parts,
+    create_scene_tree_items_by_unique_parts,
 };
+use crate::app_mode::AppMode;
 use crate::egui_tools::EguiRenderer;
-use crate::part_list::PartList;
+use crate::part_list::{self, PartList};
 use crate::save_3mf::save;
 use crate::toolsheets::Toolsheets;
-use crate::tree_item_viewer::TreeItemViewer;
 use crate::viewport::Viewport3D;
 use amrust_render::bounding_box::BoundingBox;
 // use amrust_lib::widgets::dropped_files::DroppedFilesWidget;
@@ -33,15 +33,6 @@ use winit::window::{Window, WindowId};
 
 use amrust_render::{RenderObject, Renderable, renderer};
 
-/// This sets how the renderer and the part list behaves
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum AppMode {
-    /// Modeler mode represents the Objects as it is (Unique Parts only)
-    Modeler,
-
-    /// Build mode represent the Objects as they will be printed with printed positions
-    Build,
-}
 struct AppState {
     pub device: Arc<wgpu::Device>,
     pub queue: Arc<wgpu::Queue>,
@@ -355,10 +346,11 @@ impl App {
                         });
 
                         ui.with_layout(Layout::right_to_left(egui::Align::RIGHT), |ui| {
+                            // ToDo: Add a tooltip here to explain the difference in modes
                             ui.radio_value(
                                 &mut state.current_app_mode,
-                                AppMode::Modeler,
-                                "Modeler Mode",
+                                AppMode::Objects,
+                                "Objects Mode",
                             );
                             ui.radio_value(
                                 &mut state.current_app_mode,
@@ -435,35 +427,43 @@ impl App {
             }
 
             if state.current_app_mode != state.current_render_mode || state.need_viewport_update {
+                // ToDo: Figure out a better way to do clear
                 state.renderer_3d.clear_all();
-                let bbox = match &state.current_app_mode {
-                    AppMode::Modeler => {
-                        add_render_items_from_unique_parts(&mut state.renderer_3d, &state.db)
+
+                let (bbox, part_list) = match &state.current_app_mode {
+                    AppMode::Objects => {
+                        let bbox =
+                            add_render_items_from_unique_parts(&mut state.renderer_3d, &state.db);
+                        let part_list = create_scene_tree_items_by_unique_parts(&state.db);
+                        (bbox, part_list)
                     }
                     AppMode::Build => {
-                        add_render_items_from_scene(&mut state.renderer_3d, &state.db)
+                        let bbox = add_render_items_from_scene(&mut state.renderer_3d, &state.db);
+                        let part_list = create_build_scene_tree(&state.db);
+                        (bbox, part_list)
                     }
                 };
 
-                match bbox {
-                    Ok(bbox) => {
-                        unzoom_bbox(&mut state.camera_data, &bbox);
-                        let _ = state.scene_bbox.insert(bbox);
-
-                        // update toolsheets
-                        let tree_items = create_scene_tree_items_by_unique_parts(&state.db);
-                        if let Ok(items) = tree_items {
+                match part_list {
+                    Ok(items) => match bbox {
+                        Ok(bbox) => {
                             let part_list = PartList::new(items);
-                            let _ = state.toolsheets.insert(Toolsheets { part_list });
+                            let _ = state.toolsheets.insert(Toolsheets {
+                                app_mode: state.current_app_mode,
+                                part_list,
+                            });
+
+                            unzoom_bbox(&mut state.camera_data, &bbox);
+                            let _ = state.scene_bbox.insert(bbox);
+
                             state.egui_renderer.context().request_repaint();
                         }
-                    }
-                    Err(err) => println!("Something wrong with adding Render Items: {err:?}"),
+                        Err(err) => println!("{err:?}"),
+                    },
+                    Err(err) => println!("{err:?}"),
                 }
-
                 state.need_viewport_update = false;
                 state.current_render_mode = state.current_app_mode;
-                state.egui_renderer.context().request_repaint();
             }
 
             state.egui_renderer.end_frame_and_draw(

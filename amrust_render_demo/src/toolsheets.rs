@@ -1,6 +1,7 @@
-use crate::part_list::PartList;
+use crate::{app_mode::AppMode, part_list::PartList};
 
 pub struct Toolsheets {
+    pub app_mode: AppMode,
     pub part_list: PartList,
 }
 
