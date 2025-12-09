@@ -439,22 +439,46 @@ impl Db {
     }
 }
 
-pub fn create_build_scene_tree(db: &Db) -> Result<Vec<TreeItem<Identifiable>>, DbError> {
+pub fn create_build_items_list(db: &Db) -> Result<Vec<TreeItem<Identifiable>>, DbError> {
     let scene = db.get_scene()?;
 
     let mut tree_items = vec![];
     for i in &scene.instances {
         let part = db.get_part_data_from_part_instance(i)?;
         let instance_data = db.get_part_instance_data(i)?;
-        let item = match &part.rep {
+        let name = match &part.rep {
+            PartRep::Mesh(_) => format!("Instance: {:?} - Mesh: {:?}", i, instance_data.part_id),
+            PartRep::ComposedPart(_) => format!(
+                "Instance: {:?} - Composed Part: {:?}",
+                i, instance_data.part_id
+            ),
+        };
+
+        let item = TreeItem::Leaf {
+            id: Identifiable::PartInstance(*i),
+            name,
+            selectable: true,
+        };
+
+        tree_items.push(item);
+    }
+
+    Ok(tree_items)
+}
+
+pub fn create_objects_list(db: &Db) -> Result<Vec<TreeItem<Identifiable>>, DbError> {
+    let mut tree_items = vec![];
+
+    for (id, part) in db.get_parts() {
+        let item = match part.get_rep() {
             PartRep::Mesh(_) => TreeItem::Leaf {
-                id: Identifiable::PartInstance(*i),
-                name: format!("Mesh: {:?}", instance_data.part_id),
+                id: Identifiable::Part(id),
+                name: format!("Mesh Object: {id:?}"),
                 selectable: true,
             },
             PartRep::ComposedPart(_) => TreeItem::Leaf {
-                id: Identifiable::PartInstance(*i),
-                name: format!("Composed Part: {:?}", instance_data.part_id),
+                id: Identifiable::Part(id),
+                name: format!("Components Object: {id:?}"),
                 selectable: true,
             },
         };
@@ -463,6 +487,86 @@ pub fn create_build_scene_tree(db: &Db) -> Result<Vec<TreeItem<Identifiable>>, D
     }
 
     Ok(tree_items)
+}
+
+pub fn create_object_tree_from_identifiable(
+    db: &Db,
+    identifiable: Identifiable,
+) -> Result<TreeItem<usize>, DbError> {
+    match identifiable {
+        Identifiable::Part(part_id) => create_object_tree_from_part(db, &part_id),
+        Identifiable::PartInstance(part_instance_id) => {
+            create_object_tree_from_instance(db, &part_instance_id)
+        }
+    }
+}
+
+pub fn create_object_tree_from_part(db: &Db, id: &PartId) -> Result<TreeItem<usize>, DbError> {
+    let part = db.get_part_data(&id)?;
+
+    let item = match &part.rep {
+        PartRep::Mesh(mesh) => {
+            let vertices_item = TreeItem::Leaf {
+                id: 0_usize,
+                name: format!("Vertices Count: {:?}", mesh.vertices.len()),
+                selectable: false,
+            };
+            let triangles_item = TreeItem::Leaf {
+                id: 1_usize,
+                name: format!("Triangles Count: {:?}", mesh.triangles.len()),
+                selectable: false,
+            };
+
+            TreeItem::InertNode {
+                id: 2_usize,
+                name: "Mesh".to_owned(),
+                childs: vec![vertices_item, triangles_item],
+            }
+        }
+        PartRep::ComposedPart(part_instance_ids) => {
+            let mut map: HashMap<&PartInstanceId, TreeItem<usize>> = HashMap::new();
+            let mut childs = vec![];
+            for id in part_instance_ids {
+                if let Some(item) = map.get(id) {
+                    childs.push(item.clone());
+                } else {
+                    let item = create_object_tree_from_instance(db, id)?;
+                    map.insert(id, item.clone());
+                    childs.push(item);
+                }
+            }
+
+            TreeItem::Node {
+                id: 4_usize,
+                name: format!("Composed Part - {:?}", id),
+                childs,
+                selectable: false,
+            }
+        }
+    };
+
+    Ok(item)
+}
+
+pub fn create_object_tree_from_instance(
+    db: &Db,
+    instance_id: &PartInstanceId,
+) -> Result<TreeItem<usize>, DbError> {
+    let instance_data = db.get_part_instance_data(instance_id)?;
+    let object_tree = create_object_tree_from_part(db, &instance_data.part_id)?;
+
+    let transform_item = TreeItem::Leaf {
+        id: 105_usize,
+        name: format!("Transform - {:?}", instance_data.transform),
+        selectable: false,
+    };
+
+    Ok(TreeItem::Node {
+        id: 5_usize,
+        name: format!("Instance - {:?}", instance_id),
+        childs: vec![object_tree, transform_item],
+        selectable: false,
+    })
 }
 
 pub fn create_scene_tree_items_by_unique_parts(

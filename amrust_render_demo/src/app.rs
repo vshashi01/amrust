@@ -1,12 +1,14 @@
 use crate::amrust_db::{
-    Db, add_render_items_from_scene, add_render_items_from_unique_parts, create_build_scene_tree,
+    Db, add_render_items_from_scene, add_render_items_from_unique_parts, create_build_items_list,
+    create_object_tree_from_identifiable, create_objects_list,
     create_scene_tree_items_by_unique_parts,
 };
 use crate::app_mode::AppMode;
 use crate::egui_tools::EguiRenderer;
-use crate::part_list::{self, PartList};
+use crate::part_list::PartList;
 use crate::save_3mf::save;
-use crate::toolsheets::Toolsheets;
+use crate::toolsheets::{self, Toolsheets};
+use crate::tree_item_viewer::TreeItemViewer;
 use crate::viewport::Viewport3D;
 use amrust_render::bounding_box::BoundingBox;
 // use amrust_lib::widgets::dropped_files::DroppedFilesWidget;
@@ -17,8 +19,8 @@ use amrust_render::material::Material;
 use amrust_render::normalized_box::{ORDERED_POSITIONS, ORDERED_POSITIONS_BOX_EDGE_INDICES};
 use amrust_render::renderer::RenderTextureData;
 use amrust_render::transformation::Transformation;
-use egui::{Frame, Id, Image, Layout, Margin, Vec2, epaint};
-use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
+use egui::{Id, Layout, epaint};
+use egui_dock::{DockArea, DockState, NodeIndex};
 use egui_file_dialog::FileDialog;
 use egui_wgpu::wgpu::SurfaceError;
 use egui_wgpu::{ScreenDescriptor, wgpu};
@@ -203,7 +205,10 @@ impl App {
     pub fn new() -> Self {
         let instance = egui_wgpu::wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
 
-        let mut toolsheets_dock_tree = DockState::new(vec!["Part List".to_owned()]);
+        let mut toolsheets_dock_tree = DockState::new(vec![
+            "Objects List".to_owned(),
+            "Build Items List".to_owned(),
+        ]);
 
         toolsheets_dock_tree.main_surface_mut().split_below(
             NodeIndex::root(),
@@ -311,6 +316,8 @@ impl App {
         {
             state.egui_renderer.begin_frame(window);
 
+            let prev_app_mode = state.current_app_mode;
+
             let default_bbox = BoundingBox::default();
             let bbox = state.scene_bbox.as_ref().unwrap_or(&default_bbox);
             egui::TopBottomPanel::top("top panel")
@@ -352,6 +359,7 @@ impl App {
                                 AppMode::Objects,
                                 "Objects Mode",
                             );
+
                             ui.radio_value(
                                 &mut state.current_app_mode,
                                 AppMode::Build,
@@ -360,6 +368,20 @@ impl App {
                         });
                     });
                 });
+
+            if prev_app_mode != state.current_app_mode {
+                let tab_name = match state.current_app_mode {
+                    AppMode::Objects => "Objects List",
+                    AppMode::Build => "Build Items List",
+                };
+
+                if let Some((surface, node, _)) =
+                    self.toolsheets_dock_tree.find_tab(&tab_name.to_owned())
+                {
+                    self.toolsheets_dock_tree
+                        .set_focused_node_and_surface((surface, node))
+                };
+            }
 
             if let Some(tree) = &mut state.toolsheets {
                 egui::SidePanel::left(Id::new("object list"))
@@ -430,28 +452,34 @@ impl App {
                 // ToDo: Figure out a better way to do clear
                 state.renderer_3d.clear_all();
 
-                let (bbox, part_list) = match &state.current_app_mode {
+                let (bbox, part_list, object_list, build_list) = match &state.current_app_mode {
                     AppMode::Objects => {
                         let bbox =
                             add_render_items_from_unique_parts(&mut state.renderer_3d, &state.db);
                         let part_list = create_scene_tree_items_by_unique_parts(&state.db);
-                        (bbox, part_list)
+                        let object_list = create_objects_list(&state.db);
+                        let build_list = create_build_items_list(&state.db);
+                        (bbox, part_list, object_list, build_list)
                     }
                     AppMode::Build => {
                         let bbox = add_render_items_from_scene(&mut state.renderer_3d, &state.db);
-                        let part_list = create_build_scene_tree(&state.db);
-                        (bbox, part_list)
+                        let part_list = create_build_items_list(&state.db);
+                        let object_list = create_objects_list(&state.db);
+                        let build_list = create_build_items_list(&state.db);
+                        (bbox, part_list, object_list, build_list)
                     }
                 };
 
-                match part_list {
-                    Ok(items) => match bbox {
+                match (part_list, object_list, build_list) {
+                    (Ok(part_list_items), Ok(object_items), Ok(build_items)) => match bbox {
                         Ok(bbox) => {
-                            let part_list = PartList::new(items);
-                            let _ = state.toolsheets.insert(Toolsheets {
-                                app_mode: state.current_app_mode,
+                            let part_list = PartList::new(part_list_items);
+                            let _ = state.toolsheets.insert(Toolsheets::new(
+                                state.current_app_mode,
                                 part_list,
-                            });
+                                TreeItemViewer::new(object_items, false),
+                                TreeItemViewer::new(build_items, false),
+                            ));
 
                             unzoom_bbox(&mut state.camera_data, &bbox);
                             let _ = state.scene_bbox.insert(bbox);
@@ -460,10 +488,34 @@ impl App {
                         }
                         Err(err) => println!("{err:?}"),
                     },
-                    Err(err) => println!("{err:?}"),
+                    _ => panic!("Something wrong here!!"),
                 }
+
                 state.need_viewport_update = false;
                 state.current_render_mode = state.current_app_mode;
+            }
+
+            // updates from toolsheets
+            if let Some(ref mut toolsheets) = state.toolsheets
+                && toolsheets.has_selection_changed()
+            {
+                let selected_identifiables: Vec<_> = match state.current_app_mode {
+                    AppMode::Objects => toolsheets.selected_objects().copied().collect(),
+                    AppMode::Build => toolsheets.selected_build_items().copied().collect(),
+                };
+
+                let mut tree_items = vec![];
+                for id in selected_identifiables {
+                    let item = create_object_tree_from_identifiable(&state.db, id).unwrap();
+                    tree_items.push(item);
+                }
+
+                toolsheets.set_selected_identifiable_properties(TreeItemViewer {
+                    childs: tree_items,
+                    skip_inert_node: false,
+                });
+
+                toolsheets.clear_selection_changed();
             }
 
             state.egui_renderer.end_frame_and_draw(

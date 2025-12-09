@@ -19,16 +19,14 @@ impl PartList {
     pub fn new(tree_items: Vec<TreeItem<Identifiable>>) -> Self {
         Self {
             object_tree: TreeItemViewer {
-                name: "Part List".to_owned(),
                 childs: tree_items,
-                selected_items: vec![],
                 skip_inert_node: false,
             },
             current_view_mode: ViewMode::ByUniqueParts,
         }
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui) {
+    pub fn ui(&mut self, ui: &mut egui::Ui, selected_items: &mut Vec<Identifiable>) {
         ui.vertical(|ui| {
             ui.horizontal_top(|ui| {
                 ui.radio_value(
@@ -50,7 +48,7 @@ impl PartList {
                 ViewMode::ByUniqueParts => self.object_tree.skip_inert_node = false,
             };
 
-            self.object_tree.core_ui(ui);
+            self.object_tree.core_ui(ui, selected_items);
         });
     }
 }
