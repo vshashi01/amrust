@@ -4,6 +4,7 @@ mod app_mode;
 mod egui_tools;
 mod load_3mf;
 mod part_list;
+mod render_worker;
 mod save_3mf;
 mod toolsheets;
 mod tree_item_viewer;

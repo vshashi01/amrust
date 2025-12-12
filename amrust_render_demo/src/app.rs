@@ -6,6 +6,7 @@ use crate::amrust_db::{
 use crate::app_mode::AppMode;
 use crate::egui_tools::EguiRenderer;
 use crate::part_list::PartList;
+use crate::render_worker::{RenderMessage, RenderResponse, RenderWorker, RendererSettings};
 use crate::save_3mf::save;
 use crate::toolsheets::{self, Toolsheets};
 use crate::tree_item_viewer::TreeItemViewer;
@@ -25,8 +26,11 @@ use egui_file_dialog::FileDialog;
 use egui_wgpu::wgpu::SurfaceError;
 use egui_wgpu::{ScreenDescriptor, wgpu};
 use glam::{Mat4, Vec3};
+use smol::Executor;
+use smol::lock::futures;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender, channel};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
@@ -45,7 +49,7 @@ struct AppState {
     pub renderer_3d: renderer::Renderer,
     pub camera_data: OrthographicCameraData,
     pub render_texture_data: renderer::RenderTextureData,
-    pub texture_id: epaint::TextureId,
+    pub texture_id: Option<epaint::TextureId>,
     // pub dropped_files: DroppedFilesWidget,
     pub load_file_dlg: FileDialog,
     pub save_file_dlg: FileDialog,
@@ -58,6 +62,10 @@ struct AppState {
     pub current_app_mode: AppMode,
     pub current_render_mode: AppMode,
     pub need_viewport_update: bool,
+
+    pub executor: Arc<Executor<'static>>,
+    pub render_message_tx: Sender<RenderMessage>,
+    pub render_response_rx: Receiver<RenderResponse>,
 }
 
 impl AppState {
@@ -128,11 +136,53 @@ impl AppState {
 
         //when the size change we need to create a new render texture data and register a new egui texture.
         let render_texture_data = renderer_3d.create_render_texture_data();
-        let texture_id = egui_renderer.register_texture(&device, &render_texture_data.texture_view);
+        // let texture_id = egui_renderer.register_texture(&device, &render_texture_data.texture_view);
         let camera_data = get_camera_data();
-        render_frame(&mut renderer_3d, &camera_data, &render_texture_data).await;
+        // render_frame(&mut renderer_3d, &camera_data, &render_texture_data).await;
 
         // let dropped_files_widget = DroppedFilesWidget::new();
+        //
+
+        //create async executor and run it
+        let executor = Arc::new(Executor::new());
+        {
+            let exec = executor.clone();
+            std::thread::Builder::new()
+                .name("smol-executor".to_owned())
+                .spawn(async move || {
+                    exec.run(async move {
+                        loop {
+                            smol::future::yield_now().await;
+                        }
+                    })
+                    .await;
+                })
+                .expect("failed to spawn executor thread");
+        }
+
+        //create new render worker
+        let (render_message_tx, render_message_rx) = channel();
+        let (render_response_tx, render_response_rx) = channel();
+
+        let renderer_settings = RendererSettings {
+            device: device.clone(),
+            queue: queue.clone(),
+            format: surface_config.format,
+            width,
+            height,
+            initial_camera_data: camera_data.clone(),
+        };
+
+        executor
+            .spawn(async {
+                println!("Attempted to println in separate thread");
+                let mut render_worker =
+                    RenderWorker::new(renderer_settings, render_message_rx, render_response_tx)
+                        .await;
+
+                render_worker.run().await;
+            })
+            .detach();
 
         let load_file_dlg = FileDialog::new()
             .add_file_filter_extensions("3MF", vec!["3mf"])
@@ -152,7 +202,7 @@ impl AppState {
             renderer_3d,
             camera_data,
             render_texture_data,
-            texture_id,
+            texture_id: None,
             // dropped_files: dropped_files_widget,
             load_file_dlg,
             save_file_dlg,
@@ -165,6 +215,9 @@ impl AppState {
             current_app_mode: AppMode::Build,
             current_render_mode: AppMode::Build,
             need_viewport_update: false,
+            executor,
+            render_message_tx,
+            render_response_rx,
         }
     }
 
@@ -173,24 +226,52 @@ impl AppState {
         self.surface_config.height = height;
         self.surface.configure(&self.device, &self.surface_config);
 
-        self.renderer_3d.set_size(width, height);
-        let render_texture_data = self.renderer_3d.create_render_texture_data();
-        let texture_id = self
-            .egui_renderer
-            .register_texture(&self.device, &render_texture_data.texture_view);
-        self.render_texture_data = render_texture_data;
-        self.texture_id = texture_id;
+        // self.renderer_3d.set_size(width, height);
+        // let render_texture_data = self.renderer_3d.create_render_texture_data();
+        // let texture_id = self
+        //     .egui_renderer
+        //     .register_texture(&self.device, &render_texture_data.texture_view);
+        // self.render_texture_data = render_texture_data;
+        // self.texture_id = texture_id;
+
+        // resize the viewport.
+        self.render_message_tx
+            .send(RenderMessage::ResizeViewport(width, height))
+            .unwrap();
     }
 
     fn handle_redraw(&mut self) {
-        pollster::block_on(async {
-            render_frame(
-                &mut self.renderer_3d,
-                &self.camera_data,
-                &self.render_texture_data,
-            )
-            .await
-        });
+        // pollster::block_on(async {
+        //     render_frame(
+        //         &mut self.renderer_3d,
+        //         &self.camera_data,
+        //         &self.render_texture_data,
+        //     )
+        //     .await
+        // });
+
+        self.render_message_tx
+            .send(RenderMessage::Render(self.egui_renderer.context().clone()))
+            .unwrap();
+
+        match self.render_response_rx.try_recv() {
+            Ok(response) => match response {
+                RenderResponse::NewTextureView(texture_view) => {
+                    // let id = self
+                    //     .egui_renderer
+                    //     .register_texture(&self.device, &texture_view);
+                    // let _ = self.texture_id.insert(id);
+                    println!("New texture view is attempted!")
+                }
+                RenderResponse::RenderComplete => {
+                    println!("Rendered");
+                }
+            },
+            Err(err) => match err {
+                std::sync::mpsc::TryRecvError::Empty => {}
+                std::sync::mpsc::TryRecvError::Disconnected => panic!("Disconnected"),
+            },
+        }
     }
 }
 
@@ -352,20 +433,23 @@ impl App {
                             }
                         });
 
-                        ui.with_layout(Layout::right_to_left(egui::Align::RIGHT), |ui| {
-                            // ToDo: Add a tooltip here to explain the difference in modes
-                            ui.radio_value(
-                                &mut state.current_app_mode,
-                                AppMode::Objects,
-                                "Objects Mode",
-                            );
+                        //onyl show modes if there is a scene
+                        if state.db.get_scene().is_ok() {
+                            ui.with_layout(Layout::right_to_left(egui::Align::RIGHT), |ui| {
+                                // ToDo: Add a tooltip here to explain the difference in modes
+                                ui.radio_value(
+                                    &mut state.current_app_mode,
+                                    AppMode::Objects,
+                                    "Objects Mode",
+                                );
 
-                            ui.radio_value(
-                                &mut state.current_app_mode,
-                                AppMode::Build,
-                                "Build Mode",
-                            );
-                        });
+                                ui.radio_value(
+                                    &mut state.current_app_mode,
+                                    AppMode::Build,
+                                    "Build Mode",
+                                );
+                            });
+                        }
                     });
                 });
 
@@ -395,9 +479,15 @@ impl App {
             }
 
             egui::CentralPanel::default().show(state.egui_renderer.context(), |ui| {
-                state
-                    .viewport_3d
-                    .ui(ui, state.texture_id, &mut state.camera_data, bbox);
+                match state.texture_id {
+                    Some(id) => state.viewport_3d.ui(ui, id, &mut state.camera_data, bbox),
+                    None => {
+                        ui.label("Rendering Texture ID is missing!!");
+                    }
+                }
+                // state
+                //     .viewport_3d
+                //     .ui(ui, state.texture_id, &mut state.camera_data, bbox);
             });
 
             // state
