@@ -1,14 +1,14 @@
-use std::sync::{
-    Arc,
-    mpsc::{Receiver, Sender},
-};
+use std::sync::Arc;
 
 use amrust_render::{
     RenderDatabase,
     camera::OrthographicCameraData,
     renderer::{RenderTextureData, Renderer},
 };
-use smol::lock::RwLock;
+use smol::{
+    channel::{Receiver, Sender, TryRecvError},
+    lock::RwLock,
+};
 
 use crate::render_db::RenderDb;
 
@@ -80,9 +80,13 @@ impl RenderWorker {
 
     pub async fn run(&mut self) {
         //send this message at least once.
-        if let Err(err) = self.sender.send(RenderResponse::NewTextureView(
-            self.render_texture_data.texture_view.clone(),
-        )) {
+        if let Err(err) = self
+            .sender
+            .send(RenderResponse::NewTextureView(
+                self.render_texture_data.texture_view.clone(),
+            ))
+            .await
+        {
             println!("{err:?}");
         }
 
@@ -96,9 +100,13 @@ impl RenderWorker {
                         self.renderer.set_size(width, height);
                         self.render_texture_data = self.renderer.create_render_texture_data();
 
-                        if let Err(err) = self.sender.send(RenderResponse::NewTextureView(
-                            self.render_texture_data.texture_view.clone(),
-                        )) {
+                        if let Err(err) = self
+                            .sender
+                            .send(RenderResponse::NewTextureView(
+                                self.render_texture_data.texture_view.clone(),
+                            ))
+                            .await
+                        {
                             println!("{err:?}");
                         }
                     }
@@ -112,7 +120,9 @@ impl RenderWorker {
                             .await
                         {
                             Ok(_) => {
-                                if let Err(err) = self.sender.send(RenderResponse::RenderComplete) {
+                                if let Err(err) =
+                                    self.sender.send(RenderResponse::RenderComplete).await
+                                {
                                     println!("{err:?}");
                                 }
                             }
@@ -123,11 +133,11 @@ impl RenderWorker {
                 },
 
                 Err(err) => match err {
-                    std::sync::mpsc::TryRecvError::Empty => {
+                    TryRecvError::Empty => {
                         //keep the tasks running
                         smol::future::yield_now().await;
                     }
-                    std::sync::mpsc::TryRecvError::Disconnected => break,
+                    TryRecvError::Closed => break,
                 },
             }
         }

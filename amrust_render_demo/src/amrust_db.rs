@@ -442,13 +442,16 @@ impl Db {
     }
 }
 
-pub fn create_build_items_list(db: &Db) -> Result<Vec<TreeItem<Identifiable>>, DbError> {
-    let scene = db.get_scene()?;
+pub fn create_build_items_list(
+    db: Arc<RwLock<Db>>,
+) -> Result<Vec<TreeItem<Identifiable>>, DbError> {
+    let read_db = db.read_blocking();
+    let scene = read_db.get_scene()?;
 
     let mut tree_items = vec![];
     for i in &scene.instances {
-        let part = db.get_part_data_from_part_instance(i)?;
-        let instance_data = db.get_part_instance_data(i)?;
+        let part = read_db.get_part_data_from_part_instance(i)?;
+        let instance_data = read_db.get_part_instance_data(i)?;
         let name = match &part.rep {
             PartRep::Mesh(_) => format!("Instance: {:?} - Mesh: {:?}", i, instance_data.part_id),
             PartRep::ComposedPart(_) => format!(
@@ -469,10 +472,12 @@ pub fn create_build_items_list(db: &Db) -> Result<Vec<TreeItem<Identifiable>>, D
     Ok(tree_items)
 }
 
-pub fn create_objects_list(db: &Db) -> Result<Vec<TreeItem<Identifiable>>, DbError> {
+pub fn create_objects_list(db: Arc<RwLock<Db>>) -> Result<Vec<TreeItem<Identifiable>>, DbError> {
     let mut tree_items = vec![];
 
-    for (id, part) in db.get_parts() {
+    let read_db = db.read_blocking();
+
+    for (id, part) in read_db.get_parts() {
         let item = match part.get_rep() {
             PartRep::Mesh(_) => TreeItem::Leaf {
                 id: Identifiable::Part(id),
@@ -493,7 +498,7 @@ pub fn create_objects_list(db: &Db) -> Result<Vec<TreeItem<Identifiable>>, DbErr
 }
 
 pub fn create_object_tree_from_identifiable(
-    db: &Db,
+    db: Arc<RwLock<Db>>,
     identifiable: Identifiable,
 ) -> Result<TreeItem<usize>, DbError> {
     match identifiable {
@@ -504,8 +509,12 @@ pub fn create_object_tree_from_identifiable(
     }
 }
 
-pub fn create_object_tree_from_part(db: &Db, id: &PartId) -> Result<TreeItem<usize>, DbError> {
-    let part = db.get_part_data(id)?;
+pub fn create_object_tree_from_part(
+    db: Arc<RwLock<Db>>,
+    id: &PartId,
+) -> Result<TreeItem<usize>, DbError> {
+    let read_db = db.read_blocking();
+    let part = read_db.get_part_data(id)?;
 
     let item = match &part.rep {
         PartRep::Mesh(mesh) => {
@@ -533,7 +542,7 @@ pub fn create_object_tree_from_part(db: &Db, id: &PartId) -> Result<TreeItem<usi
                 if let Some(item) = map.get(id) {
                     childs.push(item.clone());
                 } else {
-                    let item = create_object_tree_from_instance(db, id)?;
+                    let item = create_object_tree_from_instance(db.clone(), id)?;
                     map.insert(id, item.clone());
                     childs.push(item);
                 }
@@ -552,11 +561,12 @@ pub fn create_object_tree_from_part(db: &Db, id: &PartId) -> Result<TreeItem<usi
 }
 
 pub fn create_object_tree_from_instance(
-    db: &Db,
+    db: Arc<RwLock<Db>>,
     instance_id: &PartInstanceId,
 ) -> Result<TreeItem<usize>, DbError> {
-    let instance_data = db.get_part_instance_data(instance_id)?;
-    let object_tree = create_object_tree_from_part(db, &instance_data.part_id)?;
+    let read_db = db.read_blocking();
+    let instance_data = read_db.get_part_instance_data(instance_id)?;
+    let object_tree = create_object_tree_from_part(db.clone(), &instance_data.part_id)?;
 
     let transform_item = TreeItem::Leaf {
         id: 105_usize,
@@ -573,9 +583,10 @@ pub fn create_object_tree_from_instance(
 }
 
 pub fn create_scene_tree_items_by_unique_parts(
-    db: &Db,
+    db: Arc<RwLock<Db>>,
 ) -> Result<Vec<TreeItem<Identifiable>>, DbError> {
-    let scene = db.get_scene()?;
+    let read_db = db.read_blocking();
+    let scene = read_db.get_scene()?;
 
     let mut instance_id_to_tree_item_map: HashMap<PartInstanceId, TreeItem<Identifiable>> =
         HashMap::new();
@@ -583,7 +594,7 @@ pub fn create_scene_tree_items_by_unique_parts(
     let mut unprocessed_instances = vec![];
 
     // process all the items one round first
-    for (id, _, part) in db.get_part_instances() {
+    for (id, _, part) in read_db.get_part_instances() {
         match &part.rep {
             PartRep::Mesh(_) => {
                 instance_id_to_tree_item_map.insert(
@@ -624,7 +635,7 @@ pub fn create_scene_tree_items_by_unique_parts(
     let mut unique_part_id_to_instance_tree_item: HashMap<PartId, TreeItem<Identifiable>> =
         HashMap::new();
     for i in &scene.instances {
-        let instance_data = db.get_part_instance_data(i)?;
+        let instance_data = read_db.get_part_instance_data(i)?;
 
         if let Some(item) = instance_id_to_tree_item_map.get(i) {
             if let Some(unique_item) =
@@ -662,13 +673,13 @@ struct InstanceData {
 pub fn add_render_items_from_unique_parts(
     device: &wgpu::Device,
     render_db: Arc<RwLock<RenderDb>>,
-    db: &Db,
+    db: Arc<RwLock<Db>>,
 ) -> Result<BoundingBox, DbError> {
     let mut part_id_to_instance_data = HashMap::<PartId, InstanceData>::new();
     let mut bboxes = vec![];
 
     //setup all the instance data
-    for (part_id, part) in db.get_parts() {
+    for (part_id, part) in db.read_blocking().get_parts() {
         match &part.rep {
             PartRep::Mesh(mesh) => {
                 let gpu_mesh_id = create_mesh_gpu_data(device, render_db.clone(), mesh);
@@ -684,13 +695,14 @@ pub fn add_render_items_from_unique_parts(
                 );
             }
             PartRep::ComposedPart(part_instance_ids) => {
+                let read_db = db.read_blocking();
                 for instance in part_instance_ids {
                     let render_db = render_db.clone();
-                    let instance_data = db.get_part_instance_data(instance)?;
+                    let instance_data = read_db.get_part_instance_data(instance)?;
                     match process_part_instance(
                         device,
                         render_db,
-                        db,
+                        db.clone(),
                         &mut part_id_to_instance_data,
                         instance_data,
                         &Transformation(Mat4::IDENTITY),
@@ -699,8 +711,11 @@ pub fn add_render_items_from_unique_parts(
                         Err(err) => return Err(err),
                     }
 
-                    match compute_instance_bbox(db, instance_data, &Transformation(Mat4::IDENTITY))
-                    {
+                    match compute_instance_bbox(
+                        db.clone(),
+                        instance_data,
+                        &Transformation(Mat4::IDENTITY),
+                    ) {
                         Ok(bbox) => bboxes.push(bbox),
                         Err(err) => return Err(err),
                     }
@@ -738,9 +753,10 @@ pub fn add_render_items_from_unique_parts(
 pub fn add_render_items_from_scene(
     device: &wgpu::Device,
     render_db: Arc<RwLock<RenderDb>>,
-    db: &Db,
+    db: Arc<RwLock<Db>>,
 ) -> Result<BoundingBox, DbError> {
-    let scene = db.get_scene()?;
+    let read_db = db.read_blocking();
+    let scene = read_db.get_scene()?;
     let mut total_bbox = BoundingBox::default();
 
     let mut part_id_to_instance_data = HashMap::<PartId, InstanceData>::new();
@@ -749,11 +765,12 @@ pub fn add_render_items_from_scene(
     //setup all the instance data
     for instance in &scene.instances {
         let render_db = render_db.clone();
-        let instance_data = db.get_part_instance_data(instance)?;
+        let db = db.clone();
+        let instance_data = read_db.get_part_instance_data(instance)?;
         match process_part_instance(
             device,
             render_db,
-            db,
+            db.clone(),
             &mut part_id_to_instance_data,
             instance_data,
             &Transformation(Mat4::IDENTITY),
@@ -762,7 +779,7 @@ pub fn add_render_items_from_scene(
             Err(err) => return Err(err),
         }
 
-        match compute_instance_bbox(db, instance_data, &Transformation(Mat4::IDENTITY)) {
+        match compute_instance_bbox(db.clone(), instance_data, &Transformation(Mat4::IDENTITY)) {
             Ok(bbox) => bboxes.push(bbox),
             Err(err) => return Err(err),
         }
@@ -790,7 +807,7 @@ pub fn add_render_items_from_scene(
 fn process_part_instance(
     device: &wgpu::Device,
     render_db: Arc<RwLock<RenderDb>>,
-    db: &Db,
+    db: Arc<RwLock<Db>>,
     part_id_to_instance_data: &mut HashMap<PartId, InstanceData>,
     instance: &PartInstance,
     parent_transform: &Transformation,
@@ -802,7 +819,8 @@ fn process_part_instance(
         return Ok(());
     }
 
-    let part = db.get_part_data(&instance.part_id);
+    let temp_db = db.read_blocking();
+    let part = temp_db.get_part_data(&instance.part_id);
     match part {
         Ok(p) => match &p.rep {
             PartRep::Mesh(mesh) => {
@@ -817,12 +835,12 @@ fn process_part_instance(
             }
             PartRep::ComposedPart(part_instances) => {
                 for i in part_instances {
-                    let child_instance_data = db.get_part_instance_data(i)?;
+                    let child_instance_data = temp_db.get_part_instance_data(i)?;
                     let render_db = render_db.clone();
                     match process_part_instance(
                         device,
                         render_db,
-                        db,
+                        db.clone(),
                         part_id_to_instance_data,
                         child_instance_data,
                         &combined_transform,
@@ -963,12 +981,13 @@ fn convert_triangle_indices_to_wireframe_indices(triangles: &[u32]) -> Vec<u32> 
 }
 
 fn compute_instance_bbox(
-    db: &Db,
+    db: Arc<RwLock<Db>>,
     instance: &PartInstance,
     parent_transform: &Transformation,
 ) -> Result<BoundingBox, DbError> {
     let combined_transform = Transformation(parent_transform.0 * instance.transform.0);
-    let part = db.get_part_data(&instance.part_id)?;
+    let read_db = db.read_blocking();
+    let part = read_db.get_part_data(&instance.part_id)?;
 
     match &part.rep {
         PartRep::Mesh(mesh) => {
@@ -978,9 +997,9 @@ fn compute_instance_bbox(
         PartRep::ComposedPart(children) => {
             let mut bbox = BoundingBox::default();
             for child in children {
-                let child_instance_data = db.get_part_instance_data(child)?;
+                let child_instance_data = read_db.get_part_instance_data(child)?;
                 let child_bbox =
-                    compute_instance_bbox(db, child_instance_data, &combined_transform)?;
+                    compute_instance_bbox(db.clone(), child_instance_data, &combined_transform)?;
                 bbox.unite(&child_bbox);
             }
             Ok(bbox)

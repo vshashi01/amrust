@@ -3,6 +3,7 @@ mod app;
 mod app_mode;
 mod egui_tools;
 mod load_3mf;
+mod operation_manager;
 mod part_list;
 mod render_db;
 mod render_worker;

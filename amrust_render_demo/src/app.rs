@@ -5,6 +5,7 @@ use crate::amrust_db::{
 };
 use crate::app_mode::AppMode;
 use crate::egui_tools::EguiRenderer;
+use crate::operation_manager::{OperationManager, OperationResponse, Operations};
 use crate::part_list::PartList;
 use crate::render_db::RenderDb;
 use crate::render_worker::{RenderMessage, RenderResponse, RenderWorker, RendererSettings};
@@ -23,11 +24,11 @@ use egui_file_dialog::FileDialog;
 use egui_wgpu::wgpu::SurfaceError;
 use egui_wgpu::{ScreenDescriptor, wgpu};
 use glam::{Mat4, Vec3};
-use smol::Executor;
+use smol::channel::{Receiver, Sender, TryRecvError};
 use smol::lock::RwLock;
+use smol::{Executor, channel};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, Sender, channel};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
@@ -50,7 +51,7 @@ struct AppState {
     pub save_file_dlg: FileDialog,
     pub picked_file: Option<PathBuf>,
     pub scene_bbox: Option<BoundingBox>,
-    pub db: Db,
+    pub db: Arc<RwLock<Db>>,
     pub toolsheets: Option<Toolsheets>,
     pub viewport_3d: Viewport3D,
     pub current_app_mode: AppMode,
@@ -61,6 +62,10 @@ struct AppState {
     pub render_message_tx: Sender<RenderMessage>,
     pub render_response_rx: Receiver<RenderResponse>,
     pub render_db: Arc<RwLock<RenderDb>>,
+
+    pub operation_manager: OperationManager,
+    pub operation_queue_tx: Sender<Operations>,
+    pub operation_response_rx: Receiver<OperationResponse>,
 }
 
 impl AppState {
@@ -146,8 +151,8 @@ impl AppState {
         let render_db = Arc::new(RwLock::new(RenderDb::new()));
 
         //create new render worker
-        let (render_message_tx, render_message_rx) = channel();
-        let (render_response_tx, render_response_rx) = channel();
+        let (render_message_tx, render_message_rx) = channel::unbounded();
+        let (render_response_tx, render_response_rx) = channel::unbounded();
 
         let renderer_settings = RendererSettings {
             device: device.clone(),
@@ -184,6 +189,11 @@ impl AppState {
             .add_save_extension("3MF file", "3mf")
             .default_save_extension("3MF file");
 
+        //create operation manager and its channels
+        let (operation_queue_tx, operation_queue_rx) = channel::unbounded();
+        let (operation_response_tx, operation_response_rx) = channel::unbounded();
+        let operation_manager = OperationManager::new(operation_queue_rx, operation_response_tx);
+
         Self {
             device: Arc::new(device),
             queue: Arc::new(queue),
@@ -198,7 +208,7 @@ impl AppState {
             save_file_dlg,
             picked_file: None,
             scene_bbox: None,
-            db: Db::new(),
+            db: Arc::new(RwLock::new(Db::new())),
             toolsheets: None,
             viewport_3d: Viewport3D {},
             current_app_mode: AppMode::Build,
@@ -208,6 +218,10 @@ impl AppState {
             render_message_tx,
             render_response_rx,
             render_db,
+
+            operation_manager,
+            operation_queue_tx,
+            operation_response_rx,
         }
     }
 
@@ -218,12 +232,14 @@ impl AppState {
 
         // resize the viewport.
         self.render_message_tx
-            .send(RenderMessage::ResizeViewport(width, height))
+            .send_blocking(RenderMessage::ResizeViewport(width, height))
             .unwrap();
     }
 
     fn handle_redraw(&mut self) {
-        self.render_message_tx.send(RenderMessage::Render).unwrap();
+        self.render_message_tx
+            .send_blocking(RenderMessage::Render)
+            .unwrap();
 
         match self.render_response_rx.try_recv() {
             Ok(response) => match response {
@@ -239,8 +255,8 @@ impl AppState {
                 }
             },
             Err(err) => match err {
-                std::sync::mpsc::TryRecvError::Empty => {}
-                std::sync::mpsc::TryRecvError::Disconnected => panic!("Disconnected"),
+                TryRecvError::Empty => {}
+                TryRecvError::Closed => panic!("Disconnected"),
             },
         }
     }
@@ -384,20 +400,19 @@ impl App {
 
                         #[cfg(debug_assertions)]
                         if ui.button("Add Test Mesh").clicked() {
-                            create_test_object(&mut state.db);
+                            create_test_object(state.db.clone());
                             state.need_viewport_update = true;
                         }
 
-                        ui.add_enabled_ui(!state.db.is_scene_empty(), |ui| {
+                        ui.add_enabled_ui(!state.db.read_blocking().is_scene_empty(), |ui| {
                             if ui.button("Unzoom Scene").clicked() {
                                 unzoom_bbox(&mut state.camera_data, bbox);
                                 //state.egui_renderer.context().request_repaint();
                             }
 
                             if ui.button("Clear All").clicked() {
-                                let mut render_db = state.render_db.write_blocking();
-                                render_db.clear_all();
-                                state.db.clear_all();
+                                state.render_db.write_blocking().clear_all();
+                                state.db.write_blocking().clear_all();
                                 state.toolsheets = None;
                             }
 
@@ -407,7 +422,7 @@ impl App {
                         });
 
                         //onyl show modes if there is a scene
-                        if state.db.get_scene().is_ok() {
+                        if state.db.read_blocking().get_scene().is_ok() {
                             ui.with_layout(Layout::right_to_left(egui::Align::RIGHT), |ui| {
                                 // ToDo: Add a tooltip here to explain the difference in modes
                                 ui.radio_value(
@@ -473,24 +488,24 @@ impl App {
                 if let Some(ext) = path.extension()
                     && let Some("3mf") = ext.to_str()
                 {
-                    let threemf = std::fs::File::open(path).unwrap();
-                    let db = crate::load_3mf::load(threemf);
-                    match db {
-                        Ok(db) => {
-                            println!("Db contains: {:?}", db);
-                            let appended = state.db.append(db);
+                    // let threemf = std::fs::File::open(path).unwrap();
+                    // let db = crate::load_3mf::load(threemf);
+                    // match db {
+                    //     Ok(db) => {
+                    //         println!("Db contains: {:?}", db);
+                    //         let appended = state.db.append(db);
 
-                            match appended {
-                                Ok(_) => {
-                                    state.need_viewport_update = true;
-                                }
-                                Err(err) => {
-                                    println!("{err:?}")
-                                }
-                            }
-                        }
-                        Err(err) => println!("Error:{:?}", err),
-                    }
+                    //         match appended {
+                    //             Ok(_) => {
+                    //                 state.need_viewport_update = true;
+                    //             }
+                    //             Err(err) => {
+                    //                 println!("{err:?}")
+                    //             }
+                    //         }
+                    //     }
+                    //     Err(err) => println!("Error:{:?}", err),
+                    // }
                 }
             }
 
@@ -498,16 +513,16 @@ impl App {
             if let Some(save_file_path) = state.save_file_dlg.take_picked() {
                 println!("File path to save to is {save_file_path:?}");
 
-                let file = std::fs::File::create_new(save_file_path);
+                // let file = std::fs::File::create_new(save_file_path);
 
-                match file {
-                    Ok(file) => {
-                        if let Err(err) = save(&state.db, file) {
-                            println!("{err:?}");
-                        }
-                    }
-                    Err(err) => println!("{err:?}"),
-                }
+                // match file {
+                //     Ok(file) => {
+                //         if let Err(err) = save(&state.db, file) {
+                //             println!("{err:?}");
+                //         }
+                //     }
+                //     Err(err) => println!("{err:?}"),
+                // }
             }
 
             if state.current_app_mode != state.current_render_mode || state.need_viewport_update {
@@ -529,22 +544,22 @@ impl App {
                         let bbox = add_render_items_from_unique_parts(
                             &state.device,
                             state.render_db.clone(),
-                            &state.db,
+                            state.db.clone(),
                         );
-                        let part_list = create_scene_tree_items_by_unique_parts(&state.db);
-                        let object_list = create_objects_list(&state.db);
-                        let build_list = create_build_items_list(&state.db);
+                        let part_list = create_scene_tree_items_by_unique_parts(state.db.clone());
+                        let object_list = create_objects_list(state.db.clone());
+                        let build_list = create_build_items_list(state.db.clone());
                         (bbox, part_list, object_list, build_list)
                     }
                     AppMode::Build => {
                         let bbox = add_render_items_from_scene(
                             &state.device,
                             state.render_db.clone(),
-                            &state.db,
+                            state.db.clone(),
                         );
-                        let part_list = create_build_items_list(&state.db);
-                        let object_list = create_objects_list(&state.db);
-                        let build_list = create_build_items_list(&state.db);
+                        let part_list = create_build_items_list(state.db.clone());
+                        let object_list = create_objects_list(state.db.clone());
+                        let build_list = create_build_items_list(state.db.clone());
                         (bbox, part_list, object_list, build_list)
                     }
                 };
@@ -585,7 +600,7 @@ impl App {
 
                 let mut tree_items = vec![];
                 for id in selected_identifiables {
-                    let item = create_object_tree_from_identifiable(&state.db, id).unwrap();
+                    let item = create_object_tree_from_identifiable(state.db.clone(), id).unwrap();
                     tree_items.push(item);
                 }
 
@@ -601,9 +616,16 @@ impl App {
             if prev_camera_data != state.camera_data
                 && let Err(err) = state
                     .render_message_tx
-                    .send(RenderMessage::UpdateCamera(state.camera_data.clone()))
+                    .send_blocking(RenderMessage::UpdateCamera(state.camera_data.clone()))
             {
                 println!("{err:?}");
+            }
+
+            //run the operation manager
+            {
+                state
+                    .operation_manager
+                    .run(state.db.clone(), state.executor.clone());
             }
 
             state.egui_renderer.end_frame_and_draw(
@@ -670,7 +692,7 @@ impl ApplicationHandler for App {
     }
 }
 
-fn create_test_object(db: &mut Db) {
+fn create_test_object(db: Arc<RwLock<Db>>) {
     let mesh = Mesh {
         vertices: ORDERED_POSITIONS
             .iter()
@@ -681,6 +703,8 @@ fn create_test_object(db: &mut Db) {
             .map(|i| *i as u32)
             .collect(),
     };
+
+    let mut db = db.write_blocking();
     let part_id = db
         .add_part_rep(crate::amrust_db::PartRep::Mesh(Box::new(mesh)))
         .unwrap();
