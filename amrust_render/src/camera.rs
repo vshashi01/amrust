@@ -118,7 +118,7 @@ impl Camera {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct OrthographicCameraData {
     pub eye_position: Vec3,
     pub target_position: Vec3,

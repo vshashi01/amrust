@@ -1,21 +1,17 @@
 use image::{ImageBuffer, Rgba};
 
-use crate::camera::CameraData;
 use crate::prelude::*;
 
 use crate::{
-    RenderObject, WgpuError,
+    RenderData, WgpuError,
     camera::Camera,
-    gpu_mesh::GpuMesh,
+    camera::CameraData,
     instance::InstanceFieldDescriptor,
     material, pipeline, render_pass, texture, transformation,
     vertex::{self, VertexDescriptor},
 };
 
-use std::{
-    collections::{HashMap, HashSet},
-    num::NonZero,
-};
+use std::{collections::HashMap, num::NonZero};
 
 pub struct RenderTextureData {
     pub texture: wgpu::Texture,
@@ -32,19 +28,11 @@ pub struct Renderer {
     texture_size: wgpu::Extent3d,
     texture_format: wgpu::TextureFormat, //stored for future dynamic render pipeline creation
 
-    // external rendering resources
-    // consider splitting these to separate struct to be managed by the app
-    textures: Vec<texture::Texture>,
-    meshes: Vec<GpuMesh>,
-    objects: Vec<RenderObject>,
-    invisible_objects: HashSet<usize>,
-    local_bind_groups: Vec<wgpu::BindGroup>,
-
     // internal rendering resources
     global_bind_groups: Vec<wgpu::BindGroup>,
-    texture_bind_group_layout: wgpu::BindGroupLayout,
-    texture_sampler: wgpu::Sampler,
-    texture_array_bind_group_layout: wgpu::BindGroupLayout,
+    pub texture_bind_group_layout: wgpu::BindGroupLayout,
+    pub texture_sampler: wgpu::Sampler,
+    pub texture_array_bind_group_layout: wgpu::BindGroupLayout,
     camera: Camera,
 
     // render pipelines
@@ -298,11 +286,6 @@ impl Renderer {
             output_buffer,
             texture_size,
             texture_format,
-            textures: Vec::new(),
-            meshes: Vec::new(),
-            objects: Vec::new(),
-            invisible_objects: HashSet::new(),
-            local_bind_groups: Vec::new(),
             global_bind_groups: Vec::new(),
             texture_bind_group_layout: basic_texture_bind_group_layout,
             texture_array_bind_group_layout,
@@ -345,78 +328,10 @@ impl Renderer {
         }
     }
 
-    // returns the texture id and the bind group id
-    pub fn add_texture(&mut self, texture: texture::Texture) -> (u32, u32) {
-        let bind_group = texture::generate_basic_texture_bind_group::<0, 1>(
-            &self.device,
-            &texture,
-            &self.texture_sampler,
-            &self.texture_bind_group_layout,
-        );
-
-        self.textures.push(texture);
-        let bind_group_id = self.add_local_bind_group(bind_group);
-        let texture_id = (self.textures.len() - 1) as u32;
-
-        (texture_id, bind_group_id)
-    }
-
-    // returns the bind group id for the texture array
-    pub fn create_texture_array(&mut self, texture_ids: &[u32]) -> u32 {
-        let mut texture_views = Vec::<&wgpu::TextureView>::new();
-
-        for texture_id in texture_ids {
-            let texture = &self.textures[*texture_id as usize];
-            texture_views.push(&texture.view);
-        }
-
-        let bind_group = texture::generate_texture_array_bind_group::<0, 1>(
-            &self.device,
-            "Array 1",
-            &texture_views,
-            &self.texture_sampler,
-            &self.texture_array_bind_group_layout,
-        );
-
-        self.add_local_bind_group(bind_group)
-    }
-
-    pub fn add_mesh(&mut self, mesh: GpuMesh) -> u32 {
-        self.meshes.push(mesh);
-
-        (self.meshes.len() - 1) as u32
-    }
-
-    pub fn add_object(&mut self, object: RenderObject) -> u32 {
-        self.objects.push(object);
-
-        (self.objects.len() - 1) as u32
-    }
-
-    pub fn clear_all(&mut self) {
-        self.objects.clear();
-        self.meshes.clear();
-        self.local_bind_groups.clear();
-    }
-
-    pub fn make_object_invisible(&mut self, object_id: usize) {
-        self.invisible_objects.insert(object_id);
-    }
-
-    pub fn make_object_visible(&mut self, object_id: &usize) {
-        self.invisible_objects.remove(object_id);
-    }
-
     pub fn add_global_bind_group(&mut self, bind_group: wgpu::BindGroup) -> u32 {
         self.global_bind_groups.push(bind_group);
 
         (self.global_bind_groups.len() - 1) as u32
-    }
-
-    pub fn add_local_bind_group(&mut self, bind_group: wgpu::BindGroup) -> u32 {
-        self.local_bind_groups.push(bind_group);
-
-        (self.local_bind_groups.len() - 1) as u32
     }
 
     pub fn update_camera(&mut self, camera_data: &impl CameraData) {
@@ -424,20 +339,22 @@ impl Renderer {
         self.camera.write_buffer(&self.queue);
     }
 
-    pub async fn render_to_texture(
+    pub async fn render_to_texture<'a>(
         &self,
+        render_data: &[RenderData<'a>],
         render_texture_data: &RenderTextureData,
     ) -> Result<(), WgpuError> {
         //ToDO: validate the texture size
-        Self::render_internal(self, Some(render_texture_data)).await
+        Self::render_internal(self, render_data, Some(render_texture_data)).await
     }
 
-    pub async fn render(&self) -> Result<(), WgpuError> {
-        Self::render_internal(self, None).await
+    pub async fn render<'a>(&self, render_data: &[RenderData<'a>]) -> Result<(), WgpuError> {
+        Self::render_internal(self, render_data, None).await
     }
 
-    async fn render_internal(
+    async fn render_internal<'a>(
         &self,
+        render_data: &[RenderData<'a>],
         render_texture_data: Option<&RenderTextureData>,
     ) -> Result<(), WgpuError> {
         let texture_data = match render_texture_data {
@@ -486,26 +403,16 @@ impl Renderer {
                 render_pass.set_bind_group((i + 1) as u32, bind_group, &[]);
             }
 
-            let visible_objects = self
-                .objects
-                .iter()
-                .enumerate()
-                .filter(|(id, _)| !self.invisible_objects.contains(id))
-                .map(|(_, object)| object)
-                .collect::<Vec<_>>();
+            // let renderables = render_db.get_renderables().collect::<Vec<_>>();
 
             render_pass::solid_render_pass(
-                &visible_objects,
-                &self.meshes,
-                &self.local_bind_groups,
+                render_data,
                 &self.render_pipeline_cache,
                 &mut render_pass,
             );
 
             render_pass::wireframe_render_pass(
-                &visible_objects,
-                &self.meshes,
-                &self.local_bind_groups,
+                render_data,
                 &self.render_pipeline_cache,
                 &mut render_pass,
             );

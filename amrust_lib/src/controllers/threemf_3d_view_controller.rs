@@ -23,7 +23,7 @@ async fn load_and_render_3mf() {
     let mut object_transform_map = Vec::new();
     package.root.build.item.iter().for_each(|item| {
         let mesh_id = item.objectid;
-        let mut transform = Mat4::IDENTITY;
+        let transform = Mat4::IDENTITY;
 
         object_transform_map.push((mesh_id, transform));
     });

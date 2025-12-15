@@ -1,20 +1,21 @@
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{
+    Arc,
+    mpsc::{Receiver, Sender},
+};
 
 use amrust_render::{
+    RenderDatabase,
     camera::OrthographicCameraData,
-    gpu_mesh::GpuMesh,
-    instance::GpuInstance,
-    renderer::{self, RenderTextureData, Renderer},
+    renderer::{RenderTextureData, Renderer},
 };
-use egui::ColorImage;
-use image::{ImageBuffer, Rgba};
+use smol::lock::RwLock;
+
+use crate::render_db::RenderDb;
 
 pub enum RenderMessage {
     UpdateCamera(OrthographicCameraData),
-    AddGpuMesh(GpuMesh),
-    AddGpuInstance(GpuInstance),
     ResizeViewport(u32, u32),
-    Render(egui::Context),
+    Render,
 }
 
 pub enum RenderResponse {
@@ -28,8 +29,8 @@ pub struct RenderWorker {
     receiver: Receiver<RenderMessage>,
     sender: Sender<RenderResponse>,
 
-    camera_data: OrthographicCameraData,
     render_texture_data: RenderTextureData,
+    render_db: Arc<RwLock<RenderDb>>,
 }
 
 pub struct RendererSettings {
@@ -44,29 +45,30 @@ pub struct RendererSettings {
 impl RenderWorker {
     pub async fn new(
         renderer_settings: RendererSettings,
+        render_db: Arc<RwLock<RenderDb>>,
         receiver: Receiver<RenderMessage>,
         sender: Sender<RenderResponse>,
     ) -> Self {
-        // let renderer = renderer::Renderer::from_existing_device_and_queue(
-        //     renderer_settings.device,
-        //     renderer_settings.queue,
-        //     renderer_settings.format,
-        //     renderer_settings.width,
-        //     renderer_settings.height,
-        // )
-        // .await
-        // .unwrap();
-
-        match Renderer::from_new_device(renderer_settings.width, renderer_settings.height).await {
-            Ok(renderer) => {
+        match Renderer::from_existing_device_and_queue(
+            renderer_settings.device,
+            renderer_settings.queue,
+            renderer_settings.format,
+            renderer_settings.width,
+            renderer_settings.height,
+        )
+        .await
+        {
+            // match Renderer::from_new_device(renderer_settings.width, renderer_settings.height).await {
+            Ok(mut renderer) => {
+                renderer.update_camera(&renderer_settings.initial_camera_data);
                 let render_texture_data = renderer.create_render_texture_data();
 
                 Self {
                     renderer,
                     receiver,
                     sender,
-                    camera_data: renderer_settings.initial_camera_data,
                     render_texture_data,
+                    render_db,
                 }
             }
             Err(err) => {
@@ -88,10 +90,8 @@ impl RenderWorker {
             match self.receiver.try_recv() {
                 Ok(msg) => match msg {
                     RenderMessage::UpdateCamera(orthographic_camera_data) => {
-                        self.camera_data = orthographic_camera_data
+                        self.renderer.update_camera(&orthographic_camera_data);
                     }
-                    RenderMessage::AddGpuMesh(gpu_mesh) => todo!(),
-                    RenderMessage::AddGpuInstance(gpu_instance) => todo!(),
                     RenderMessage::ResizeViewport(width, height) => {
                         self.renderer.set_size(width, height);
                         self.render_texture_data = self.renderer.create_render_texture_data();
@@ -102,19 +102,24 @@ impl RenderWorker {
                             println!("{err:?}");
                         }
                     }
-                    RenderMessage::Render(ctx) => match self.renderer.render().await {
-                        Ok(_) => {
-                            // {
-                            //     let buf = self.renderer.present().await;
-                            //     let egui_color_image = image_buffer_to_color_image(&buf);
-
-                            // }
-                            if let Err(err) = self.sender.send(RenderResponse::RenderComplete) {
-                                println!("{err:?}");
+                    RenderMessage::Render => {
+                        let render_db = self.render_db.read().await;
+                        let render_data = render_db.get_renderables().collect::<Vec<_>>();
+                        // println!("Render data count: {:?}", render_data.len());
+                        match self
+                            .renderer
+                            .render_to_texture(&render_data, &self.render_texture_data)
+                            .await
+                        {
+                            Ok(_) => {
+                                if let Err(err) = self.sender.send(RenderResponse::RenderComplete) {
+                                    println!("{err:?}");
+                                }
                             }
+
+                            Err(err) => panic!("{err:?}"),
                         }
-                        Err(err) => panic!("{err:?}"),
-                    },
+                    }
                 },
 
                 Err(err) => match err {
@@ -126,26 +131,5 @@ impl RenderWorker {
                 },
             }
         }
-    }
-}
-
-fn image_buffer_to_color_image(imgbuf: &ImageBuffer<Rgba<u8>, Vec<u8>>) -> ColorImage {
-    let size = [imgbuf.width() as usize, imgbuf.height() as usize];
-
-    let pixels: Vec<_> = imgbuf
-        .pixels()
-        .map(|p| {
-            let [r, g, b, a] = p.0;
-            egui::Color32::from_rgba_premultiplied(r, g, b, a)
-        })
-        .collect();
-
-    ColorImage {
-        size,
-        source_size: egui::Vec2 {
-            x: imgbuf.width() as f32,
-            y: imgbuf.height() as f32,
-        },
-        pixels,
     }
 }
