@@ -1,16 +1,19 @@
 use std::{error::Error, path::PathBuf, sync::Arc};
 
+use amrust_render::bounding_box::BoundingBox;
+use glam::Vec3;
 use smol::{
     Executor, Task,
     channel::{Receiver, Sender, TryRecvError},
     lock::RwLock,
 };
 
-use crate::{amrust_db::Db, load_3mf};
+use crate::{amrust_db::Db, load_3mf, render_worker::RenderMessage, save_3mf};
 
 pub enum Operations {
     Load3MF(PathBuf),
     Save3MF(PathBuf),
+    ClearAll,
 }
 
 pub enum OperationResponse {
@@ -39,14 +42,32 @@ impl OperationManager {
         }
     }
 
-    pub fn run(&mut self, db: Arc<RwLock<Db>>, executor: Arc<Executor<'static>>) {
+    pub fn run(
+        &mut self,
+        db: Arc<RwLock<Db>>,
+        executor: Arc<Executor<'static>>,
+        render_message_tx: Sender<RenderMessage>,
+    ) {
+        // remove finished tasks
+        let mut finished_task_index = vec![];
+        for (index, task) in self.task_queue.iter().enumerate() {
+            if task.is_finished() {
+                finished_task_index.push(index);
+            }
+        }
+
+        for i in finished_task_index {
+            let task = self.task_queue.remove(i);
+            println!("Remove task: {task:?}");
+        }
+
         match self.operation_queue_rx.try_recv() {
             Ok(op) => match op {
                 Operations::Load3MF(path_buf) => {
-                    println!("running the Load 3MF Operation");
                     let db = db.clone();
                     let operation_response_tx = self.operation_response_tx.clone();
                     let task = executor.spawn(async move {
+                        println!("running the Load 3MF Operation");
                         let file = std::fs::File::open(path_buf);
                         match file {
                             Ok(threemf) => {
@@ -65,7 +86,7 @@ impl OperationManager {
                                                 println!("{err:?}");
                                             }
                                         } else if let Err(err) = operation_response_tx
-                                            .send(OperationResponse::Succeeded("Loaf 3MF"))
+                                            .send(OperationResponse::Succeeded("Load 3MF"))
                                             .await
                                         {
                                             println!("{err:?}");
@@ -96,7 +117,60 @@ impl OperationManager {
                     });
                     self.task_queue.push(task);
                 }
-                Operations::Save3MF(path_buf) => todo!(),
+                Operations::Save3MF(path_buf) => {
+                    let db = db.clone();
+                    let operation_response_tx = self.operation_response_tx.clone();
+                    let task = executor.spawn(async move {
+                        println!("running the Save 3MF Operation");
+                        let file = std::fs::File::create_new(path_buf);
+                        match file {
+                            Ok(threemf) => {
+                                let result = save_3mf::save(&db.read_blocking(), threemf);
+                                match result {
+                                    Ok(_) => {
+                                        if let Err(err) = operation_response_tx
+                                            .send(OperationResponse::Succeeded("Save 3mf"))
+                                            .await
+                                        {
+                                            println!("{err:?}");
+                                        }
+                                    }
+                                    Err(err) => {
+                                        if let Err(err) = operation_response_tx
+                                            .send(OperationResponse::Failed(
+                                                "Save 3mf",
+                                                Box::new(err),
+                                            ))
+                                            .await
+                                        {
+                                            println!("{err:?}");
+                                        }
+                                    }
+                                }
+                            }
+                            Err(err) => {
+                                if let Err(err) = operation_response_tx
+                                    .send(OperationResponse::Failed("Save 3mf", Box::new(err)))
+                                    .await
+                                {
+                                    println!("{err:?}");
+                                }
+                            }
+                        }
+                    });
+                    self.task_queue.push(task);
+                }
+                Operations::ClearAll => {
+                    let mut db = db.write_blocking();
+                    db.clear_all();
+
+                    if let Err(err) = self
+                        .operation_response_tx
+                        .send_blocking(OperationResponse::Succeeded("Clear Database"))
+                    {
+                        println!("{err:?}");
+                    }
+                }
             },
             Err(err) => match err {
                 TryRecvError::Empty => {}

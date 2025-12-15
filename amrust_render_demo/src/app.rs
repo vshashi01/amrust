@@ -10,7 +10,7 @@ use crate::part_list::PartList;
 use crate::render_db::RenderDb;
 use crate::render_worker::{RenderMessage, RenderResponse, RenderWorker, RendererSettings};
 use crate::save_3mf::save;
-use crate::toolsheets::Toolsheets;
+use crate::toolsheets::{self, Toolsheets};
 use crate::tree_item_viewer::TreeItemViewer;
 use crate::viewport::Viewport3D;
 use amrust_render::bounding_box::BoundingBox;
@@ -259,6 +259,28 @@ impl AppState {
                 TryRecvError::Closed => panic!("Disconnected"),
             },
         }
+
+        match self.operation_response_rx.try_recv() {
+            Ok(response) => match response {
+                OperationResponse::Ongoing(_) => {
+                    //update ui?
+                }
+                OperationResponse::Succeeded(text) => {
+                    println!("Operation Success: {text}");
+                    self.need_viewport_update = true;
+                }
+                OperationResponse::Failed(text, error) => {
+                    println!("Operation Failed: {text} with error {error:?}");
+                }
+                OperationResponse::Aborted(text) => {
+                    println!("Operation Cancelled: {text}");
+                }
+            },
+            Err(err) => match err {
+                TryRecvError::Empty => {}
+                TryRecvError::Closed => panic!("Operation Manager is killed!!"),
+            },
+        }
     }
 }
 
@@ -407,13 +429,14 @@ impl App {
                         ui.add_enabled_ui(!state.db.read_blocking().is_scene_empty(), |ui| {
                             if ui.button("Unzoom Scene").clicked() {
                                 unzoom_bbox(&mut state.camera_data, bbox);
-                                //state.egui_renderer.context().request_repaint();
                             }
 
                             if ui.button("Clear All").clicked() {
-                                state.render_db.write_blocking().clear_all();
-                                state.db.write_blocking().clear_all();
-                                state.toolsheets = None;
+                                if let Err(err) =
+                                    state.operation_queue_tx.send_blocking(Operations::ClearAll)
+                                {
+                                    println!("{err:?}");
+                                }
                             }
 
                             if ui.button("Save to 3mf").clicked() {
@@ -487,25 +510,11 @@ impl App {
 
                 if let Some(ext) = path.extension()
                     && let Some("3mf") = ext.to_str()
+                    && let Err(err) = state
+                        .operation_queue_tx
+                        .send_blocking(Operations::Load3MF(path))
                 {
-                    // let threemf = std::fs::File::open(path).unwrap();
-                    // let db = crate::load_3mf::load(threemf);
-                    // match db {
-                    //     Ok(db) => {
-                    //         println!("Db contains: {:?}", db);
-                    //         let appended = state.db.append(db);
-
-                    //         match appended {
-                    //             Ok(_) => {
-                    //                 state.need_viewport_update = true;
-                    //             }
-                    //             Err(err) => {
-                    //                 println!("{err:?}")
-                    //             }
-                    //         }
-                    //     }
-                    //     Err(err) => println!("Error:{:?}", err),
-                    // }
+                    println!("{err:?}");
                 }
             }
 
@@ -513,16 +522,12 @@ impl App {
             if let Some(save_file_path) = state.save_file_dlg.take_picked() {
                 println!("File path to save to is {save_file_path:?}");
 
-                // let file = std::fs::File::create_new(save_file_path);
-
-                // match file {
-                //     Ok(file) => {
-                //         if let Err(err) = save(&state.db, file) {
-                //             println!("{err:?}");
-                //         }
-                //     }
-                //     Err(err) => println!("{err:?}"),
-                // }
+                if let Err(err) = state
+                    .operation_queue_tx
+                    .send_blocking(Operations::Save3MF(save_file_path))
+                {
+                    println!("{err:?}");
+                }
             }
 
             if state.current_app_mode != state.current_render_mode || state.need_viewport_update {
@@ -531,58 +536,56 @@ impl App {
                 let mut write_render_db = state.render_db.write_blocking();
                 write_render_db.clear_all();
                 drop(write_render_db);
+                state.toolsheets = None;
 
-                let (bbox, part_list, object_list, build_list) = match &state.current_app_mode {
-                    AppMode::Objects => {
-                        let mut render_data = vec![];
-                        {
-                            let read_render_db = state.render_db.read_blocking();
-                            render_data
-                                .append(&mut read_render_db.get_renderables().collect::<Vec<_>>());
+                let read_db = state.db.read_blocking();
+                if !read_db.is_empty() {
+                    let (bbox, part_list, object_list, build_list) = match &state.current_app_mode {
+                        AppMode::Objects => {
+                            let bbox = add_render_items_from_unique_parts(
+                                &state.device,
+                                state.render_db.clone(),
+                                state.db.clone(),
+                            );
+                            let part_list =
+                                create_scene_tree_items_by_unique_parts(state.db.clone());
+                            let object_list = create_objects_list(state.db.clone());
+                            let build_list = create_build_items_list(state.db.clone());
+                            (bbox, part_list, object_list, build_list)
                         }
-
-                        let bbox = add_render_items_from_unique_parts(
-                            &state.device,
-                            state.render_db.clone(),
-                            state.db.clone(),
-                        );
-                        let part_list = create_scene_tree_items_by_unique_parts(state.db.clone());
-                        let object_list = create_objects_list(state.db.clone());
-                        let build_list = create_build_items_list(state.db.clone());
-                        (bbox, part_list, object_list, build_list)
-                    }
-                    AppMode::Build => {
-                        let bbox = add_render_items_from_scene(
-                            &state.device,
-                            state.render_db.clone(),
-                            state.db.clone(),
-                        );
-                        let part_list = create_build_items_list(state.db.clone());
-                        let object_list = create_objects_list(state.db.clone());
-                        let build_list = create_build_items_list(state.db.clone());
-                        (bbox, part_list, object_list, build_list)
-                    }
-                };
-
-                match (part_list, object_list, build_list) {
-                    (Ok(part_list_items), Ok(object_items), Ok(build_items)) => match bbox {
-                        Ok(bbox) => {
-                            let part_list = PartList::new(part_list_items);
-                            let _ = state.toolsheets.insert(Toolsheets::new(
-                                state.current_app_mode,
-                                part_list,
-                                TreeItemViewer::new(object_items, false),
-                                TreeItemViewer::new(build_items, false),
-                            ));
-
-                            unzoom_bbox(&mut state.camera_data, &bbox);
-                            let _ = state.scene_bbox.insert(bbox);
-
-                            state.egui_renderer.context().request_repaint();
+                        AppMode::Build => {
+                            let bbox = add_render_items_from_scene(
+                                &state.device,
+                                state.render_db.clone(),
+                                state.db.clone(),
+                            );
+                            let part_list = create_build_items_list(state.db.clone());
+                            let object_list = create_objects_list(state.db.clone());
+                            let build_list = create_build_items_list(state.db.clone());
+                            (bbox, part_list, object_list, build_list)
                         }
-                        Err(err) => println!("{err:?}"),
-                    },
-                    _ => panic!("Something wrong here!!"),
+                    };
+
+                    match (part_list, object_list, build_list) {
+                        (Ok(part_list_items), Ok(object_items), Ok(build_items)) => match bbox {
+                            Ok(bbox) => {
+                                let part_list = PartList::new(part_list_items);
+                                let _ = state.toolsheets.insert(Toolsheets::new(
+                                    state.current_app_mode,
+                                    part_list,
+                                    TreeItemViewer::new(object_items, false),
+                                    TreeItemViewer::new(build_items, false),
+                                ));
+
+                                //unzoom_bbox(&mut state.camera_data, &bbox);
+                                let _ = state.scene_bbox.insert(bbox);
+
+                                state.egui_renderer.context().request_repaint();
+                            }
+                            Err(err) => println!("{err:?}"),
+                        },
+                        _ => panic!("Something wrong here!!"),
+                    }
                 }
 
                 state.need_viewport_update = false;
@@ -623,9 +626,11 @@ impl App {
 
             //run the operation manager
             {
-                state
-                    .operation_manager
-                    .run(state.db.clone(), state.executor.clone());
+                state.operation_manager.run(
+                    state.db.clone(),
+                    state.executor.clone(),
+                    state.render_message_tx.clone(),
+                );
             }
 
             state.egui_renderer.end_frame_and_draw(

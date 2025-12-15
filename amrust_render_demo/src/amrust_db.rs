@@ -171,6 +171,10 @@ impl Db {
         self.unique_parts.iter()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.unique_parts.is_empty() && self.part_instances.is_empty() && self.is_scene_empty()
+    }
+
     pub fn get_part_instances(
         &self,
     ) -> impl Iterator<Item = (PartInstanceId, &PartInstance, &Part)> {
