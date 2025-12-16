@@ -16,9 +16,9 @@ use crate::amrust_db::DbError;
 use crate::amrust_db::PartId;
 use crate::amrust_db::PartInstance;
 use crate::amrust_db::PartRep;
-use crate::operation_manager::Operation;
-use crate::operation_manager::OperationContext;
-use crate::operation_manager::OperationResponse;
+use crate::operation::Operation;
+use crate::operation::OperationContext;
+use crate::operation::OperationResponse;
 
 #[derive(Debug, Error)]
 pub enum DbTo3mfError {
@@ -69,7 +69,7 @@ impl Operation for Save3mfOps {
     }
 }
 
-pub fn save(db: &Db, threemf: std::fs::File) -> Result<(), DbTo3mfError> {
+fn save(db: &Db, threemf: std::fs::File) -> Result<(), DbTo3mfError> {
     let package = create_3mf_package(db)?;
 
     Ok(package.write(threemf)?)

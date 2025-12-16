@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::operation_manager::{Operation, OperationContext, OperationResponse};
+use crate::operation::{Operation, OperationContext, OperationResponse};
 
 pub struct ClearDbOps;
 

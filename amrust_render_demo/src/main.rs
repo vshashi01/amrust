@@ -4,6 +4,7 @@ mod app_mode;
 mod clear_db;
 mod egui_tools;
 mod load_3mf;
+mod operation;
 mod operation_manager;
 mod part_list;
 mod render_db;

@@ -9,7 +9,7 @@ use threemf2::core::transform::Transform;
 use threemf2::io::ThreemfPackage;
 
 use crate::amrust_db::{Db, DbError, Mesh, PartId, PartRep, Scene};
-use crate::operation_manager::{Operation, OperationContext, OperationResponse};
+use crate::operation::{Operation, OperationContext, OperationResponse};
 
 use core::f32;
 use std::collections::HashMap;
@@ -33,10 +33,7 @@ pub struct Load3MFOps {
 
 #[async_trait]
 impl Operation for Load3MFOps {
-    async fn execute(
-        &mut self,
-        context: &mut OperationContext,
-    ) -> crate::operation_manager::OperationResponse {
+    async fn execute(&mut self, context: &mut OperationContext) -> OperationResponse {
         let file = std::fs::File::open(&self.path);
         match file {
             Ok(threemf_file) => match load(threemf_file) {
@@ -54,7 +51,7 @@ impl Operation for Load3MFOps {
     }
 }
 
-pub fn load(threemf: std::fs::File) -> Result<Db, DbFrom3mfError> {
+fn load(threemf: std::fs::File) -> Result<Db, DbFrom3mfError> {
     let package = ThreemfPackage::from_reader_with_memory_optimized_deserializer(threemf, true)?;
 
     get_db_from_3mf(&package)

@@ -1,27 +1,20 @@
-use std::{error::Error, path::PathBuf, sync::Arc};
-
-use amrust_render::bounding_box::BoundingBox;
-use async_trait::async_trait;
-use glam::Vec3;
 use smol::{
     Executor, Task,
     channel::{Receiver, Sender, TryRecvError},
     lock::RwLock,
 };
-use thiserror::Error;
 
-use crate::{amrust_db::Db, render_worker::RenderMessage};
+use crate::{
+    amrust_db::Db,
+    operation::{Operation, OperationContext, OperationResponse},
+    render_worker::RenderMessage,
+};
+
+use std::sync::Arc;
 
 pub enum OperationMessage {
     AddAsyncOperation(Box<dyn Operation>),
     AddSyncOperation(Box<dyn Operation>),
-}
-
-pub enum OperationResponse {
-    Ongoing(&'static str),
-    Succeeded(&'static str),
-    Failed(&'static str, Box<dyn Error + Send + Sync + 'static>),
-    Aborted(&'static str),
 }
 
 pub struct OperationManager {
@@ -101,52 +94,5 @@ impl OperationManager {
                 }
             },
         }
-    }
-}
-
-#[async_trait]
-pub trait Operation: Send + Sync + 'static {
-    async fn execute(&mut self, context: &mut OperationContext) -> OperationResponse;
-}
-
-#[derive(Debug, Error)]
-pub enum OperationContextError {
-    #[error("Lala")]
-    GenericError,
-}
-
-pub struct OperationContext {
-    db: Arc<RwLock<Db>>,
-    render_message_tx: Sender<RenderMessage>,
-}
-
-impl OperationContext {
-    fn new(db: Arc<RwLock<Db>>, render_message_tx: Sender<RenderMessage>) -> Self {
-        Self {
-            db,
-            render_message_tx,
-        }
-    }
-
-    pub async fn append_db(&mut self, other_db: Db) -> Result<(), OperationContextError> {
-        let mut write_db = self.db.write().await;
-        match write_db.append(other_db) {
-            Ok(_) => {}
-            Err(err) => return Err(OperationContextError::GenericError),
-        }
-
-        Ok(())
-    }
-
-    pub async fn get_db<T>(&self, f: impl AsyncFnOnce(&Db) -> T) -> T {
-        let read_db = self.db.read().await;
-        f(&read_db).await
-    }
-
-    pub async fn clear_db(&mut self) -> Result<(), OperationContextError> {
-        let mut write_db = self.db.write().await;
-        write_db.clear_all();
-
-        Ok(())
     }
 }
