@@ -1,16 +1,19 @@
 use glam::{Mat4, Vec3};
 use slotmap::{SlotMap, new_key_type};
+use smol::lock::RwLock;
 use thiserror::Error;
 
 use amrust_render::{
-    RenderObject, bounding_box::BoundingBox, gpu_mesh::MeshBuilder, instance::InstanceDataBuilder,
-    material::Material, renderer, transformation::Transformation, vertex::Position,
+    bounding_box::BoundingBox, gpu_mesh::MeshBuilder, instance::InstanceDataBuilder,
+    material::Material, transformation::Transformation, vertex::Position,
 };
 
 use core::fmt;
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::sync::Arc;
 
+use crate::render_db::{RenderDb, RenderObject};
 use crate::tree_item_viewer::TreeItem;
 
 #[derive(Debug)]
@@ -166,6 +169,10 @@ impl Db {
 
     pub fn get_parts(&self) -> impl Iterator<Item = (PartId, &Part)> {
         self.unique_parts.iter()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.unique_parts.is_empty() && self.part_instances.is_empty() && self.is_scene_empty()
     }
 
     pub fn get_part_instances(
@@ -439,13 +446,16 @@ impl Db {
     }
 }
 
-pub fn create_build_items_list(db: &Db) -> Result<Vec<TreeItem<Identifiable>>, DbError> {
-    let scene = db.get_scene()?;
+pub fn create_build_items_list(
+    db: Arc<RwLock<Db>>,
+) -> Result<Vec<TreeItem<Identifiable>>, DbError> {
+    let read_db = db.read_blocking();
+    let scene = read_db.get_scene()?;
 
     let mut tree_items = vec![];
     for i in &scene.instances {
-        let part = db.get_part_data_from_part_instance(i)?;
-        let instance_data = db.get_part_instance_data(i)?;
+        let part = read_db.get_part_data_from_part_instance(i)?;
+        let instance_data = read_db.get_part_instance_data(i)?;
         let name = match &part.rep {
             PartRep::Mesh(_) => format!("Instance: {:?} - Mesh: {:?}", i, instance_data.part_id),
             PartRep::ComposedPart(_) => format!(
@@ -466,10 +476,12 @@ pub fn create_build_items_list(db: &Db) -> Result<Vec<TreeItem<Identifiable>>, D
     Ok(tree_items)
 }
 
-pub fn create_objects_list(db: &Db) -> Result<Vec<TreeItem<Identifiable>>, DbError> {
+pub fn create_objects_list(db: Arc<RwLock<Db>>) -> Result<Vec<TreeItem<Identifiable>>, DbError> {
     let mut tree_items = vec![];
 
-    for (id, part) in db.get_parts() {
+    let read_db = db.read_blocking();
+
+    for (id, part) in read_db.get_parts() {
         let item = match part.get_rep() {
             PartRep::Mesh(_) => TreeItem::Leaf {
                 id: Identifiable::Part(id),
@@ -490,7 +502,7 @@ pub fn create_objects_list(db: &Db) -> Result<Vec<TreeItem<Identifiable>>, DbErr
 }
 
 pub fn create_object_tree_from_identifiable(
-    db: &Db,
+    db: Arc<RwLock<Db>>,
     identifiable: Identifiable,
 ) -> Result<TreeItem<usize>, DbError> {
     match identifiable {
@@ -501,8 +513,12 @@ pub fn create_object_tree_from_identifiable(
     }
 }
 
-pub fn create_object_tree_from_part(db: &Db, id: &PartId) -> Result<TreeItem<usize>, DbError> {
-    let part = db.get_part_data(&id)?;
+pub fn create_object_tree_from_part(
+    db: Arc<RwLock<Db>>,
+    id: &PartId,
+) -> Result<TreeItem<usize>, DbError> {
+    let read_db = db.read_blocking();
+    let part = read_db.get_part_data(id)?;
 
     let item = match &part.rep {
         PartRep::Mesh(mesh) => {
@@ -530,7 +546,7 @@ pub fn create_object_tree_from_part(db: &Db, id: &PartId) -> Result<TreeItem<usi
                 if let Some(item) = map.get(id) {
                     childs.push(item.clone());
                 } else {
-                    let item = create_object_tree_from_instance(db, id)?;
+                    let item = create_object_tree_from_instance(db.clone(), id)?;
                     map.insert(id, item.clone());
                     childs.push(item);
                 }
@@ -549,11 +565,12 @@ pub fn create_object_tree_from_part(db: &Db, id: &PartId) -> Result<TreeItem<usi
 }
 
 pub fn create_object_tree_from_instance(
-    db: &Db,
+    db: Arc<RwLock<Db>>,
     instance_id: &PartInstanceId,
 ) -> Result<TreeItem<usize>, DbError> {
-    let instance_data = db.get_part_instance_data(instance_id)?;
-    let object_tree = create_object_tree_from_part(db, &instance_data.part_id)?;
+    let read_db = db.read_blocking();
+    let instance_data = read_db.get_part_instance_data(instance_id)?;
+    let object_tree = create_object_tree_from_part(db.clone(), &instance_data.part_id)?;
 
     let transform_item = TreeItem::Leaf {
         id: 105_usize,
@@ -570,9 +587,10 @@ pub fn create_object_tree_from_instance(
 }
 
 pub fn create_scene_tree_items_by_unique_parts(
-    db: &Db,
+    db: Arc<RwLock<Db>>,
 ) -> Result<Vec<TreeItem<Identifiable>>, DbError> {
-    let scene = db.get_scene()?;
+    let read_db = db.read_blocking();
+    let scene = read_db.get_scene()?;
 
     let mut instance_id_to_tree_item_map: HashMap<PartInstanceId, TreeItem<Identifiable>> =
         HashMap::new();
@@ -580,7 +598,7 @@ pub fn create_scene_tree_items_by_unique_parts(
     let mut unprocessed_instances = vec![];
 
     // process all the items one round first
-    for (id, _, part) in db.get_part_instances() {
+    for (id, _, part) in read_db.get_part_instances() {
         match &part.rep {
             PartRep::Mesh(_) => {
                 instance_id_to_tree_item_map.insert(
@@ -621,7 +639,7 @@ pub fn create_scene_tree_items_by_unique_parts(
     let mut unique_part_id_to_instance_tree_item: HashMap<PartId, TreeItem<Identifiable>> =
         HashMap::new();
     for i in &scene.instances {
-        let instance_data = db.get_part_instance_data(i)?;
+        let instance_data = read_db.get_part_instance_data(i)?;
 
         if let Some(item) = instance_id_to_tree_item_map.get(i) {
             if let Some(unique_item) =
@@ -657,17 +675,18 @@ struct InstanceData {
 
 /// This creates a 3D scene based on the unique parts
 pub fn add_render_items_from_unique_parts(
-    renderer: &mut renderer::Renderer,
-    db: &Db,
+    device: &wgpu::Device,
+    render_db: Arc<RwLock<RenderDb>>,
+    db: Arc<RwLock<Db>>,
 ) -> Result<BoundingBox, DbError> {
     let mut part_id_to_instance_data = HashMap::<PartId, InstanceData>::new();
     let mut bboxes = vec![];
 
     //setup all the instance data
-    for (part_id, part) in db.get_parts() {
+    for (part_id, part) in db.read_blocking().get_parts() {
         match &part.rep {
             PartRep::Mesh(mesh) => {
-                let gpu_mesh_id = create_mesh_gpu_data(renderer, mesh);
+                let gpu_mesh_id = create_mesh_gpu_data(device, render_db.clone(), mesh);
                 let transform = Transformation(Mat4::IDENTITY);
                 let bbox = compute_transformed_bounding_box_from_mesh(mesh, &transform);
                 bboxes.push(bbox);
@@ -680,11 +699,14 @@ pub fn add_render_items_from_unique_parts(
                 );
             }
             PartRep::ComposedPart(part_instance_ids) => {
+                let read_db = db.read_blocking();
                 for instance in part_instance_ids {
-                    let instance_data = db.get_part_instance_data(instance)?;
+                    let render_db = render_db.clone();
+                    let instance_data = read_db.get_part_instance_data(instance)?;
                     match process_part_instance(
-                        renderer,
-                        db,
+                        device,
+                        render_db,
+                        db.clone(),
                         &mut part_id_to_instance_data,
                         instance_data,
                         &Transformation(Mat4::IDENTITY),
@@ -693,8 +715,11 @@ pub fn add_render_items_from_unique_parts(
                         Err(err) => return Err(err),
                     }
 
-                    match compute_instance_bbox(db, instance_data, &Transformation(Mat4::IDENTITY))
-                    {
+                    match compute_instance_bbox(
+                        db.clone(),
+                        instance_data,
+                        &Transformation(Mat4::IDENTITY),
+                    ) {
                         Ok(bbox) => bboxes.push(bbox),
                         Err(err) => return Err(err),
                     }
@@ -711,16 +736,18 @@ pub fn add_render_items_from_unique_parts(
     part_id_to_instance_data
         .into_iter()
         .for_each(|(_, instance_data)| {
-            add_render_object(renderer, &instance_data);
+            let render_db = render_db.clone();
+            add_render_object(device, render_db, &instance_data);
         });
 
     let mut total_bbox = BoundingBox::default();
     bboxes.iter().for_each(|bbox| {
-        add_bounding_box_wireframe(renderer, bbox);
+        let render_db = render_db.clone();
+        add_bounding_box_wireframe(device, render_db, bbox);
         total_bbox.unite(bbox)
     });
 
-    add_bounding_box_wireframe(renderer, &total_bbox);
+    add_bounding_box_wireframe(device, render_db, &total_bbox);
     println!("Total BBOX is {:?}", total_bbox);
 
     Ok(total_bbox)
@@ -728,10 +755,12 @@ pub fn add_render_items_from_unique_parts(
 
 /// This creates a 3D scene based on the Scene object
 pub fn add_render_items_from_scene(
-    renderer: &mut renderer::Renderer,
-    db: &Db,
+    device: &wgpu::Device,
+    render_db: Arc<RwLock<RenderDb>>,
+    db: Arc<RwLock<Db>>,
 ) -> Result<BoundingBox, DbError> {
-    let scene = db.get_scene()?;
+    let read_db = db.read_blocking();
+    let scene = read_db.get_scene()?;
     let mut total_bbox = BoundingBox::default();
 
     let mut part_id_to_instance_data = HashMap::<PartId, InstanceData>::new();
@@ -739,10 +768,13 @@ pub fn add_render_items_from_scene(
 
     //setup all the instance data
     for instance in &scene.instances {
-        let instance_data = db.get_part_instance_data(instance)?;
+        let render_db = render_db.clone();
+        let db = db.clone();
+        let instance_data = read_db.get_part_instance_data(instance)?;
         match process_part_instance(
-            renderer,
-            db,
+            device,
+            render_db,
+            db.clone(),
             &mut part_id_to_instance_data,
             instance_data,
             &Transformation(Mat4::IDENTITY),
@@ -751,7 +783,7 @@ pub fn add_render_items_from_scene(
             Err(err) => return Err(err),
         }
 
-        match compute_instance_bbox(db, instance_data, &Transformation(Mat4::IDENTITY)) {
+        match compute_instance_bbox(db.clone(), instance_data, &Transformation(Mat4::IDENTITY)) {
             Ok(bbox) => bboxes.push(bbox),
             Err(err) => return Err(err),
         }
@@ -760,23 +792,26 @@ pub fn add_render_items_from_scene(
     part_id_to_instance_data
         .into_iter()
         .for_each(|(_, instance_data)| {
-            add_render_object(renderer, &instance_data);
+            let render_db = render_db.clone();
+            add_render_object(device, render_db, &instance_data);
         });
 
     bboxes.iter().for_each(|bbox| {
-        add_bounding_box_wireframe(renderer, bbox);
+        let render_db = render_db.clone();
+        add_bounding_box_wireframe(device, render_db, bbox);
         total_bbox.unite(bbox)
     });
 
-    add_bounding_box_wireframe(renderer, &total_bbox);
+    add_bounding_box_wireframe(device, render_db, &total_bbox);
     println!("Total BBOX is {:?}", total_bbox);
 
     Ok(total_bbox)
 }
 
 fn process_part_instance(
-    renderer: &mut renderer::Renderer,
-    db: &Db,
+    device: &wgpu::Device,
+    render_db: Arc<RwLock<RenderDb>>,
+    db: Arc<RwLock<Db>>,
     part_id_to_instance_data: &mut HashMap<PartId, InstanceData>,
     instance: &PartInstance,
     parent_transform: &Transformation,
@@ -788,11 +823,12 @@ fn process_part_instance(
         return Ok(());
     }
 
-    let part = db.get_part_data(&instance.part_id);
+    let temp_db = db.read_blocking();
+    let part = temp_db.get_part_data(&instance.part_id);
     match part {
         Ok(p) => match &p.rep {
             PartRep::Mesh(mesh) => {
-                let gpu_mesh_id = create_mesh_gpu_data(renderer, mesh);
+                let gpu_mesh_id = create_mesh_gpu_data(device, render_db, mesh);
                 part_id_to_instance_data.insert(
                     instance.part_id,
                     InstanceData {
@@ -803,10 +839,12 @@ fn process_part_instance(
             }
             PartRep::ComposedPart(part_instances) => {
                 for i in part_instances {
-                    let child_instance_data = db.get_part_instance_data(i)?;
+                    let child_instance_data = temp_db.get_part_instance_data(i)?;
+                    let render_db = render_db.clone();
                     match process_part_instance(
-                        renderer,
-                        db,
+                        device,
+                        render_db,
+                        db.clone(),
                         part_id_to_instance_data,
                         child_instance_data,
                         &combined_transform,
@@ -822,7 +860,11 @@ fn process_part_instance(
     Ok(())
 }
 
-fn create_mesh_gpu_data(renderer: &mut renderer::Renderer, mesh: &Mesh) -> u32 {
+fn create_mesh_gpu_data(
+    device: &wgpu::Device,
+    render_db: Arc<RwLock<RenderDb>>,
+    mesh: &Mesh,
+) -> u32 {
     let positions = convert_vertices_to_position(&mesh.vertices);
     // println!("Number of vertices: {}", positions.len());
     let indices = mesh.triangles.clone();
@@ -835,12 +877,13 @@ fn create_mesh_gpu_data(renderer: &mut renderer::Renderer, mesh: &Mesh) -> u32 {
         .add_vertex_stream(color.as_slice())
         .add_mesh_index_stream(indices.as_slice())
         .add_wireframe_index_stream(wireframe_indices.as_slice())
-        .build(&renderer.device);
+        .build(device);
 
-    renderer.add_mesh(gpu_mesh)
+    let mut render_db = render_db.write_blocking();
+    render_db.add_mesh(gpu_mesh)
 }
 
-fn add_render_object(renderer: &mut renderer::Renderer, data: &InstanceData) {
+fn add_render_object(device: &wgpu::Device, render_db: Arc<RwLock<RenderDb>>, data: &InstanceData) {
     let transformation_data = data
         .transforms
         .iter()
@@ -848,48 +891,63 @@ fn add_render_object(renderer: &mut renderer::Renderer, data: &InstanceData) {
         .collect::<Vec<_>>();
     let material_data = vec![Material::new(1.0, 1.0, 1.0).to_data(); transformation_data.len()];
     let object = RenderObject {
-        renderable: amrust_render::Renderable::ColoredMesh(data.gpu_mesh_id),
+        renderable: amrust_render::Renderable::ColoredMesh,
+        gpu_mesh_id: data.gpu_mesh_id,
         instance: InstanceDataBuilder::new()
             .add_instance_stream(transformation_data.as_slice())
             .add_instance_stream(material_data.as_slice())
-            .build(&renderer.device),
+            .build(device),
+        local_resources: vec![],
     };
-    let _ = renderer.add_object(object);
+    {
+        let mut render_db = render_db.write_blocking();
+        let _ = render_db.add_object(object);
+    }
 
     // println!("Colored Object id {}", object_id);
 
     let wireframe_object = RenderObject {
-        renderable: amrust_render::Renderable::WireframeMesh(data.gpu_mesh_id),
+        renderable: amrust_render::Renderable::WireframeMesh,
+        gpu_mesh_id: data.gpu_mesh_id,
         instance: InstanceDataBuilder::new()
             .add_instance_stream(transformation_data.as_slice())
             .add_instance_stream(material_data.as_slice())
-            .build(&renderer.device),
+            .build(device),
+        local_resources: vec![],
     };
-    let _ = renderer.add_object(wireframe_object);
+
+    {
+        let mut render_db = render_db.write_blocking();
+        let _ = render_db.add_object(wireframe_object);
+    }
 
     // println!("Wireframe Object id {}", wireframe_object_id);
 }
 
 fn add_bounding_box_wireframe(
-    renderer: &mut amrust_render::renderer::Renderer,
+    device: &wgpu::Device,
+    render_db: Arc<RwLock<RenderDb>>,
     bbox: &BoundingBox,
 ) -> u32 {
     let mesh = MeshBuilder::new()
         .add_vertex_stream(convert_points_vec_to_position(&bbox.corners()).as_slice())
         .add_wireframe_index_stream(&BoundingBox::wireframe_indices())
-        .build(&renderer.device);
+        .build(device);
 
-    let mesh_id = renderer.add_mesh(mesh);
+    let mut render_db = render_db.write_blocking();
+    let mesh_id = render_db.add_mesh(mesh);
 
     let wireframe_object = RenderObject {
-        renderable: amrust_render::Renderable::WireframeMesh(mesh_id),
+        renderable: amrust_render::Renderable::WireframeMesh,
+        gpu_mesh_id: mesh_id,
         instance: InstanceDataBuilder::new()
             .add_instance_stream(&[Transformation(Mat4::IDENTITY).to_data()])
             .add_instance_stream(&[Material::new(1.0, 1.0, 1.0).to_data()])
-            .build(&renderer.device),
+            .build(device),
+        local_resources: vec![],
     };
 
-    renderer.add_object(wireframe_object)
+    render_db.add_object(wireframe_object)
 }
 
 fn convert_points_vec_to_position(points: &[Vec3]) -> Vec<Position> {
@@ -927,12 +985,13 @@ fn convert_triangle_indices_to_wireframe_indices(triangles: &[u32]) -> Vec<u32> 
 }
 
 fn compute_instance_bbox(
-    db: &Db,
+    db: Arc<RwLock<Db>>,
     instance: &PartInstance,
     parent_transform: &Transformation,
 ) -> Result<BoundingBox, DbError> {
     let combined_transform = Transformation(parent_transform.0 * instance.transform.0);
-    let part = db.get_part_data(&instance.part_id)?;
+    let read_db = db.read_blocking();
+    let part = read_db.get_part_data(&instance.part_id)?;
 
     match &part.rep {
         PartRep::Mesh(mesh) => {
@@ -942,9 +1001,9 @@ fn compute_instance_bbox(
         PartRep::ComposedPart(children) => {
             let mut bbox = BoundingBox::default();
             for child in children {
-                let child_instance_data = db.get_part_instance_data(child)?;
+                let child_instance_data = read_db.get_part_instance_data(child)?;
                 let child_bbox =
-                    compute_instance_bbox(db, child_instance_data, &combined_transform)?;
+                    compute_instance_bbox(db.clone(), child_instance_data, &combined_transform)?;
                 bbox.unite(&child_bbox);
             }
             Ok(bbox)

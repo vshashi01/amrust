@@ -1,9 +1,14 @@
 mod amrust_db;
 mod app;
 mod app_mode;
+mod clear_db;
 mod egui_tools;
 mod load_3mf;
+mod operation;
+mod operation_manager;
 mod part_list;
+mod render_db;
+mod render_worker;
 mod save_3mf;
 mod toolsheets;
 mod tree_item_viewer;

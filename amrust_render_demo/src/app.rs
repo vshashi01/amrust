@@ -1,23 +1,24 @@
 use crate::amrust_db::{
-    Db, add_render_items_from_scene, add_render_items_from_unique_parts, create_build_items_list,
-    create_object_tree_from_identifiable, create_objects_list,
+    Db, Mesh, add_render_items_from_scene, add_render_items_from_unique_parts,
+    create_build_items_list, create_object_tree_from_identifiable, create_objects_list,
     create_scene_tree_items_by_unique_parts,
 };
 use crate::app_mode::AppMode;
+use crate::clear_db::ClearDbOps;
 use crate::egui_tools::EguiRenderer;
+use crate::operation::OperationResponse;
+use crate::operation_manager::{OperationManager, OperationMessage};
 use crate::part_list::PartList;
-use crate::save_3mf::save;
-use crate::toolsheets::{self, Toolsheets};
+use crate::render_db::RenderDb;
+use crate::render_worker::{RenderMessage, RenderResponse, RenderWorker, RendererSettings};
+use crate::toolsheets::Toolsheets;
 use crate::tree_item_viewer::TreeItemViewer;
 use crate::viewport::Viewport3D;
+use crate::{load_3mf, save_3mf};
 use amrust_render::bounding_box::BoundingBox;
 // use amrust_lib::widgets::dropped_files::DroppedFilesWidget;
 use amrust_render::camera::{self, CameraData, OrthographicCameraData};
-use amrust_render::gpu_mesh::MeshBuilder;
-use amrust_render::instance::InstanceDataBuilder;
-use amrust_render::material::Material;
-use amrust_render::normalized_box::{ORDERED_POSITIONS, ORDERED_POSITIONS_BOX_EDGE_INDICES};
-use amrust_render::renderer::RenderTextureData;
+use amrust_render::normalized_box::{ORDERED_POSITIONS, ORDERED_POSITIONS_TRI_EDGE_INDICES};
 use amrust_render::transformation::Transformation;
 use egui::{Id, Layout, epaint};
 use egui_dock::{DockArea, DockState, NodeIndex};
@@ -25,6 +26,9 @@ use egui_file_dialog::FileDialog;
 use egui_wgpu::wgpu::SurfaceError;
 use egui_wgpu::{ScreenDescriptor, wgpu};
 use glam::{Mat4, Vec3};
+use smol::channel::{Receiver, Sender, TryRecvError};
+use smol::lock::RwLock;
+use smol::{Executor, channel};
 use std::path::PathBuf;
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
@@ -33,7 +37,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId};
 
-use amrust_render::{RenderObject, Renderable, renderer};
+use amrust_render::renderer;
 
 struct AppState {
     pub device: Arc<wgpu::Device>,
@@ -42,22 +46,28 @@ struct AppState {
     pub surface: wgpu::Surface<'static>,
     pub dpi_factor: f32,
     pub egui_renderer: EguiRenderer,
-    pub renderer_3d: renderer::Renderer,
     pub camera_data: OrthographicCameraData,
-    pub render_texture_data: renderer::RenderTextureData,
-    pub texture_id: epaint::TextureId,
+    pub texture_id: Option<epaint::TextureId>,
     // pub dropped_files: DroppedFilesWidget,
     pub load_file_dlg: FileDialog,
     pub save_file_dlg: FileDialog,
     pub picked_file: Option<PathBuf>,
     pub scene_bbox: Option<BoundingBox>,
-    pub db: Db,
+    pub db: Arc<RwLock<Db>>,
     pub toolsheets: Option<Toolsheets>,
-    pub selected_items: Vec<usize>,
     pub viewport_3d: Viewport3D,
     pub current_app_mode: AppMode,
     pub current_render_mode: AppMode,
     pub need_viewport_update: bool,
+
+    pub executor: Arc<Executor<'static>>,
+    pub render_message_tx: Sender<RenderMessage>,
+    pub render_response_rx: Receiver<RenderResponse>,
+    pub render_db: Arc<RwLock<RenderDb>>,
+
+    pub operation_manager: OperationManager,
+    pub operation_queue_tx: Sender<OperationMessage>,
+    pub operation_response_rx: Receiver<OperationResponse>,
 }
 
 impl AppState {
@@ -114,25 +124,64 @@ impl AppState {
 
         surface.configure(&device, &surface_config);
 
-        let mut egui_renderer = EguiRenderer::new(&device, surface_config.format, None, 1, window);
+        let egui_renderer = EguiRenderer::new(&device, surface_config.format, None, 1, window);
 
-        let mut renderer_3d = renderer::Renderer::from_existing_device_and_queue(
-            device.clone(),
-            queue.clone(),
-            surface_config.format,
-            width,
-            height,
-        )
-        .await
-        .unwrap();
-
-        //when the size change we need to create a new render texture data and register a new egui texture.
-        let render_texture_data = renderer_3d.create_render_texture_data();
-        let texture_id = egui_renderer.register_texture(&device, &render_texture_data.texture_view);
         let camera_data = get_camera_data();
-        render_frame(&mut renderer_3d, &camera_data, &render_texture_data).await;
 
         // let dropped_files_widget = DroppedFilesWidget::new();
+
+        //create async executor and run it
+        let executor = Arc::new(Executor::new());
+        {
+            let exec = executor.clone();
+            std::thread::Builder::new()
+                .name("smol-executor".to_owned())
+                .spawn(move || {
+                    smol::block_on(async move {
+                        println!("Trying to run executor");
+                        exec.run(async move {
+                            loop {
+                                smol::Timer::after(std::time::Duration::from_millis(1)).await;
+                            }
+                        })
+                        .await;
+                    });
+                })
+                .expect("failed to spawn executor thread");
+        }
+
+        let render_db = Arc::new(RwLock::new(RenderDb::new()));
+
+        //create new render worker
+        let (render_message_tx, render_message_rx) = channel::unbounded();
+        let (render_response_tx, render_response_rx) = channel::unbounded();
+
+        let renderer_settings = RendererSettings {
+            device: device.clone(),
+            queue: queue.clone(),
+            format: surface_config.format,
+            width,
+            height,
+            initial_camera_data: camera_data.clone(),
+        };
+
+        {
+            let internal_render_db = render_db.clone();
+            executor
+                .spawn(async {
+                    println!("Attempted to println in separate thread");
+                    let mut render_worker = RenderWorker::new(
+                        renderer_settings,
+                        internal_render_db,
+                        render_message_rx,
+                        render_response_tx,
+                    )
+                    .await;
+
+                    render_worker.run().await;
+                })
+                .detach();
+        }
 
         let load_file_dlg = FileDialog::new()
             .add_file_filter_extensions("3MF", vec!["3mf"])
@@ -142,6 +191,11 @@ impl AppState {
             .add_save_extension("3MF file", "3mf")
             .default_save_extension("3MF file");
 
+        //create operation manager and its channels
+        let (operation_queue_tx, operation_queue_rx) = channel::unbounded();
+        let (operation_response_tx, operation_response_rx) = channel::unbounded();
+        let operation_manager = OperationManager::new(operation_queue_rx, operation_response_tx);
+
         Self {
             device: Arc::new(device),
             queue: Arc::new(queue),
@@ -149,22 +203,27 @@ impl AppState {
             surface_config,
             dpi_factor,
             egui_renderer,
-            renderer_3d,
             camera_data,
-            render_texture_data,
-            texture_id,
+            texture_id: None,
             // dropped_files: dropped_files_widget,
             load_file_dlg,
             save_file_dlg,
             picked_file: None,
             scene_bbox: None,
-            db: Db::new(),
+            db: Arc::new(RwLock::new(Db::new())),
             toolsheets: None,
-            selected_items: vec![],
             viewport_3d: Viewport3D {},
             current_app_mode: AppMode::Build,
             current_render_mode: AppMode::Build,
             need_viewport_update: false,
+            executor,
+            render_message_tx,
+            render_response_rx,
+            render_db,
+
+            operation_manager,
+            operation_queue_tx,
+            operation_response_rx,
         }
     }
 
@@ -173,24 +232,57 @@ impl AppState {
         self.surface_config.height = height;
         self.surface.configure(&self.device, &self.surface_config);
 
-        self.renderer_3d.set_size(width, height);
-        let render_texture_data = self.renderer_3d.create_render_texture_data();
-        let texture_id = self
-            .egui_renderer
-            .register_texture(&self.device, &render_texture_data.texture_view);
-        self.render_texture_data = render_texture_data;
-        self.texture_id = texture_id;
+        // resize the viewport.
+        self.render_message_tx
+            .send_blocking(RenderMessage::ResizeViewport(width, height))
+            .unwrap();
     }
 
     fn handle_redraw(&mut self) {
-        pollster::block_on(async {
-            render_frame(
-                &mut self.renderer_3d,
-                &self.camera_data,
-                &self.render_texture_data,
-            )
-            .await
-        });
+        self.render_message_tx
+            .send_blocking(RenderMessage::Render)
+            .unwrap();
+
+        match self.render_response_rx.try_recv() {
+            Ok(response) => match response {
+                RenderResponse::NewTextureView(texture_view) => {
+                    let id = self
+                        .egui_renderer
+                        .register_texture(&self.device, &texture_view);
+                    let _ = self.texture_id.insert(id);
+                    // println!("New texture view is attempted!")
+                }
+                RenderResponse::RenderComplete => {
+                    // println!("Rendered");
+                }
+            },
+            Err(err) => match err {
+                TryRecvError::Empty => {}
+                TryRecvError::Closed => panic!("Disconnected"),
+            },
+        }
+
+        match self.operation_response_rx.try_recv() {
+            Ok(response) => match response {
+                OperationResponse::Ongoing(_) => {
+                    //update ui?
+                }
+                OperationResponse::Succeeded(text) => {
+                    println!("Operation Success: {text}");
+                    self.need_viewport_update = true;
+                }
+                OperationResponse::Failed(text, error) => {
+                    println!("Operation Failed: {text} with error {error:?}");
+                }
+                OperationResponse::Aborted(text) => {
+                    println!("Operation Cancelled: {text}");
+                }
+            },
+            Err(err) => match err {
+                TryRecvError::Empty => {}
+                TryRecvError::Closed => panic!("Operation Manager is killed!!"),
+            },
+        }
     }
 }
 
@@ -316,7 +408,9 @@ impl App {
         {
             state.egui_renderer.begin_frame(window);
 
+            // take snapshot of previous frame data
             let prev_app_mode = state.current_app_mode;
+            let prev_camera_data = state.camera_data.clone();
 
             let default_bbox = BoundingBox::default();
             let bbox = state.scene_bbox.as_ref().unwrap_or(&default_bbox);
@@ -330,21 +424,22 @@ impl App {
 
                         #[cfg(debug_assertions)]
                         if ui.button("Add Test Mesh").clicked() {
-                            set_solid_mesh(&mut state.renderer_3d);
-                            state.egui_renderer.context().request_repaint();
+                            create_test_object(state.db.clone());
+                            state.need_viewport_update = true;
                         }
 
-                        ui.add_enabled_ui(!state.db.is_scene_empty(), |ui| {
+                        ui.add_enabled_ui(!state.db.read_blocking().is_scene_empty(), |ui| {
                             if ui.button("Unzoom Scene").clicked() {
                                 unzoom_bbox(&mut state.camera_data, bbox);
-                                state.egui_renderer.context().request_repaint();
                             }
 
                             if ui.button("Clear All").clicked() {
-                                state.renderer_3d.clear_all();
-                                state.db.clear_all();
-                                state.toolsheets = None;
-                                state.egui_renderer.context().request_repaint();
+                                let clear_ops = ClearDbOps;
+                                if let Err(err) = state.operation_queue_tx.send_blocking(
+                                    OperationMessage::AddSyncOperation(Box::new(clear_ops)),
+                                ) {
+                                    println!("{err:?}");
+                                }
                             }
 
                             if ui.button("Save to 3mf").clicked() {
@@ -352,20 +447,23 @@ impl App {
                             }
                         });
 
-                        ui.with_layout(Layout::right_to_left(egui::Align::RIGHT), |ui| {
-                            // ToDo: Add a tooltip here to explain the difference in modes
-                            ui.radio_value(
-                                &mut state.current_app_mode,
-                                AppMode::Objects,
-                                "Objects Mode",
-                            );
+                        //onyl show modes if there is a scene
+                        if state.db.read_blocking().get_scene().is_ok() {
+                            ui.with_layout(Layout::right_to_left(egui::Align::RIGHT), |ui| {
+                                // ToDo: Add a tooltip here to explain the difference in modes
+                                ui.radio_value(
+                                    &mut state.current_app_mode,
+                                    AppMode::Objects,
+                                    "Objects Mode",
+                                );
 
-                            ui.radio_value(
-                                &mut state.current_app_mode,
-                                AppMode::Build,
-                                "Build Mode",
-                            );
-                        });
+                                ui.radio_value(
+                                    &mut state.current_app_mode,
+                                    AppMode::Build,
+                                    "Build Mode",
+                                );
+                            });
+                        }
                     });
                 });
 
@@ -395,9 +493,14 @@ impl App {
             }
 
             egui::CentralPanel::default().show(state.egui_renderer.context(), |ui| {
-                state
-                    .viewport_3d
-                    .ui(ui, state.texture_id, &mut state.camera_data, bbox);
+                match state.texture_id {
+                    Some(id) => {
+                        state.viewport_3d.ui(ui, id, &mut state.camera_data, bbox);
+                    }
+                    None => {
+                        ui.label("Rendering Texture ID is missing!!");
+                    }
+                }
             });
 
             // state
@@ -411,84 +514,85 @@ impl App {
                 if let Some(ext) = path.extension()
                     && let Some("3mf") = ext.to_str()
                 {
-                    let threemf = std::fs::File::open(path).unwrap();
-                    let db = crate::load_3mf::load(threemf);
-                    match db {
-                        Ok(db) => {
-                            println!("Db contains: {:?}", db);
-                            let appended = state.db.append(db);
-
-                            match appended {
-                                Ok(_) => {
-                                    state.need_viewport_update = true;
-                                }
-                                Err(err) => {
-                                    println!("{err:?}")
-                                }
-                            }
-                        }
-                        Err(err) => println!("Error:{:?}", err),
+                    let ops = load_3mf::Load3MFOps { path };
+                    if let Err(err) = state
+                        .operation_queue_tx
+                        .send_blocking(OperationMessage::AddAsyncOperation(Box::new(ops)))
+                    {
+                        println!("{err:?}");
                     }
                 }
             }
 
             state.save_file_dlg.update(state.egui_renderer.context());
-            if let Some(save_file_path) = state.save_file_dlg.take_picked() {
-                println!("File path to save to is {save_file_path:?}");
+            if let Some(path) = state.save_file_dlg.take_picked() {
+                println!("File path to save to is {path:?}");
 
-                let file = std::fs::File::create_new(save_file_path);
-
-                match file {
-                    Ok(file) => {
-                        if let Err(err) = save(&state.db, file) {
-                            println!("{err:?}");
-                        }
-                    }
-                    Err(err) => println!("{err:?}"),
+                let ops = save_3mf::Save3mfOps { path };
+                if let Err(err) = state
+                    .operation_queue_tx
+                    .send_blocking(OperationMessage::AddAsyncOperation(Box::new(ops)))
+                {
+                    println!("{err:?}");
                 }
             }
 
             if state.current_app_mode != state.current_render_mode || state.need_viewport_update {
                 // ToDo: Figure out a better way to do clear
-                state.renderer_3d.clear_all();
+                //state.renderer_3d.clear_all();
+                let mut write_render_db = state.render_db.write_blocking();
+                write_render_db.clear_all();
+                drop(write_render_db);
+                state.toolsheets = None;
 
-                let (bbox, part_list, object_list, build_list) = match &state.current_app_mode {
-                    AppMode::Objects => {
-                        let bbox =
-                            add_render_items_from_unique_parts(&mut state.renderer_3d, &state.db);
-                        let part_list = create_scene_tree_items_by_unique_parts(&state.db);
-                        let object_list = create_objects_list(&state.db);
-                        let build_list = create_build_items_list(&state.db);
-                        (bbox, part_list, object_list, build_list)
-                    }
-                    AppMode::Build => {
-                        let bbox = add_render_items_from_scene(&mut state.renderer_3d, &state.db);
-                        let part_list = create_build_items_list(&state.db);
-                        let object_list = create_objects_list(&state.db);
-                        let build_list = create_build_items_list(&state.db);
-                        (bbox, part_list, object_list, build_list)
-                    }
-                };
-
-                match (part_list, object_list, build_list) {
-                    (Ok(part_list_items), Ok(object_items), Ok(build_items)) => match bbox {
-                        Ok(bbox) => {
-                            let part_list = PartList::new(part_list_items);
-                            let _ = state.toolsheets.insert(Toolsheets::new(
-                                state.current_app_mode,
-                                part_list,
-                                TreeItemViewer::new(object_items, false),
-                                TreeItemViewer::new(build_items, false),
-                            ));
-
-                            unzoom_bbox(&mut state.camera_data, &bbox);
-                            let _ = state.scene_bbox.insert(bbox);
-
-                            state.egui_renderer.context().request_repaint();
+                let read_db = state.db.read_blocking();
+                if !read_db.is_empty() {
+                    let (bbox, part_list, object_list, build_list) = match &state.current_app_mode {
+                        AppMode::Objects => {
+                            let bbox = add_render_items_from_unique_parts(
+                                &state.device,
+                                state.render_db.clone(),
+                                state.db.clone(),
+                            );
+                            let part_list =
+                                create_scene_tree_items_by_unique_parts(state.db.clone());
+                            let object_list = create_objects_list(state.db.clone());
+                            let build_list = create_build_items_list(state.db.clone());
+                            (bbox, part_list, object_list, build_list)
                         }
-                        Err(err) => println!("{err:?}"),
-                    },
-                    _ => panic!("Something wrong here!!"),
+                        AppMode::Build => {
+                            let bbox = add_render_items_from_scene(
+                                &state.device,
+                                state.render_db.clone(),
+                                state.db.clone(),
+                            );
+                            let part_list = create_build_items_list(state.db.clone());
+                            let object_list = create_objects_list(state.db.clone());
+                            let build_list = create_build_items_list(state.db.clone());
+                            (bbox, part_list, object_list, build_list)
+                        }
+                    };
+
+                    match (part_list, object_list, build_list) {
+                        (Ok(part_list_items), Ok(object_items), Ok(build_items)) => match bbox {
+                            Ok(bbox) => {
+                                let part_list = PartList::new(part_list_items);
+                                let _ = state.toolsheets.insert(Toolsheets::new(
+                                    state.current_app_mode,
+                                    part_list,
+                                    TreeItemViewer::new(object_items, false),
+                                    TreeItemViewer::new(build_items, false),
+                                ));
+
+                                //unzoom_bbox(&mut state.camera_data, &bbox);
+                                let _ = state.scene_bbox.insert(bbox);
+
+                                state.egui_renderer.context().request_repaint();
+                            }
+                            Err(err) => println!("{err:?}"),
+                        },
+                        _ => panic!("Something wrong here!!"),
+                    }
                 }
 
                 state.need_viewport_update = false;
@@ -506,7 +610,7 @@ impl App {
 
                 let mut tree_items = vec![];
                 for id in selected_identifiables {
-                    let item = create_object_tree_from_identifiable(&state.db, id).unwrap();
+                    let item = create_object_tree_from_identifiable(state.db.clone(), id).unwrap();
                     tree_items.push(item);
                 }
 
@@ -516,6 +620,24 @@ impl App {
                 });
 
                 toolsheets.clear_selection_changed();
+            }
+
+            //update the camera if the camera data is changed
+            if prev_camera_data != state.camera_data
+                && let Err(err) = state
+                    .render_message_tx
+                    .send_blocking(RenderMessage::UpdateCamera(state.camera_data.clone()))
+            {
+                println!("{err:?}");
+            }
+
+            //run the operation manager
+            {
+                state.operation_manager.run(
+                    state.db.clone(),
+                    state.executor.clone(),
+                    state.render_message_tx.clone(),
+                );
             }
 
             state.egui_renderer.end_frame_and_draw(
@@ -582,63 +704,49 @@ impl ApplicationHandler for App {
     }
 }
 
-async fn render_frame(
-    renderer: &mut renderer::Renderer,
-    camera_data: &impl CameraData,
-    render_texture_data: &RenderTextureData,
-) {
-    renderer.update_camera(camera_data);
-    let _ = renderer.render_to_texture(render_texture_data).await;
-}
-
-fn set_solid_mesh(renderer: &mut renderer::Renderer) -> (u32, u32) {
-    let simple_mesh = MeshBuilder::new()
-        .add_vertex_stream(ORDERED_POSITIONS)
-        .add_wireframe_index_stream(ORDERED_POSITIONS_BOX_EDGE_INDICES)
-        .build(&renderer.device);
-
-    let simple_mesh_id = renderer.add_mesh(simple_mesh);
-
-    let transformations = [
-        Transformation(Mat4::from_translation((0.0, 5.0, 0.0).into())).to_data(),
-        Transformation(Mat4::from_axis_angle(
-            Vec3 {
-                x: 0.0,
-                y: 1.0,
-                z: 0.0,
-            },
-            45.0_f32.to_radians(),
-        ))
-        .to_data(),
-    ];
-
-    let simple_mesh_instance_buffer = InstanceDataBuilder::new()
-        .add_instance_stream(&transformations)
-        .add_instance_stream(&[
-            Material::new(0.75, 0.05, 0.5).to_data(),
-            Material::new(1.0, 0.0, 1.0).to_data(),
-        ])
-        .build(&renderer.device);
-
-    let simple_mesh_object = RenderObject {
-        renderable: Renderable::Mesh(simple_mesh_id),
-        instance: simple_mesh_instance_buffer,
+fn create_test_object(db: Arc<RwLock<Db>>) {
+    let mesh = Mesh {
+        vertices: ORDERED_POSITIONS
+            .iter()
+            .map(|p| Vec3::new(p.0[0], p.0[1], p.0[2]))
+            .collect(),
+        triangles: ORDERED_POSITIONS_TRI_EDGE_INDICES
+            .iter()
+            .map(|i| *i as u32)
+            .collect(),
     };
-    let _simple_mesh_object_id = renderer.add_object(simple_mesh_object);
 
-    let simple_mesh_wireframe_object = RenderObject {
-        renderable: Renderable::WireframeMesh(simple_mesh_id),
-        instance: InstanceDataBuilder::new()
-            .add_instance_stream(&transformations)
-            .add_instance_stream(&[
-                Material::new(0.0, 0.0, 1.0).to_data(),
-                Material::new(0.0, 0.0, 1.0).to_data(),
-            ])
-            .build(&renderer.device),
-    };
-    let _simple_mesh_wireframe_object_id = renderer.add_object(simple_mesh_wireframe_object);
+    let mut db = db.write_blocking();
+    let part_id = db
+        .add_part_rep(crate::amrust_db::PartRep::Mesh(Box::new(mesh)))
+        .unwrap();
 
-    (_simple_mesh_object_id, _simple_mesh_wireframe_object_id)
+    let instance_1 = db
+        .make_new_part_instance_from_part(
+            &part_id,
+            Some(Transformation(Mat4::from_translation(
+                (0.0, 5.0, 0.0).into(),
+            ))),
+        )
+        .unwrap();
+
+    db.add_part_instance_to_scene(&instance_1).unwrap();
+
+    let instance_2 = db
+        .make_new_part_instance_from_part(
+            &part_id,
+            Some(Transformation(Mat4::from_axis_angle(
+                Vec3 {
+                    x: 0.0,
+                    y: 1.0,
+                    z: 0.0,
+                },
+                45.0_f32.to_radians(),
+            ))),
+        )
+        .unwrap();
+
+    db.add_part_instance_to_scene(&instance_2).unwrap();
 }
 
 fn get_camera_data() -> OrthographicCameraData {

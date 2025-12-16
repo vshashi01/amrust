@@ -1,34 +1,20 @@
 use crate::prelude::*;
-
-use crate::{RenderObject, Renderable, gpu_mesh::GpuMesh, material, transformation, vertex};
+use crate::{RenderData, Renderable, material, transformation, vertex};
 
 use std::collections::HashMap;
 
-pub fn solid_render_pass(
-    objects: &[&RenderObject],
-    meshes: &[GpuMesh],
-    local_bind_groups: &[wgpu::BindGroup],
+pub fn solid_render_pass<'a>(
+    renderables: &[RenderData<'a>],
     render_pipeline_cache: &HashMap<String, wgpu::RenderPipeline>,
     render_pass: &mut wgpu::RenderPass<'_>,
 ) {
-    let single_textured_objects = objects.iter().filter_map(|o| match &o.renderable {
-        Renderable::TexturedMesh(mesh_id, local_bind_groups_list) => Some((
-            mesh_id,
-            &o.instance,
-            local_bind_groups_list,
-            "Textured Surface",
-        )),
-        Renderable::ArrayTexturedMesh(mesh_id, local_bind_groups_list) => Some((
-            mesh_id,
-            &o.instance,
-            local_bind_groups_list,
-            "Texture Array Surface",
-        )),
+    let single_textured_objects = renderables.iter().filter_map(|o| match &o.0 {
+        Renderable::TexturedMesh => Some((o.1, o.2, o.3.clone(), "Textured Surface")),
+        Renderable::ArrayTexturedMesh => Some((o.1, o.2, o.3.clone(), "Texture Array Surface")),
         _ => None,
     });
 
-    for (mesh_id, instance, bind_groups_list, pipeline_key) in single_textured_objects {
-        let mesh = meshes.get(*mesh_id as usize).unwrap();
+    for (mesh, instance, bind_groups_list, pipeline_key) in single_textured_objects {
         render_pass.set_pipeline(render_pipeline_cache.get(pipeline_key).unwrap());
         let position_buffer = mesh.vertex_slice::<vertex::Position>();
         let color_buffer = mesh.vertex_slice::<vertex::Color>();
@@ -46,8 +32,7 @@ pub fn solid_render_pass(
         render_pass.set_vertex_buffer(5, material_buffer);
 
         for pair in bind_groups_list.iter() {
-            let local_bind_group = local_bind_groups.get(pair.0 as usize).unwrap();
-            render_pass.set_bind_group(pair.1, local_bind_group, &[]);
+            render_pass.set_bind_group(pair.1, pair.0, &[]);
         }
 
         if let Some(index_stream) = &mesh.mesh_index_stream {
@@ -60,16 +45,15 @@ pub fn solid_render_pass(
         }
     }
 
-    let colored_objects = objects.iter().filter_map(|o| {
-        if let Renderable::ColoredMesh(mesh_id) = &o.renderable {
-            Some((mesh_id, &o.instance))
+    let colored_objects = renderables.iter().filter_map(|o| {
+        if let Renderable::ColoredMesh = &o.0 {
+            Some((o.1, o.2))
         } else {
             None
         }
     });
 
-    for (mesh_id, instance) in colored_objects {
-        let mesh = meshes.get(*mesh_id as usize).unwrap();
+    for (mesh, instance) in colored_objects {
         render_pass.set_pipeline(render_pipeline_cache.get("Colored Surface").unwrap());
         let position_buffer = mesh.vertex_slice::<vertex::Position>();
         let color_buffer = mesh.vertex_slice::<vertex::Color>();
@@ -92,16 +76,15 @@ pub fn solid_render_pass(
         }
     }
 
-    let simple_objects = objects.iter().filter_map(|o| {
-        if let Renderable::Mesh(mesh_id) = &o.renderable {
-            Some((mesh_id, &o.instance))
+    let simple_objects = renderables.iter().filter_map(|o| {
+        if let Renderable::Mesh = &o.0 {
+            Some((o.1, o.2))
         } else {
             None
         }
     });
 
-    for (meshid, instance) in simple_objects {
-        let mesh = meshes.get(*meshid as usize).unwrap();
+    for (mesh, instance) in simple_objects {
         render_pass.set_pipeline(render_pipeline_cache.get("Uniform Solid Surface").unwrap());
         let position_buffer = mesh.vertex_slice::<vertex::Position>();
         let transformation_buffer = instance.vertex_slice::<transformation::TransformationData>();
@@ -115,24 +98,20 @@ pub fn solid_render_pass(
     }
 }
 
-pub fn wireframe_render_pass(
-    objects: &[&RenderObject],
-    meshes: &[GpuMesh],
-    local_bind_groups: &[wgpu::BindGroup],
+pub fn wireframe_render_pass<'a>(
+    renderables: &[RenderData<'a>],
     render_pipeline_cache: &HashMap<String, wgpu::RenderPipeline>,
     render_pass: &mut wgpu::RenderPass<'_>,
 ) {
-    let _ = local_bind_groups;
-    let wireframe_objects = objects.iter().filter_map(|o| {
-        if let Renderable::WireframeMesh(mesh_id) = &o.renderable {
-            Some((mesh_id, &o.instance))
+    let wireframe_objects = renderables.iter().filter_map(|o| {
+        if let Renderable::WireframeMesh = &o.0 {
+            Some((o.1, o.2))
         } else {
             None
         }
     });
 
-    for (mesh_id, instance) in wireframe_objects {
-        let mesh = meshes.get(*mesh_id as usize).unwrap();
+    for (mesh, instance) in wireframe_objects {
         render_pass.set_pipeline(render_pipeline_cache.get("Wireframe").unwrap());
 
         let position_buffer = mesh.vertex_slice::<vertex::Position>();

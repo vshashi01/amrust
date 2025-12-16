@@ -1,6 +1,8 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use amrust_render::transformation::Transformation;
+use async_trait::async_trait;
 use thiserror::Error;
 use threemf2::core::model::Unit;
 use threemf2::core::transform::Transform;
@@ -14,6 +16,9 @@ use crate::amrust_db::DbError;
 use crate::amrust_db::PartId;
 use crate::amrust_db::PartInstance;
 use crate::amrust_db::PartRep;
+use crate::operation::Operation;
+use crate::operation::OperationContext;
+use crate::operation::OperationResponse;
 
 #[derive(Debug, Error)]
 pub enum DbTo3mfError {
@@ -42,7 +47,29 @@ pub enum DbTo3mfError {
     SceneEmpty,
 }
 
-pub fn save(db: &Db, threemf: std::fs::File) -> Result<(), DbTo3mfError> {
+pub struct Save3mfOps {
+    pub path: PathBuf,
+}
+
+#[async_trait]
+impl Operation for Save3mfOps {
+    async fn execute(&mut self, context: &mut OperationContext) -> OperationResponse {
+        let file = std::fs::File::create_new(&self.path);
+        match file {
+            Ok(f) => {
+                context
+                    .get_db(async |db| match save(db, f) {
+                        Ok(_) => OperationResponse::Succeeded("Save 3MF"),
+                        Err(err) => OperationResponse::Failed("Save 3MF", Box::new(err)),
+                    })
+                    .await
+            }
+            Err(err) => OperationResponse::Failed("Save 3MF", Box::new(err)),
+        }
+    }
+}
+
+fn save(db: &Db, threemf: std::fs::File) -> Result<(), DbTo3mfError> {
     let package = create_3mf_package(db)?;
 
     Ok(package.write(threemf)?)

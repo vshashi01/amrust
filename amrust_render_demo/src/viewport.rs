@@ -31,7 +31,7 @@ impl Viewport3D {
 
         if ui_response.inner.dragged() {
             let delta = ui_response.inner.drag_delta();
-            println!("Drag delta is: {:?}", delta);
+            // println!("Drag delta is: {:?}", delta);
             let drag_sensitivity = 0.01;
             camera_data.transform(camera::CameraTransform::Rotate {
                 pivot: bbox.center(),

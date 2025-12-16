@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use glam::Vec3;
 use thiserror::Error;
 use threemf2::io::query::{self};
@@ -8,9 +9,11 @@ use threemf2::core::transform::Transform;
 use threemf2::io::ThreemfPackage;
 
 use crate::amrust_db::{Db, DbError, Mesh, PartId, PartRep, Scene};
+use crate::operation::{Operation, OperationContext, OperationResponse};
 
 use core::f32;
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 #[derive(Debug, Error)]
 pub enum DbFrom3mfError {
@@ -24,7 +27,31 @@ pub enum DbFrom3mfError {
     ThreemfProcessingError(#[from] threemf2::io::Error),
 }
 
-pub fn load(threemf: std::fs::File) -> Result<Db, DbFrom3mfError> {
+pub struct Load3MFOps {
+    pub path: PathBuf,
+}
+
+#[async_trait]
+impl Operation for Load3MFOps {
+    async fn execute(&mut self, context: &mut OperationContext) -> OperationResponse {
+        let file = std::fs::File::open(&self.path);
+        match file {
+            Ok(threemf_file) => match load(threemf_file) {
+                Ok(db) => {
+                    if let Err(err) = context.append_db(db).await {
+                        return OperationResponse::Failed("Load 3MF", Box::new(err));
+                    } else {
+                        return OperationResponse::Succeeded("Load 3MF Operation");
+                    }
+                }
+                Err(err) => OperationResponse::Failed("Load 3MF", Box::new(err)),
+            },
+            Err(err) => OperationResponse::Failed("Load 3MF", Box::new(err)),
+        }
+    }
+}
+
+fn load(threemf: std::fs::File) -> Result<Db, DbFrom3mfError> {
     let package = ThreemfPackage::from_reader_with_memory_optimized_deserializer(threemf, true)?;
 
     get_db_from_3mf(&package)
