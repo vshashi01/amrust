@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use amrust_render::transformation::Transformation;
+use async_trait::async_trait;
 use thiserror::Error;
 use threemf2::core::model::Unit;
 use threemf2::core::transform::Transform;
@@ -50,6 +51,7 @@ pub struct Save3mfOps {
     pub path: PathBuf,
 }
 
+#[async_trait]
 impl Operation for Save3mfOps {
     async fn execute(&mut self, context: &mut OperationContext) -> OperationResponse {
         let file = std::fs::File::create_new(&self.path);

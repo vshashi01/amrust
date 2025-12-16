@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use glam::Vec3;
 use thiserror::Error;
 use threemf2::io::query::{self};
@@ -30,6 +31,7 @@ pub struct Load3MFOps {
     pub path: PathBuf,
 }
 
+#[async_trait]
 impl Operation for Load3MFOps {
     async fn execute(
         &mut self,

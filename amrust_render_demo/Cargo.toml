@@ -31,6 +31,7 @@ egui_dock = { workspace = true }
 slotmap = { version = "1.1.1" }
 smol = { version = "2.0.2" }
 image = { version = "0.25.9" }
+async-trait = { version = "0.1.89" }
 
 amrust_render = { workspace = true }
 amrust_lib = { workspace = true }

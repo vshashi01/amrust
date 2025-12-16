@@ -4,8 +4,9 @@ use crate::amrust_db::{
     create_scene_tree_items_by_unique_parts,
 };
 use crate::app_mode::AppMode;
+use crate::clear_db::ClearDbOps;
 use crate::egui_tools::EguiRenderer;
-use crate::operation_manager::{OperationManager, OperationResponse, Operations};
+use crate::operation_manager::{OperationManager, OperationMessage, OperationResponse};
 use crate::part_list::PartList;
 use crate::render_db::RenderDb;
 use crate::render_worker::{RenderMessage, RenderResponse, RenderWorker, RendererSettings};
@@ -13,6 +14,7 @@ use crate::save_3mf::save;
 use crate::toolsheets::{self, Toolsheets};
 use crate::tree_item_viewer::TreeItemViewer;
 use crate::viewport::Viewport3D;
+use crate::{load_3mf, save_3mf};
 use amrust_render::bounding_box::BoundingBox;
 // use amrust_lib::widgets::dropped_files::DroppedFilesWidget;
 use amrust_render::camera::{self, CameraData, OrthographicCameraData};
@@ -64,7 +66,7 @@ struct AppState {
     pub render_db: Arc<RwLock<RenderDb>>,
 
     pub operation_manager: OperationManager,
-    pub operation_queue_tx: Sender<Operations>,
+    pub operation_queue_tx: Sender<OperationMessage>,
     pub operation_response_rx: Receiver<OperationResponse>,
 }
 
@@ -432,9 +434,10 @@ impl App {
                             }
 
                             if ui.button("Clear All").clicked() {
-                                if let Err(err) =
-                                    state.operation_queue_tx.send_blocking(Operations::ClearAll)
-                                {
+                                let clear_ops = ClearDbOps;
+                                if let Err(err) = state.operation_queue_tx.send_blocking(
+                                    OperationMessage::AddSyncOperation(Box::new(clear_ops)),
+                                ) {
                                     println!("{err:?}");
                                 }
                             }
@@ -510,21 +513,25 @@ impl App {
 
                 if let Some(ext) = path.extension()
                     && let Some("3mf") = ext.to_str()
-                    && let Err(err) = state
-                        .operation_queue_tx
-                        .send_blocking(Operations::Load3MF(path))
                 {
-                    println!("{err:?}");
+                    let ops = load_3mf::Load3MFOps { path };
+                    if let Err(err) = state
+                        .operation_queue_tx
+                        .send_blocking(OperationMessage::AddAsyncOperation(Box::new(ops)))
+                    {
+                        println!("{err:?}");
+                    }
                 }
             }
 
             state.save_file_dlg.update(state.egui_renderer.context());
-            if let Some(save_file_path) = state.save_file_dlg.take_picked() {
-                println!("File path to save to is {save_file_path:?}");
+            if let Some(path) = state.save_file_dlg.take_picked() {
+                println!("File path to save to is {path:?}");
 
+                let ops = save_3mf::Save3mfOps { path };
                 if let Err(err) = state
                     .operation_queue_tx
-                    .send_blocking(Operations::Save3MF(save_file_path))
+                    .send_blocking(OperationMessage::AddAsyncOperation(Box::new(ops)))
                 {
                     println!("{err:?}");
                 }

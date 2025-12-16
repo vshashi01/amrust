@@ -1,6 +1,7 @@
 mod amrust_db;
 mod app;
 mod app_mode;
+mod clear_db;
 mod egui_tools;
 mod load_3mf;
 mod operation_manager;
