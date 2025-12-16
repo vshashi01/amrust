@@ -8,9 +8,11 @@ use threemf2::core::transform::Transform;
 use threemf2::io::ThreemfPackage;
 
 use crate::amrust_db::{Db, DbError, Mesh, PartId, PartRep, Scene};
+use crate::operation_manager::{Operation, OperationContext, OperationResponse};
 
 use core::f32;
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 #[derive(Debug, Error)]
 pub enum DbFrom3mfError {
@@ -22,6 +24,32 @@ pub enum DbFrom3mfError {
 
     #[error("Somethign wrong with threemf process")]
     ThreemfProcessingError(#[from] threemf2::io::Error),
+}
+
+pub struct Load3MFOps {
+    pub path: PathBuf,
+}
+
+impl Operation for Load3MFOps {
+    async fn execute(
+        &mut self,
+        context: &mut OperationContext,
+    ) -> crate::operation_manager::OperationResponse {
+        let file = std::fs::File::open(&self.path);
+        match file {
+            Ok(threemf_file) => match load(threemf_file) {
+                Ok(db) => {
+                    if let Err(err) = context.append_db(db).await {
+                        return OperationResponse::Failed("Load 3MF", Box::new(err));
+                    } else {
+                        return OperationResponse::Succeeded("Load 3MF Operation");
+                    }
+                }
+                Err(err) => OperationResponse::Failed("Load 3MF", Box::new(err)),
+            },
+            Err(err) => OperationResponse::Failed("Load 3MF", Box::new(err)),
+        }
+    }
 }
 
 pub fn load(threemf: std::fs::File) -> Result<Db, DbFrom3mfError> {

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use amrust_render::transformation::Transformation;
 use thiserror::Error;
@@ -14,6 +15,9 @@ use crate::amrust_db::DbError;
 use crate::amrust_db::PartId;
 use crate::amrust_db::PartInstance;
 use crate::amrust_db::PartRep;
+use crate::operation_manager::Operation;
+use crate::operation_manager::OperationContext;
+use crate::operation_manager::OperationResponse;
 
 #[derive(Debug, Error)]
 pub enum DbTo3mfError {
@@ -40,6 +44,27 @@ pub enum DbTo3mfError {
 
     #[error("Scene is empty")]
     SceneEmpty,
+}
+
+pub struct Save3mfOps {
+    pub path: PathBuf,
+}
+
+impl Operation for Save3mfOps {
+    async fn execute(&mut self, context: &mut OperationContext) -> OperationResponse {
+        let file = std::fs::File::create_new(&self.path);
+        match file {
+            Ok(f) => {
+                context
+                    .get_db(async |db| match save(db, f) {
+                        Ok(_) => OperationResponse::Succeeded("Save 3MF"),
+                        Err(err) => OperationResponse::Failed("Save 3MF", Box::new(err)),
+                    })
+                    .await
+            }
+            Err(err) => OperationResponse::Failed("Save 3MF", Box::new(err)),
+        }
+    }
 }
 
 pub fn save(db: &Db, threemf: std::fs::File) -> Result<(), DbTo3mfError> {
