@@ -104,14 +104,18 @@ impl OperationManager {
                     // let operation_context_tx = self.operation_context_tx.clone();
 
                     let task = executor.spawn(async move {
-                        match get_new_operation_context(db, ops, render_message_tx).await {
+                        match get_new_operation_context(&db, ops, render_message_tx).await {
                             Ok((mut ops_context, mut ops)) => {
                                 println!("running the Operation in separate thread");
                                 let response = ops.execute(&mut ops_context).await;
 
-                                if let Err(err) = operation_response_tx.send(response).await {
-                                    println!("{err:?}");
-                                }
+                                process_operation_response(
+                                    db,
+                                    response,
+                                    ops_context,
+                                    operation_response_tx,
+                                )
+                                .await;
                             }
                             Err(_) => {
                                 if let Err(err) = operation_response_tx
@@ -135,16 +139,20 @@ impl OperationManager {
                     // let operation_context_tx = self.operation_context_tx.clone();
 
                     smol::block_on(async {
-                        match get_new_operation_context(db, ops, render_message_tx).await {
+                        match get_new_operation_context(&db, ops, render_message_tx).await {
                             Ok((mut ops_context, mut ops)) => {
                                 println!(
                                     "running the Operation in same thread as Operation Manager"
                                 );
                                 let response = ops.execute(&mut ops_context).await;
 
-                                if let Err(err) = operation_response_tx.send(response).await {
-                                    println!("{err:?}");
-                                }
+                                process_operation_response(
+                                    db,
+                                    response,
+                                    ops_context,
+                                    operation_response_tx,
+                                )
+                                .await;
                             }
                             Err(_) => {
                                 if let Err(err) = operation_response_tx
@@ -178,11 +186,11 @@ impl OperationManager {
 }
 
 async fn get_new_operation_context(
-    db: Arc<RwLock<Db>>,
+    db: &Arc<RwLock<Db>>,
     operation: Box<dyn Operation>,
     render_message_tx: Sender<RenderMessage>,
 ) -> Result<(OperationContext, Box<dyn Operation>), OperationContextGenerationError> {
-    let detached_db = if let Some(reqs) = operation.get_operation_requirements() {
+    let context = if let Some(reqs) = operation.get_operation_requirements() {
         match reqs {
             OperationRequirements::Identifiables(identifiables) => {
                 let mut parts_to_detach = vec![];
@@ -200,23 +208,59 @@ async fn get_new_operation_context(
                 if let Ok(detached_db) =
                     write_db.create_detached_db(&parts_to_detach, &part_instances_to_detach)
                 {
-                    detached_db
+                    OperationContext::Detached { db: detached_db }
                 } else {
                     panic!("Cannot create Detached Db from existing Db")
                 }
             }
-            OperationRequirements::ReadFullDb => todo!(),
-            OperationRequirements::Scene => todo!(),
-            OperationRequirements::WriteFullDb => todo!(),
-            OperationRequirements::AppendToDb => todo!(),
+            OperationRequirements::ReadFullDb => OperationContext::ReadFull { db: db.clone() },
+            OperationRequirements::WriteFullDb => OperationContext::WriteFull { db: db.clone() },
+            OperationRequirements::AppendToDb => OperationContext::AppendOnly { db: Db::new() },
         }
     } else {
-        DetachedDb::new()
+        //default is always to create an AppendOnly Context
+        OperationContext::AppendOnly { db: Db::new() }
     };
 
-    Ok((
-        OperationContext::new(detached_db, render_message_tx),
-        operation,
-    ))
+    Ok((context, operation))
 }
 pub enum OperationContextGenerationError {}
+
+async fn process_operation_response(
+    main_db: Arc<RwLock<Db>>,
+    response: OperationResponse,
+    ops_context: OperationContext,
+    operation_response_tx: Sender<OperationResponse>,
+) {
+    let should_post_process = match &response {
+        OperationResponse::Ongoing(_) => false,
+        OperationResponse::Succeeded(_) => true,
+        OperationResponse::Failed(_, error) => true,
+        OperationResponse::Aborted(_) => true,
+    };
+
+    if should_post_process {
+        match ops_context {
+            OperationContext::Detached { db } => {
+                let mut write_main_db = main_db.write().await;
+                write_main_db.reattach(db);
+            }
+            OperationContext::ReadFull { db } => {
+                //nothing to do since it was read only to begin with.
+                drop(db)
+            }
+            OperationContext::WriteFull { db } => {
+                //whatever that needs to be done is probably done on the main db already
+                drop(db);
+            }
+            OperationContext::AppendOnly { db } => {
+                let mut write_main_db = main_db.write().await;
+                write_main_db.append(db);
+            }
+        }
+    }
+
+    if let Err(err) = operation_response_tx.send(response).await {
+        println!("{err:?}");
+    }
+}

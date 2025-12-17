@@ -512,6 +512,10 @@ impl Db {
         Ok(detached_db)
     }
 
+    pub fn reattach(&mut self, detached: DetachedDb) -> Result<(), DbError> {
+        Ok(())
+    }
+
     fn detach_part(
         &mut self,
         part_id: &PartId,
@@ -657,6 +661,14 @@ impl DetachedDb {
             map_part_id_to_detached: HashMap::new(),
             map_instance_id_to_detached: HashMap::new(),
         }
+    }
+
+    pub fn append_db(&mut self, other: Db) -> Result<(), DetachedDbError> {
+        todo!("Implement appending to Detach Db")
+    }
+
+    pub fn get_as_standard_db(&self) -> Result<&Db, DetachedDbError> {
+        todo!("Implement getting a standard Db from DetachedDb")
     }
 
     fn add_detached_part(

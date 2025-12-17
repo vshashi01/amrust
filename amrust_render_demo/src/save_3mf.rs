@@ -75,14 +75,13 @@ impl Operation for Save3mfOps {
     async fn execute(&mut self, context: &mut OperationContext) -> OperationResponse {
         let file = std::fs::File::create_new(&self.path);
         match file {
-            Ok(f) => {
-                context
-                    .get_db(async |db| match save(db, f) {
-                        Ok(_) => OperationResponse::Succeeded("Save 3MF"),
-                        Err(err) => OperationResponse::Failed("Save 3MF", Box::new(err)),
-                    })
-                    .await
-            }
+            Ok(f) => context
+                .get_db(async |db| match save(db, f) {
+                    Ok(_) => OperationResponse::Succeeded("Save 3MF"),
+                    Err(err) => OperationResponse::Failed("Save 3MF", Box::new(err)),
+                })
+                .await
+                .unwrap(),
             Err(err) => OperationResponse::Failed("Save 3MF", Box::new(err)),
         }
     }
