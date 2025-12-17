@@ -1,4 +1,5 @@
 use glam::{Mat4, Vec3};
+use slotmap::basic::Iter;
 use slotmap::{SlotMap, new_key_type};
 use smol::lock::RwLock;
 use thiserror::Error;
@@ -21,6 +22,11 @@ pub struct Part {
     rep: PartRep,
 }
 
+pub struct PartView<'a> {
+    pub id: PartId,
+    pub rep: PartRepView<'a>,
+}
+
 impl Part {
     pub fn get_rep(&self) -> &PartRep {
         &self.rep
@@ -41,6 +47,16 @@ impl fmt::Display for PartId {
 pub enum PartRep {
     Mesh(Box<Mesh>),
     ComposedPart(Vec<PartInstanceId>),
+}
+
+pub enum PartRepView<'a> {
+    Mesh(&'a Box<Mesh>),
+    ComposedPart(Vec<Component>),
+}
+
+pub struct Component {
+    pub id: PartId,
+    pub transform: Transformation,
 }
 
 #[derive(Debug, Clone)]
@@ -68,7 +84,7 @@ impl fmt::Display for PartInstanceId {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum Identifiable {
     Part(PartId),
     PartInstance(PartInstanceId),
@@ -121,9 +137,15 @@ pub struct Db {
     /// List of all unique Part configurations
     unique_parts: SlotMap<PartId, Part>,
 
+    /// List of all detached unique parts
+    detached_unique_parts: Vec<PartId>,
+
     /// Part Instances point to a Part in unique_parts
     /// What essentially users will interact with are Part Instances in practical sense
     part_instances: SlotMap<PartInstanceId, PartInstance>,
+
+    /// List of all detached part_instances
+    detached_part_instances: Vec<PartInstanceId>,
 
     /// The main scene
     scene: Option<Scene>,
@@ -145,13 +167,21 @@ pub enum DbError {
 
     #[error("There is no scene set currently")]
     SceneNotSet,
+
+    #[error("Part with id: {0} is not detached")]
+    PartNotDetached(PartId),
+
+    #[error("Part Instance with id: {0} is not detached")]
+    PartInstanceNotDetached(PartId),
 }
 
 impl Db {
     pub fn new() -> Self {
         Db {
             unique_parts: SlotMap::with_key(),
+            detached_unique_parts: vec![],
             part_instances: SlotMap::with_key(),
+            detached_part_instances: vec![],
             scene: None,
         }
     }
@@ -415,6 +445,154 @@ impl Db {
         self.unique_parts.clear();
     }
 
+    pub fn create_detached_db(
+        &mut self,
+        parts_to_detach: &[PartId],
+        part_instances_to_detach: &[PartInstanceId],
+    ) -> Result<DetachedDb, DbError> {
+        let mut detached_db = DetachedDb::new();
+
+        for part_id in parts_to_detach {
+            let mut map_of_parts = HashMap::new();
+            if self.detach_part(part_id, &mut map_of_parts).is_err() {
+                panic!("Detaching parts failed partially! Db is dirty!")
+            }
+
+            for (part_id, part) in map_of_parts {
+                let instances_pointing_to_part = self
+                    .get_part_instances()
+                    .filter_map(|(instance_id, instance, _)| {
+                        if instance.part_id == part_id {
+                            Some(instance_id)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                if detached_db.add_detached_part(&part_id, part).is_ok() {
+                    //detaching Parts will detach all the instances the Part is pointed to as well.
+                    for id in instances_pointing_to_part {
+                        if let Ok(instance) = self.detach_part_instance(&id) {
+                            if detached_db
+                                .add_detached_part_instance(&id, instance)
+                                .is_err()
+                            {
+                                panic!("Registering Instance to Detached Db failed! Db is dirty!")
+                            }
+                        } else {
+                            panic!("Detaching Instance failed! Db is dirty!")
+                        }
+                    }
+                } else {
+                    panic!("Registering Part to DetachedDB failed! Db is dirty!")
+                }
+            }
+        }
+
+        for instance_id in part_instances_to_detach {
+            if detached_db
+                .map_instance_id_to_detached
+                .contains_key(instance_id)
+            {
+                // in this case the instance was already previously detached and registered
+                continue;
+            }
+
+            let instance = self.detach_part_instance(instance_id)?;
+
+            if detached_db
+                .add_detached_part_instance(instance_id, instance)
+                .is_err()
+            {
+                panic!("Registering Instance t Detached Db failed! Db is dirty")
+            }
+        }
+
+        Ok(detached_db)
+    }
+
+    fn detach_part(
+        &mut self,
+        part_id: &PartId,
+        o_parts: &mut HashMap<PartId, Part>,
+    ) -> Result<(), DbError> {
+        if let Some(part) = self.unique_parts.detach(*part_id) {
+            self.detached_unique_parts.push(*part_id);
+            match part.get_rep() {
+                PartRep::Mesh(_) => {
+                    o_parts.insert(*part_id, part);
+                }
+                PartRep::ComposedPart(part_instance_ids) => {
+                    let mut undetached_parts = vec![];
+                    for id in part_instance_ids {
+                        let instance = self.get_part_instance_data(id)?;
+                        if !o_parts.contains_key(&instance.part_id) {
+                            undetached_parts.push(instance.part_id);
+                        }
+                    }
+
+                    for comp_id in undetached_parts {
+                        self.detach_part(&comp_id, o_parts)?;
+                    }
+
+                    o_parts.insert(*part_id, part);
+                }
+            }
+        } else {
+            return Err(DbError::PartIdNotFound(*part_id));
+        }
+
+        Ok(())
+    }
+
+    fn reattach_part(&mut self, part_id: &PartId, part: Part) -> Result<(), DbError> {
+        if let Some(pos) = self
+            .detached_unique_parts
+            .iter()
+            .position(|id| id == part_id)
+        {
+            self.unique_parts.reattach(*part_id, part);
+            self.detached_unique_parts.swap_remove(pos);
+        } else {
+            return Err(DbError::PartNotDetached(*part_id));
+        }
+
+        Ok(())
+    }
+
+    fn detach_part_instance(
+        &mut self,
+        part_instance_id: &PartInstanceId,
+    ) -> Result<PartInstance, DbError> {
+        if let Some(part) = self.part_instances.detach(*part_instance_id) {
+            self.detached_part_instances.push(*part_instance_id);
+            Ok(part)
+        } else {
+            Err(DbError::PartInstanceIdNotFound(*part_instance_id))
+        }
+    }
+
+    fn reattach_part_instance(
+        &mut self,
+        part_instance_id: &PartInstanceId,
+        part_instance: PartInstance,
+    ) -> Result<(), DbError> {
+        if let Some(pos) = self
+            .detached_part_instances
+            .iter()
+            .position(|id| id == part_instance_id)
+        {
+            self.part_instances
+                .reattach(*part_instance_id, part_instance);
+            self.detached_part_instances.swap_remove(pos);
+        } else {
+            return Err(DbError::PartInstanceIdNotFound(*part_instance_id));
+        }
+
+        Ok(())
+    }
+
     fn validate_part_rep(&self, part_rep: &PartRep) -> Result<bool, DbError> {
         match part_rep {
             PartRep::Mesh(_) => {}
@@ -443,6 +621,74 @@ impl Db {
         }
 
         false
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum DetachedDbError {
+    #[error("Part Exists")]
+    DetachedPartAlreadyExists,
+
+    #[error("Part Instance Exists")]
+    DetachedPartInstanceAlreadyExists,
+}
+
+new_key_type! {
+pub struct DetachedPartID;
+}
+
+new_key_type! {
+pub struct DetachedPartInstanceId;
+}
+
+pub struct DetachedDb {
+    detached_unique_parts: SlotMap<DetachedPartID, Part>,
+    detached_part_instances: SlotMap<DetachedPartInstanceId, PartInstance>,
+
+    map_part_id_to_detached: HashMap<PartId, DetachedPartID>,
+    map_instance_id_to_detached: HashMap<PartInstanceId, DetachedPartInstanceId>,
+}
+
+impl DetachedDb {
+    pub fn new() -> Self {
+        Self {
+            detached_unique_parts: SlotMap::with_key(),
+            detached_part_instances: SlotMap::with_key(),
+            map_part_id_to_detached: HashMap::new(),
+            map_instance_id_to_detached: HashMap::new(),
+        }
+    }
+
+    fn add_detached_part(
+        &mut self,
+        part_id: &PartId,
+        part: Part,
+    ) -> Result<DetachedPartID, DetachedDbError> {
+        if !self.map_part_id_to_detached.contains_key(part_id) {
+            let detached_id = self.detached_unique_parts.insert(part);
+            self.map_part_id_to_detached.insert(*part_id, detached_id);
+            Ok(detached_id)
+        } else {
+            Err(DetachedDbError::DetachedPartAlreadyExists)
+        }
+    }
+
+    fn add_detached_part_instance(
+        &mut self,
+        part_instance_id: &PartInstanceId,
+        part_instance: PartInstance,
+    ) -> Result<DetachedPartInstanceId, DetachedDbError> {
+        if !self
+            .map_instance_id_to_detached
+            .contains_key(part_instance_id)
+        {
+            let detached_id = self.detached_part_instances.insert(part_instance);
+            self.map_instance_id_to_detached
+                .insert(*part_instance_id, detached_id);
+            Ok(detached_id)
+        } else {
+            Err(DetachedDbError::DetachedPartInstanceAlreadyExists)
+        }
     }
 }
 

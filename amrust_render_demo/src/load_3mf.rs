@@ -9,7 +9,7 @@ use threemf2::core::transform::Transform;
 use threemf2::io::ThreemfPackage;
 
 use crate::amrust_db::{Db, DbError, Mesh, PartId, PartRep, Scene};
-use crate::operation::{Operation, OperationContext, OperationResponse};
+use crate::operation::{Operation, OperationContext, OperationRequirements, OperationResponse};
 
 use core::f32;
 use std::collections::HashMap;
@@ -33,6 +33,10 @@ pub struct Load3MFOps {
 
 #[async_trait]
 impl Operation for Load3MFOps {
+    fn get_operation_requirements(&self) -> Option<OperationRequirements> {
+        Some(OperationRequirements::AppendToDb)
+    }
+
     async fn execute(&mut self, context: &mut OperationContext) -> OperationResponse {
         let file = std::fs::File::open(&self.path);
         match file {

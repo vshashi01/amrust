@@ -12,6 +12,7 @@ pub struct Toolsheets {
 
     selected_items_on_part_list: Vec<Identifiable>,
     selection_changed: bool,
+    blocked_items_on_part_list: Vec<Identifiable>,
 
     selected_objects: Vec<Identifiable>,
     selected_build_items: Vec<Identifiable>,
@@ -34,6 +35,7 @@ impl Toolsheets {
             selected_items_on_part_list: vec![],
             selection_changed: false,
             selected_objects: vec![],
+            blocked_items_on_part_list: vec![],
             selected_build_items: vec![],
             selected_identifiable_properties: None,
         }
@@ -41,6 +43,10 @@ impl Toolsheets {
 
     pub fn set_selected_identifiable_properties(&mut self, props: TreeItemViewer<usize>) {
         let _ = self.selected_identifiable_properties.insert(props);
+    }
+
+    pub fn set_blocked_entities(&mut self, identifiables: Vec<Identifiable>) {
+        self.blocked_items_on_part_list = identifiables;
     }
 
     pub fn selected_items_on_part_list(&self) -> impl Iterator<Item = &Identifiable> {
@@ -76,14 +82,24 @@ impl egui_dock::TabViewer for Toolsheets {
         let prev_object_list_selection = self.selected_objects.clone();
         let prev_instances_selection = self.selected_build_items.clone();
         match tab.as_str() {
-            "Part List" => self.part_list.ui(ui, &mut self.selected_items_on_part_list),
-            "Objects List" => self.objects_list.core_ui(ui, &mut self.selected_objects),
-            "Build Items List" => self
-                .build_items_list
-                .core_ui(ui, &mut self.selected_build_items),
+            "Part List" => self.part_list.ui(
+                ui,
+                &mut self.selected_items_on_part_list,
+                &self.blocked_items_on_part_list,
+            ),
+            "Objects List" => self.objects_list.core_ui(
+                ui,
+                &mut self.selected_objects,
+                &self.blocked_items_on_part_list,
+            ),
+            "Build Items List" => self.build_items_list.core_ui(
+                ui,
+                &mut self.selected_build_items,
+                &self.blocked_items_on_part_list,
+            ),
             "Object Tree" => {
                 if let Some(ref mut props) = self.selected_identifiable_properties {
-                    props.core_ui(ui, &mut vec![]);
+                    props.core_ui(ui, &mut vec![], &[]);
                 } else {
                     ui.label("No selected item");
                 }

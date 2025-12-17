@@ -30,14 +30,20 @@ where
         }
     }
 
-    fn draw_ui(&self, ui: &mut egui::Ui, selected_items: &mut Vec<T>, skip_inert_node: bool) {
+    fn draw_ui(
+        &self,
+        ui: &mut egui::Ui,
+        selected_items: &mut Vec<T>,
+        disabled_items: &[T],
+        skip_inert_node: bool,
+    ) {
         match self {
             TreeItem::Leaf {
                 id,
                 name,
                 selectable,
             } => {
-                if *selectable {
+                if *selectable && !disabled_items.contains(id) {
                     if ui
                         .selectable_label(selected_items.contains(id), name)
                         .clicked()
@@ -59,12 +65,13 @@ where
                     .show_background(*selectable && selected_items.contains(id))
                     .show(ui, |ui| {
                         for child in childs {
-                            child.draw_ui(ui, selected_items, skip_inert_node);
+                            child.draw_ui(ui, selected_items, disabled_items, skip_inert_node);
                         }
                     })
                     .header_response
                     .clicked()
                     && *selectable
+                    && !disabled_items.contains(id)
                 {
                     selected_items.clear();
                     selected_items.push(*id);
@@ -73,12 +80,12 @@ where
             TreeItem::InertNode { name, childs, .. } => {
                 if skip_inert_node {
                     for child in childs {
-                        child.draw_ui(ui, selected_items, skip_inert_node);
+                        child.draw_ui(ui, selected_items, disabled_items, skip_inert_node);
                     }
                 } else {
                     egui::CollapsingHeader::new(name).show(ui, |ui| {
                         for child in childs {
-                            child.draw_ui(ui, selected_items, skip_inert_node);
+                            child.draw_ui(ui, selected_items, disabled_items, skip_inert_node);
                         }
                     });
                 }
@@ -104,20 +111,25 @@ where
         }
     }
 
-    pub fn core_ui(&mut self, ui: &mut egui::Ui, selected_items: &mut Vec<T>) {
+    pub fn core_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        selected_items: &mut Vec<T>,
+        disabled_items: &[T],
+    ) {
         ui.vertical(|ui| {
             egui::ScrollArea::both()
                 .auto_shrink(false)
                 .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
                 .show(ui, |ui| {
-                    self.tree_ui(ui, selected_items);
+                    self.tree_ui(ui, selected_items, disabled_items);
                 });
         });
     }
 
-    fn tree_ui(&mut self, ui: &mut egui::Ui, selected_items: &mut Vec<T>) {
+    fn tree_ui(&mut self, ui: &mut egui::Ui, selected_items: &mut Vec<T>, disabled_items: &[T]) {
         for item in &self.childs {
-            item.draw_ui(ui, selected_items, self.skip_inert_node);
+            item.draw_ui(ui, selected_items, disabled_items, self.skip_inert_node);
         }
     }
 }

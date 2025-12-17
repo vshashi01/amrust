@@ -13,11 +13,18 @@ use threemf2::io::ThreemfPackage;
 use crate::amrust_db;
 use crate::amrust_db::Db;
 use crate::amrust_db::DbError;
+use crate::amrust_db::Identifiable;
+use crate::amrust_db::Part;
 use crate::amrust_db::PartId;
 use crate::amrust_db::PartInstance;
+use crate::amrust_db::PartInstanceId;
 use crate::amrust_db::PartRep;
+use crate::amrust_db::PartRepView;
+use crate::amrust_db::PartView;
+use crate::app_mode::AppMode;
 use crate::operation::Operation;
 use crate::operation::OperationContext;
+use crate::operation::OperationRequirements;
 use crate::operation::OperationResponse;
 
 #[derive(Debug, Error)]
@@ -49,10 +56,22 @@ pub enum DbTo3mfError {
 
 pub struct Save3mfOps {
     pub path: PathBuf,
+    pub app_mode: AppMode,
+    pub entities_to_save: Vec<Identifiable>,
 }
 
 #[async_trait]
 impl Operation for Save3mfOps {
+    fn get_operation_requirements(&self) -> Option<OperationRequirements> {
+        if self.entities_to_save.is_empty() {
+            Some(OperationRequirements::ReadFullDb)
+        } else {
+            Some(OperationRequirements::Identifiables(
+                self.entities_to_save.clone(),
+            ))
+        }
+    }
+
     async fn execute(&mut self, context: &mut OperationContext) -> OperationResponse {
         let file = std::fs::File::create_new(&self.path);
         match file {
@@ -73,6 +92,50 @@ fn save(db: &Db, threemf: std::fs::File) -> Result<(), DbTo3mfError> {
     let package = create_3mf_package(db)?;
 
     Ok(package.write(threemf)?)
+}
+
+fn create_threemf_lala(app_mode: AppMode, identifiable: &Identifiable) {}
+
+// works best when parts are ordered such the they are return tip towards the root.
+// single body parts first, then the composed of said single body parts
+// then composed of other composed parts
+fn create_objects_map(parts: &[PartView]) -> Result<ModelBuilder, DbTo3mfError> {
+    let mut model_builder = ModelBuilder::new(Unit::Millimeter, true);
+    let mut unique_part_to_object_map: HashMap<PartId, ObjectId> = HashMap::new();
+    // let mut already_processed_composed_part = vec![];
+    for part in parts {
+        match &part.rep {
+            PartRepView::Mesh(mesh) => {
+                let object_id = process_and_insert_mesh_object(&mut model_builder, mesh)?;
+                unique_part_to_object_map.insert(part.id.clone(), object_id);
+            }
+            PartRepView::ComposedPart(components) => {
+                let can_process = components
+                    .iter()
+                    .all(|c| unique_part_to_object_map.contains_key(&c.id));
+
+                if !can_process {
+                    continue;
+                }
+
+                let object_id = model_builder.add_components_object(|cb| {
+                    for c in components {
+                        if let Some(id) = unique_part_to_object_map.get(&c.id) {
+                            let transform = convert_transformation_to_3mf_transform(&c.transform);
+                            cb.add_component_advanced(*id, |c| {
+                                c.transform(transform);
+                            });
+                        }
+                    }
+                    Ok(())
+                })?;
+
+                unique_part_to_object_map.insert(part.id.clone(), object_id);
+            }
+        }
+    }
+
+    Ok(model_builder)
 }
 
 fn create_3mf_package(db: &Db) -> Result<ThreemfPackage, DbTo3mfError> {

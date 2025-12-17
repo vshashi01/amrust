@@ -1,5 +1,5 @@
 use crate::amrust_db::{
-    Db, Mesh, add_render_items_from_scene, add_render_items_from_unique_parts,
+    Db, Identifiable, Mesh, add_render_items_from_scene, add_render_items_from_unique_parts,
     create_build_items_list, create_object_tree_from_identifiable, create_objects_list,
     create_scene_tree_items_by_unique_parts,
 };
@@ -64,6 +64,7 @@ struct AppState {
     pub render_message_tx: Sender<RenderMessage>,
     pub render_response_rx: Receiver<RenderResponse>,
     pub render_db: Arc<RwLock<RenderDb>>,
+    pub detached_identifiables: Vec<Identifiable>,
 
     pub operation_manager: OperationManager,
     pub operation_queue_tx: Sender<OperationMessage>,
@@ -220,6 +221,7 @@ impl AppState {
             render_message_tx,
             render_response_rx,
             render_db,
+            detached_identifiables: vec![],
 
             operation_manager,
             operation_queue_tx,
@@ -528,7 +530,11 @@ impl App {
             if let Some(path) = state.save_file_dlg.take_picked() {
                 println!("File path to save to is {path:?}");
 
-                let ops = save_3mf::Save3mfOps { path };
+                let ops = save_3mf::Save3mfOps {
+                    path,
+                    app_mode: state.current_app_mode,
+                    entities_to_save: vec![],
+                };
                 if let Err(err) = state
                     .operation_queue_tx
                     .send_blocking(OperationMessage::AddAsyncOperation(Box::new(ops)))
@@ -619,6 +625,9 @@ impl App {
                     skip_inert_node: false,
                 });
 
+                toolsheets
+                    .set_blocked_entities(state.operation_manager.get_detached_identifiables());
+
                 toolsheets.clear_selection_changed();
             }
 
@@ -633,11 +642,11 @@ impl App {
 
             //run the operation manager
             {
-                state.operation_manager.run(
-                    state.db.clone(),
-                    state.executor.clone(),
-                    state.render_message_tx.clone(),
-                );
+                state
+                    .operation_manager
+                    .run(&state.db, &state.executor, &state.render_message_tx);
+
+                state.detached_identifiables = state.operation_manager.get_detached_identifiables();
             }
 
             state.egui_renderer.end_frame_and_draw(

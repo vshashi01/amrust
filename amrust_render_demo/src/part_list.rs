@@ -26,7 +26,12 @@ impl PartList {
         }
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui, selected_items: &mut Vec<Identifiable>) {
+    pub fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        selected_items: &mut Vec<Identifiable>,
+        disabled_items: &[Identifiable],
+    ) {
         ui.vertical(|ui| {
             ui.horizontal_top(|ui| {
                 ui.radio_value(
@@ -48,7 +53,7 @@ impl PartList {
                 ViewMode::ByUniqueParts => self.object_tree.skip_inert_node = false,
             };
 
-            self.object_tree.core_ui(ui, selected_items);
+            self.object_tree.core_ui(ui, selected_items, disabled_items);
         });
     }
 }
