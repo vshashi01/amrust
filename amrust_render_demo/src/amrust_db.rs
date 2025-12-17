@@ -1,5 +1,4 @@
 use glam::{Mat4, Vec3};
-use slotmap::basic::Iter;
 use slotmap::{SlotMap, new_key_type};
 use smol::lock::RwLock;
 use thiserror::Error;
@@ -17,14 +16,17 @@ use std::sync::Arc;
 use crate::render_db::{RenderDb, RenderObject};
 use crate::tree_item_viewer::TreeItem;
 
+pub trait DbReader {
+    fn get_parts(&self) -> impl Iterator<Item = (PartId, &Part)>;
+
+    fn get_part_instances(&self) -> impl Iterator<Item = (PartInstanceId, &PartInstance, &Part)>;
+
+    fn get_scene(&self) -> Option<&Scene>;
+}
+
 #[derive(Debug)]
 pub struct Part {
     rep: PartRep,
-}
-
-pub struct PartView<'a> {
-    pub id: PartId,
-    pub rep: PartRepView<'a>,
 }
 
 impl Part {
@@ -47,16 +49,6 @@ impl fmt::Display for PartId {
 pub enum PartRep {
     Mesh(Box<Mesh>),
     ComposedPart(Vec<PartInstanceId>),
-}
-
-pub enum PartRepView<'a> {
-    Mesh(&'a Box<Mesh>),
-    ComposedPart(Vec<Component>),
-}
-
-pub struct Component {
-    pub id: PartId,
-    pub transform: Transformation,
 }
 
 #[derive(Debug, Clone)]
@@ -512,7 +504,23 @@ impl Db {
         Ok(detached_db)
     }
 
-    pub fn reattach(&mut self, detached: DetachedDb) -> Result<(), DbError> {
+    pub fn reattach(&mut self, mut detached: DetachedDb) -> Result<(), DbError> {
+        for (part_id, internal_id) in &detached.map_part_id_to_detached {
+            if let Some(part) = detached.detached_unique_parts.detach(*internal_id)
+                && let Err(_) = self.reattach_part(part_id, part)
+            {
+                panic!("Reattaching parts that were not detached");
+            }
+        }
+
+        for (instance_id, internal_id) in &detached.map_instance_id_to_detached {
+            if let Some(instance) = detached.detached_part_instances.detach(*internal_id)
+                && let Err(_) = self.reattach_part_instance(instance_id, instance)
+            {
+                panic!("Reattaching instance that were not detached!");
+            }
+        }
+
         Ok(())
     }
 
@@ -628,6 +636,20 @@ impl Db {
     }
 }
 
+impl DbReader for Db {
+    fn get_parts(&self) -> impl Iterator<Item = (PartId, &Part)> {
+        self.get_parts()
+    }
+
+    fn get_part_instances(&self) -> impl Iterator<Item = (PartInstanceId, &PartInstance, &Part)> {
+        self.get_part_instances()
+    }
+
+    fn get_scene(&self) -> Option<&Scene> {
+        self.get_scene().ok()
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum DetachedDbError {
     #[error("Part Exists")]
@@ -668,7 +690,7 @@ impl DetachedDb {
     }
 
     pub fn get_as_standard_db(&self) -> Result<&Db, DetachedDbError> {
-        todo!("Implement getting a standard Db from DetachedDb")
+        todo!("Implement get as standard db")
     }
 
     fn add_detached_part(
@@ -732,6 +754,39 @@ pub fn create_build_items_list(
     }
 
     Ok(tree_items)
+}
+
+impl DbReader for DetachedDb {
+    fn get_parts(&self) -> impl Iterator<Item = (PartId, &Part)> {
+        self.map_part_id_to_detached
+            .iter()
+            .map(|(part_id, internal_id)| {
+                (
+                    *part_id,
+                    self.detached_unique_parts.get(*internal_id).unwrap(),
+                )
+            })
+    }
+
+    fn get_part_instances(&self) -> impl Iterator<Item = (PartInstanceId, &PartInstance, &Part)> {
+        self.map_instance_id_to_detached
+            .iter()
+            .map(|(instance_id, internal_id)| {
+                let instance = self.detached_part_instances.get(*internal_id).unwrap();
+                let get_internal_part_id =
+                    self.map_part_id_to_detached.get(&instance.part_id).unwrap();
+                let part = self
+                    .detached_unique_parts
+                    .get(*get_internal_part_id)
+                    .unwrap();
+
+                (*instance_id, instance, part)
+            })
+    }
+
+    fn get_scene(&self) -> Option<&Scene> {
+        None
+    }
 }
 
 pub fn create_objects_list(db: Arc<RwLock<Db>>) -> Result<Vec<TreeItem<Identifiable>>, DbError> {

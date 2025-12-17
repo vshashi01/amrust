@@ -25,9 +25,6 @@ pub trait Operation: Send + Sync + 'static {
 
 #[derive(Debug, thisError)]
 pub enum OperationContextError {
-    #[error("Lala")]
-    GenericError,
-
     #[error("Current Operation Context only has readonly control")]
     ReadOnlyContext,
 

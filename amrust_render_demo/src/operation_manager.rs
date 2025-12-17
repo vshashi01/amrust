@@ -6,7 +6,7 @@ use smol::{
 };
 
 use crate::{
-    amrust_db::{Db, DetachedDb, Identifiable},
+    amrust_db::{Db, Identifiable},
     operation::{
         Operation, OperationContext, OperationContextMessage, OperationRequirements,
         OperationResponse,

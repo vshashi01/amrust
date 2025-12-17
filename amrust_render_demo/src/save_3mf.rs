@@ -19,8 +19,6 @@ use crate::amrust_db::PartId;
 use crate::amrust_db::PartInstance;
 use crate::amrust_db::PartInstanceId;
 use crate::amrust_db::PartRep;
-use crate::amrust_db::PartRepView;
-use crate::amrust_db::PartView;
 use crate::app_mode::AppMode;
 use crate::operation::Operation;
 use crate::operation::OperationContext;
@@ -98,44 +96,44 @@ fn create_threemf_lala(app_mode: AppMode, identifiable: &Identifiable) {}
 // works best when parts are ordered such the they are return tip towards the root.
 // single body parts first, then the composed of said single body parts
 // then composed of other composed parts
-fn create_objects_map(parts: &[PartView]) -> Result<ModelBuilder, DbTo3mfError> {
-    let mut model_builder = ModelBuilder::new(Unit::Millimeter, true);
-    let mut unique_part_to_object_map: HashMap<PartId, ObjectId> = HashMap::new();
-    // let mut already_processed_composed_part = vec![];
-    for part in parts {
-        match &part.rep {
-            PartRepView::Mesh(mesh) => {
-                let object_id = process_and_insert_mesh_object(&mut model_builder, mesh)?;
-                unique_part_to_object_map.insert(part.id.clone(), object_id);
-            }
-            PartRepView::ComposedPart(components) => {
-                let can_process = components
-                    .iter()
-                    .all(|c| unique_part_to_object_map.contains_key(&c.id));
+// fn create_objects_map(parts: &[(PartId, &Part)]) -> Result<ModelBuilder, DbTo3mfError> {
+//     let mut model_builder = ModelBuilder::new(Unit::Millimeter, true);
+//     let mut unique_part_to_object_map: HashMap<PartId, ObjectId> = HashMap::new();
+//     // let mut already_processed_composed_part = vec![];
+//     for (part_id, part) in parts {
+//         match part.get_rep() {
+//             PartRep::Mesh(mesh) => {
+//                 let object_id = process_and_insert_mesh_object(&mut model_builder, mesh)?;
+//                 unique_part_to_object_map.insert(*part_id, object_id);
+//             }
+//             PartRep::ComposedPart(components) => {
+//                 let can_process = components
+//                     .iter()
+//                     .all(|c| unique_part_to_object_map.contains_key(&c.id));
 
-                if !can_process {
-                    continue;
-                }
+//                 if !can_process {
+//                     continue;
+//                 }
 
-                let object_id = model_builder.add_components_object(|cb| {
-                    for c in components {
-                        if let Some(id) = unique_part_to_object_map.get(&c.id) {
-                            let transform = convert_transformation_to_3mf_transform(&c.transform);
-                            cb.add_component_advanced(*id, |c| {
-                                c.transform(transform);
-                            });
-                        }
-                    }
-                    Ok(())
-                })?;
+//                 let object_id = model_builder.add_components_object(|cb| {
+//                     for c in components {
+//                         if let Some(id) = unique_part_to_object_map.get(&c.id) {
+//                             let transform = convert_transformation_to_3mf_transform(&c.transform);
+//                             cb.add_component_advanced(*id, |c| {
+//                                 c.transform(transform);
+//                             });
+//                         }
+//                     }
+//                     Ok(())
+//                 })?;
 
-                unique_part_to_object_map.insert(part.id.clone(), object_id);
-            }
-        }
-    }
+//                 unique_part_to_object_map.insert(part.id.clone(), object_id);
+//             }
+//         }
+//     }
 
-    Ok(model_builder)
-}
+//     Ok(model_builder)
+// }
 
 fn create_3mf_package(db: &Db) -> Result<ThreemfPackage, DbTo3mfError> {
     let scene = db.get_scene()?;
