@@ -13,12 +13,14 @@ use threemf2::io::ThreemfPackage;
 use crate::amrust_db;
 use crate::amrust_db::Db;
 use crate::amrust_db::DbError;
+use crate::amrust_db::DbReader;
 use crate::amrust_db::Identifiable;
 use crate::amrust_db::Part;
 use crate::amrust_db::PartId;
 use crate::amrust_db::PartInstance;
 use crate::amrust_db::PartInstanceId;
 use crate::amrust_db::PartRep;
+use crate::amrust_db::Scene;
 use crate::app_mode::AppMode;
 use crate::operation::Operation;
 use crate::operation::OperationContext;
@@ -85,7 +87,7 @@ impl Operation for Save3mfOps {
     }
 }
 
-fn save(db: &Db, threemf: std::fs::File) -> Result<(), DbTo3mfError> {
+fn save(db: &dyn DbReader, threemf: std::fs::File) -> Result<(), DbTo3mfError> {
     let package = create_3mf_package(db)?;
 
     Ok(package.write(threemf)?)
@@ -135,11 +137,11 @@ fn create_threemf_lala(app_mode: AppMode, identifiable: &Identifiable) {}
 //     Ok(model_builder)
 // }
 
-fn create_3mf_package(db: &Db) -> Result<ThreemfPackage, DbTo3mfError> {
-    let scene = db.get_scene()?;
-    if db.is_scene_empty() {
-        return Err(DbTo3mfError::SceneEmpty);
-    }
+fn create_3mf_package(db: &dyn DbReader) -> Result<ThreemfPackage, DbTo3mfError> {
+    let scene = db.get_scene().unwrap();
+    // if scene.is_none() {
+    //     return Err(DbTo3mfError::SceneEmpty);
+    // }
 
     let mut model_builder = ModelBuilder::new(Unit::Millimeter, true);
     let mut unique_part_to_object_map: HashMap<PartId, ObjectId> = HashMap::new();
@@ -155,13 +157,13 @@ fn create_3mf_package(db: &Db) -> Result<ThreemfPackage, DbTo3mfError> {
             PartRep::ComposedPart(instances) => {
                 let mut instances_data = vec![];
                 for i in instances {
-                    let instance_data = db.get_part_instance_data(i)?;
+                    let instance_data = db.get_part_instance(i).unwrap();
                     instances_data.push(instance_data);
                 }
                 //we only care about the processed objects if did not process then it proceeds
                 if let Ok(object_id) = process_composed_part_and_insert_component_object(
                     &mut model_builder,
-                    &instances_data,
+                    instances_data.as_slice(),
                     &unique_part_to_object_map,
                 ) {
                     already_processed_composed_part.push(part_id);
@@ -191,7 +193,7 @@ fn create_3mf_package(db: &Db) -> Result<ThreemfPackage, DbTo3mfError> {
             if let PartRep::ComposedPart(instances) = part.get_rep() {
                 let mut instances_data = vec![];
                 for i in instances {
-                    let instance_data = db.get_part_instance_data(i)?;
+                    let instance_data = db.get_part_instance(i).unwrap();
                     instances_data.push(instance_data);
                 }
                 if let Ok(object_id) = process_composed_part_and_insert_component_object(
@@ -208,7 +210,7 @@ fn create_3mf_package(db: &Db) -> Result<ThreemfPackage, DbTo3mfError> {
 
     model_builder.add_build(None)?;
     for part_instance in &scene.instances {
-        let instance_data = db.get_part_instance_data(part_instance)?;
+        let instance_data = db.get_part_instance(part_instance).unwrap();
         match unique_part_to_object_map.get(&instance_data.part_id) {
             Some(object_id) => {
                 let transform = convert_transformation_to_3mf_transform(&instance_data.transform);
@@ -226,6 +228,98 @@ fn create_3mf_package(db: &Db) -> Result<ThreemfPackage, DbTo3mfError> {
 
     Ok(model.into())
 }
+
+// fn create_3mf_package(db: &Db) -> Result<ThreemfPackage, DbTo3mfError> {
+//     let scene = db.get_scene()?;
+//     if db.is_scene_empty() {
+//         return Err(DbTo3mfError::SceneEmpty);
+//     }
+
+//     let mut model_builder = ModelBuilder::new(Unit::Millimeter, true);
+//     let mut unique_part_to_object_map: HashMap<PartId, ObjectId> = HashMap::new();
+//     let mut already_processed_composed_part = vec![];
+
+//     //try to process all unique parts.
+//     for (part_id, part) in db.get_parts() {
+//         match part.get_rep() {
+//             PartRep::Mesh(mesh) => {
+//                 let object_id = process_and_insert_mesh_object(&mut model_builder, mesh)?;
+//                 unique_part_to_object_map.insert(part_id, object_id);
+//             }
+//             PartRep::ComposedPart(instances) => {
+//                 let mut instances_data = vec![];
+//                 for i in instances {
+//                     let instance_data = db.get_part_instance_data(i)?;
+//                     instances_data.push(instance_data);
+//                 }
+//                 //we only care about the processed objects if did not process then it proceeds
+//                 if let Ok(object_id) = process_composed_part_and_insert_component_object(
+//                     &mut model_builder,
+//                     &instances_data,
+//                     &unique_part_to_object_map,
+//                 ) {
+//                     already_processed_composed_part.push(part_id);
+//                     unique_part_to_object_map.insert(part_id, object_id);
+//                 }
+//             }
+//         }
+//     }
+
+//     //process remaining composed parts
+//     let all_composed_parts = db
+//         .get_parts()
+//         .filter(|(_, part)| matches!(part.get_rep(), PartRep::ComposedPart(_)))
+//         .collect::<Vec<_>>();
+
+//     loop {
+//         if already_processed_composed_part.len() == all_composed_parts.len() {
+//             break;
+//         }
+
+//         for (part_id, part) in &all_composed_parts {
+//             if already_processed_composed_part.contains(part_id) {
+//                 continue;
+//             }
+
+//             //only cares about the processed entity
+//             if let PartRep::ComposedPart(instances) = part.get_rep() {
+//                 let mut instances_data = vec![];
+//                 for i in instances {
+//                     let instance_data = db.get_part_instance_data(i)?;
+//                     instances_data.push(instance_data);
+//                 }
+//                 if let Ok(object_id) = process_composed_part_and_insert_component_object(
+//                     &mut model_builder,
+//                     &instances_data,
+//                     &unique_part_to_object_map,
+//                 ) {
+//                     already_processed_composed_part.push(*part_id);
+//                     unique_part_to_object_map.insert(*part_id, object_id);
+//                 }
+//             }
+//         }
+//     }
+
+//     model_builder.add_build(None)?;
+//     for part_instance in &scene.instances {
+//         let instance_data = db.get_part_instance_data(part_instance)?;
+//         match unique_part_to_object_map.get(&instance_data.part_id) {
+//             Some(object_id) => {
+//                 let transform = convert_transformation_to_3mf_transform(&instance_data.transform);
+//                 model_builder.add_build_item_advanced(*object_id, |i| {
+//                     i.transform(transform);
+//                 })?;
+//             }
+//             None => {
+//                 return Err(DbTo3mfError::UniquePartNotFound(instance_data.part_id));
+//             }
+//         }
+//     }
+
+//     let model = model_builder.build()?;
+
+//     Ok(model.into())
+// }
 
 fn process_composed_part_and_insert_component_object(
     model_builder: &mut ModelBuilder,

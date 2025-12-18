@@ -1,11 +1,13 @@
-use std::{collections::HashMap, error::Error, sync::Arc};
+use std::{collections::HashMap, error::Error, process::Output, sync::Arc};
 
 use async_trait::async_trait;
 use smol::{channel::Sender, lock::RwLock};
 use thiserror::Error as thisError;
 
 use crate::{
-    amrust_db::{Db, DetachedDb, Identifiable, Part, PartId, PartInstance, PartInstanceId},
+    amrust_db::{
+        Db, DbReader, DetachedDb, Identifiable, Part, PartId, PartInstance, PartInstanceId,
+    },
     render_worker::RenderMessage,
 };
 
@@ -105,28 +107,22 @@ impl OperationContext {
     /// Can a get an immutable reference to the Db to process it
     /// Caution with holding this too long in the ReadFull and WriteFull context
     /// since it can lead to deadlocks in the system
-    pub async fn get_db<T>(
-        &self,
-        f: impl AsyncFnOnce(&Db) -> T,
-    ) -> Result<T, OperationContextError> {
+    pub async fn get_db<T, F, Fut>(&self, f: F) -> Result<T, OperationContextError>
+    where
+        F: for<'a> FnOnce(&'a dyn DbReader) -> Fut,
+        Fut: std::future::Future<Output = T>,
+    {
         match self {
-            OperationContext::Detached { db } => {
-                let temp_db = db.get_as_standard_db();
-                if let Ok(db) = db.get_as_standard_db() {
-                    Ok(f(db).await)
-                } else {
-                    panic!("DetachedDb was unable to create a read only Db instance")
-                }
-            }
+            OperationContext::Detached { db } => Ok(f(db).await),
             OperationContext::ReadFull { db } => {
                 let read_db = db.read().await;
-                Ok(f(&read_db).await)
+                Ok(f(&*read_db).await)
             }
             OperationContext::WriteFull { db } => {
                 let read_db = db.read().await;
-                Ok(f(&read_db).await)
+                Ok(f(&*read_db).await)
             }
-            OperationContext::AppendOnly { db } => Ok(f(&db).await),
+            OperationContext::AppendOnly { db } => Ok(f(db).await),
         }
     }
 

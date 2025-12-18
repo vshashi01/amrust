@@ -11,17 +11,27 @@ use amrust_render::{
 use core::fmt;
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::path::Iter;
 use std::sync::Arc;
 
 use crate::render_db::{RenderDb, RenderObject};
 use crate::tree_item_viewer::TreeItem;
 
-pub trait DbReader {
-    fn get_parts(&self) -> impl Iterator<Item = (PartId, &Part)>;
+pub trait DbReader: Send + Sync + 'static {
+    fn get_part<'a>(&'a self, part_id: &PartId) -> Option<&'a Part>;
 
-    fn get_part_instances(&self) -> impl Iterator<Item = (PartInstanceId, &PartInstance, &Part)>;
+    fn get_parts<'a>(&'a self) -> Box<dyn Iterator<Item = (PartId, &'a Part)> + 'a>;
 
-    fn get_scene(&self) -> Option<&Scene>;
+    fn get_part_instance<'a>(
+        &'a self,
+        part_instance_id: &PartInstanceId,
+    ) -> Option<&'a PartInstance>;
+
+    fn get_part_instances<'a>(
+        &'a self,
+    ) -> Box<dyn Iterator<Item = (PartInstanceId, &'a PartInstance, &'a Part)> + 'a>;
+
+    fn get_scene<'a>(&'a self) -> Option<&'a Scene>;
 }
 
 #[derive(Debug)]
@@ -637,16 +647,29 @@ impl Db {
 }
 
 impl DbReader for Db {
-    fn get_parts(&self) -> impl Iterator<Item = (PartId, &Part)> {
-        self.get_parts()
+    fn get_parts<'a>(&'a self) -> Box<dyn Iterator<Item = (PartId, &'a Part)> + 'a> {
+        Box::new(self.get_parts())
     }
 
-    fn get_part_instances(&self) -> impl Iterator<Item = (PartInstanceId, &PartInstance, &Part)> {
-        self.get_part_instances()
+    fn get_part_instances<'a>(
+        &'a self,
+    ) -> Box<dyn Iterator<Item = (PartInstanceId, &'a PartInstance, &'a Part)> + 'a> {
+        Box::new(self.get_part_instances())
     }
 
-    fn get_scene(&self) -> Option<&Scene> {
+    fn get_scene<'a>(&'a self) -> Option<&Scene> {
         self.get_scene().ok()
+    }
+
+    fn get_part<'a>(&'a self, part_id: &PartId) -> Option<&'a Part> {
+        self.unique_parts.get(*part_id)
+    }
+
+    fn get_part_instance<'a>(
+        &'a self,
+        part_instance_id: &PartInstanceId,
+    ) -> Option<&'a PartInstance> {
+        self.part_instances.get(*part_instance_id)
     }
 }
 
@@ -757,19 +780,25 @@ pub fn create_build_items_list(
 }
 
 impl DbReader for DetachedDb {
-    fn get_parts(&self) -> impl Iterator<Item = (PartId, &Part)> {
-        self.map_part_id_to_detached
+    fn get_parts<'a>(&'a self) -> Box<dyn Iterator<Item = (PartId, &Part)> + 'a> {
+        let iterator = self
+            .map_part_id_to_detached
             .iter()
             .map(|(part_id, internal_id)| {
                 (
                     *part_id,
                     self.detached_unique_parts.get(*internal_id).unwrap(),
                 )
-            })
+            });
+
+        Box::new(iterator)
     }
 
-    fn get_part_instances(&self) -> impl Iterator<Item = (PartInstanceId, &PartInstance, &Part)> {
-        self.map_instance_id_to_detached
+    fn get_part_instances<'a>(
+        &'a self,
+    ) -> Box<dyn Iterator<Item = (PartInstanceId, &PartInstance, &Part)> + 'a> {
+        let iterator = self
+            .map_instance_id_to_detached
             .iter()
             .map(|(instance_id, internal_id)| {
                 let instance = self.detached_part_instances.get(*internal_id).unwrap();
@@ -781,11 +810,32 @@ impl DbReader for DetachedDb {
                     .unwrap();
 
                 (*instance_id, instance, part)
-            })
+            });
+
+        Box::new(iterator)
     }
 
     fn get_scene(&self) -> Option<&Scene> {
         None
+    }
+
+    fn get_part<'a>(&'a self, part_id: &PartId) -> Option<&'a Part> {
+        if let Some(detached_id) = self.map_part_id_to_detached.get(part_id) {
+            self.detached_unique_parts.get(*detached_id)
+        } else {
+            None
+        }
+    }
+
+    fn get_part_instance<'a>(
+        &'a self,
+        part_instance_id: &PartInstanceId,
+    ) -> Option<&'a PartInstance> {
+        if let Some(detached_id) = self.map_instance_id_to_detached.get(part_instance_id) {
+            self.detached_part_instances.get(*detached_id)
+        } else {
+            None
+        }
     }
 }
 
