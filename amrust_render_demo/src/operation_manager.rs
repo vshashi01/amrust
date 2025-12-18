@@ -7,10 +7,7 @@ use smol::{
 
 use crate::{
     amrust_db::{Db, Identifiable},
-    operation::{
-        Operation, OperationContext, OperationContextMessage, OperationRequirements,
-        OperationResponse,
-    },
+    operation::{Operation, OperationContext, OperationRequirements, OperationResponse},
     render_worker::RenderMessage,
 };
 
@@ -27,8 +24,6 @@ pub struct OperationManager {
 
     task_queue: Vec<Task<()>>,
 
-    operation_context_rx: Receiver<OperationContextMessage>,
-    operation_context_tx: Sender<OperationContextMessage>,
     detached_identifiables: HashSet<Identifiable>,
     is_db_blocked: bool,
 }
@@ -38,15 +33,11 @@ impl OperationManager {
         operation_queue_rx: Receiver<OperationMessage>,
         operation_response_tx: Sender<OperationResponse>,
     ) -> Self {
-        let (operation_context_tx, operation_context_rx) =
-            smol::channel::unbounded::<OperationContextMessage>();
         Self {
             operation_queue_rx,
             operation_response_tx,
             task_queue: vec![],
             detached_identifiables: HashSet::new(),
-            operation_context_rx,
-            operation_context_tx,
             is_db_blocked: false,
         }
     }
@@ -70,38 +61,12 @@ impl OperationManager {
             println!("Remove task: {task:?}");
         }
 
-        match self.operation_context_rx.try_recv() {
-            Ok(msg) => match msg {
-                OperationContextMessage::Detached(identifiables) => {
-                    for i in identifiables {
-                        if !self.detached_identifiables.contains(&i) {
-                            self.detached_identifiables.insert(i);
-                        }
-                    }
-                }
-                OperationContextMessage::Reattached(identifiables) => {
-                    for i in identifiables {
-                        self.detached_identifiables.remove(&i);
-                    }
-                }
-                OperationContextMessage::BlockedDb => self.is_db_blocked = true,
-                OperationContextMessage::UnblockedDb => self.is_db_blocked = false,
-            },
-            Err(err) => match err {
-                TryRecvError::Empty => {}
-                TryRecvError::Closed => {
-                    println!("Operation context message closed for some reason!")
-                }
-            },
-        }
-
         match self.operation_queue_rx.try_recv() {
             Ok(op) => match op {
                 OperationMessage::AddAsyncOperation(ops) => {
                     let db = db.clone();
                     let render_message_tx = render_message_tx.clone();
                     let operation_response_tx = self.operation_response_tx.clone();
-                    // let operation_context_tx = self.operation_context_tx.clone();
 
                     let task = executor.spawn(async move {
                         match get_new_operation_context(&db, ops, render_message_tx).await {
@@ -136,7 +101,6 @@ impl OperationManager {
                     let db = db.clone();
                     let render_message_tx = render_message_tx.clone();
                     let operation_response_tx = self.operation_response_tx.clone();
-                    // let operation_context_tx = self.operation_context_tx.clone();
 
                     smol::block_on(async {
                         match get_new_operation_context(&db, ops, render_message_tx).await {
@@ -235,7 +199,7 @@ async fn process_operation_response(
     let should_post_process = match &response {
         OperationResponse::Ongoing(_) => false,
         OperationResponse::Succeeded(_) => true,
-        OperationResponse::Failed(_, error) => true,
+        OperationResponse::Failed(_, _error) => true,
         OperationResponse::Aborted(_) => true,
     };
 
@@ -243,19 +207,21 @@ async fn process_operation_response(
         match ops_context {
             OperationContext::Detached { db } => {
                 let mut write_main_db = main_db.write().await;
-                write_main_db.reattach(db);
+                if write_main_db.reattach(db).is_err() {
+                    panic!("Reattaching the database failed");
+                }
             }
-            OperationContext::ReadFull { db } => {
+            OperationContext::ReadFull { .. } => {
                 //nothing to do since it was read only to begin with.
-                drop(db)
             }
-            OperationContext::WriteFull { db } => {
+            OperationContext::WriteFull { .. } => {
                 //whatever that needs to be done is probably done on the main db already
-                drop(db);
             }
             OperationContext::AppendOnly { db } => {
                 let mut write_main_db = main_db.write().await;
-                write_main_db.append(db);
+                if write_main_db.append(db).is_err() {
+                    panic!("Appending a local db to main db failed");
+                }
             }
         }
     }

@@ -1,3 +1,4 @@
+#![allow(clippy::needless_lifetimes)]
 use glam::{Mat4, Vec3};
 use slotmap::{SlotMap, new_key_type};
 use smol::lock::RwLock;
@@ -11,28 +12,11 @@ use amrust_render::{
 use core::fmt;
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::path::Iter;
 use std::sync::Arc;
 
+use crate::operation::DbReader;
 use crate::render_db::{RenderDb, RenderObject};
 use crate::tree_item_viewer::TreeItem;
-
-pub trait DbReader: Send + Sync + 'static {
-    fn get_part<'a>(&'a self, part_id: &PartId) -> Option<&'a Part>;
-
-    fn get_parts<'a>(&'a self) -> Box<dyn Iterator<Item = (PartId, &'a Part)> + 'a>;
-
-    fn get_part_instance<'a>(
-        &'a self,
-        part_instance_id: &PartInstanceId,
-    ) -> Option<&'a PartInstance>;
-
-    fn get_part_instances<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = (PartInstanceId, &'a PartInstance, &'a Part)> + 'a>;
-
-    fn get_scene<'a>(&'a self) -> Option<&'a Scene>;
-}
 
 #[derive(Debug)]
 pub struct Part {
@@ -169,12 +153,6 @@ pub enum DbError {
 
     #[error("There is no scene set currently")]
     SceneNotSet,
-
-    #[error("Part with id: {0} is not detached")]
-    PartNotDetached(PartId),
-
-    #[error("Part Instance with id: {0} is not detached")]
-    PartInstanceNotDetached(PartId),
 }
 
 impl Db {
@@ -577,7 +555,7 @@ impl Db {
             self.unique_parts.reattach(*part_id, part);
             self.detached_unique_parts.swap_remove(pos);
         } else {
-            return Err(DbError::PartNotDetached(*part_id));
+            return Err(DbError::PartIdNotFound(*part_id));
         }
 
         Ok(())
@@ -657,7 +635,7 @@ impl DbReader for Db {
         Box::new(self.get_part_instances())
     }
 
-    fn get_scene<'a>(&'a self) -> Option<&Scene> {
+    fn get_scene<'a>(&'a self) -> Option<&'a Scene> {
         self.get_scene().ok()
     }
 
@@ -710,10 +688,6 @@ impl DetachedDb {
 
     pub fn append_db(&mut self, other: Db) -> Result<(), DetachedDbError> {
         todo!("Implement appending to Detach Db")
-    }
-
-    pub fn get_as_standard_db(&self) -> Result<&Db, DetachedDbError> {
-        todo!("Implement get as standard db")
     }
 
     fn add_detached_part(
@@ -780,7 +754,7 @@ pub fn create_build_items_list(
 }
 
 impl DbReader for DetachedDb {
-    fn get_parts<'a>(&'a self) -> Box<dyn Iterator<Item = (PartId, &Part)> + 'a> {
+    fn get_parts<'a>(&'a self) -> Box<dyn Iterator<Item = (PartId, &'a Part)> + 'a> {
         let iterator = self
             .map_part_id_to_detached
             .iter()
@@ -796,7 +770,7 @@ impl DbReader for DetachedDb {
 
     fn get_part_instances<'a>(
         &'a self,
-    ) -> Box<dyn Iterator<Item = (PartInstanceId, &PartInstance, &Part)> + 'a> {
+    ) -> Box<dyn Iterator<Item = (PartInstanceId, &'a PartInstance, &'a Part)> + 'a> {
         let iterator = self
             .map_instance_id_to_detached
             .iter()

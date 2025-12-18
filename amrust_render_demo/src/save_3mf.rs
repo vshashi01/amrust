@@ -11,17 +11,13 @@ use threemf2::io::ObjectId;
 use threemf2::io::ThreemfPackage;
 
 use crate::amrust_db;
-use crate::amrust_db::Db;
 use crate::amrust_db::DbError;
-use crate::amrust_db::DbReader;
 use crate::amrust_db::Identifiable;
-use crate::amrust_db::Part;
 use crate::amrust_db::PartId;
 use crate::amrust_db::PartInstance;
-use crate::amrust_db::PartInstanceId;
 use crate::amrust_db::PartRep;
-use crate::amrust_db::Scene;
 use crate::app_mode::AppMode;
+use crate::operation::DbReader;
 use crate::operation::Operation;
 use crate::operation::OperationContext;
 use crate::operation::OperationRequirements;
@@ -76,7 +72,7 @@ impl Operation for Save3mfOps {
         let file = std::fs::File::create_new(&self.path);
         match file {
             Ok(f) => context
-                .get_db(async |db| match save(db, f) {
+                .get_db(|db| match save(db, f) {
                     Ok(_) => OperationResponse::Succeeded("Save 3MF"),
                     Err(err) => OperationResponse::Failed("Save 3MF", Box::new(err)),
                 })
@@ -92,8 +88,6 @@ fn save(db: &dyn DbReader, threemf: std::fs::File) -> Result<(), DbTo3mfError> {
 
     Ok(package.write(threemf)?)
 }
-
-fn create_threemf_lala(app_mode: AppMode, identifiable: &Identifiable) {}
 
 // works best when parts are ordered such the they are return tip towards the root.
 // single body parts first, then the composed of said single body parts

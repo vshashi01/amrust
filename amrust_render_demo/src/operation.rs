@@ -1,14 +1,13 @@
-use std::{collections::HashMap, error::Error, process::Output, sync::Arc};
+#![allow(clippy::needless_lifetimes)]
+
+use std::{error::Error, sync::Arc};
 
 use async_trait::async_trait;
-use smol::{channel::Sender, lock::RwLock};
+use smol::lock::RwLock;
 use thiserror::Error as thisError;
 
-use crate::{
-    amrust_db::{
-        Db, DbReader, DetachedDb, Identifiable, Part, PartId, PartInstance, PartInstanceId,
-    },
-    render_worker::RenderMessage,
+use crate::amrust_db::{
+    Db, DetachedDb, Identifiable, Part, PartId, PartInstance, PartInstanceId, Scene,
 };
 
 pub enum OperationRequirements {
@@ -34,19 +33,6 @@ pub enum OperationContextError {
     DetachedContext,
 }
 
-pub enum OperationContextMessage {
-    Detached(Vec<Identifiable>),
-    Reattached(Vec<Identifiable>),
-    BlockedDb,
-    UnblockedDb,
-}
-
-// pub struct OperationContext {
-//     db: DetachedDb,
-
-//     render_message_tx: Sender<RenderMessage>,
-// }
-
 pub enum OperationContext {
     Detached { db: DetachedDb },
     ReadFull { db: Arc<RwLock<Db>> },
@@ -58,8 +44,8 @@ impl OperationContext {
     /// Allows clearing the db only on WriteFull and AppendOnly context
     pub async fn clear_db(&mut self) -> Result<(), OperationContextError> {
         match self {
-            OperationContext::Detached { db } => Err(OperationContextError::DetachedContext),
-            OperationContext::ReadFull { db } => Err(OperationContextError::ReadOnlyContext),
+            OperationContext::Detached { .. } => Err(OperationContextError::DetachedContext),
+            OperationContext::ReadFull { .. } => Err(OperationContextError::ReadOnlyContext),
             OperationContext::WriteFull { db } => {
                 let mut write_db = db.write().await;
                 write_db.clear_all();
@@ -81,21 +67,23 @@ impl OperationContext {
     pub async fn append_db(&mut self, other_db: Db) -> Result<(), OperationContextError> {
         match self {
             OperationContext::Detached { db } => {
-                if let Err(err) = db.append_db(other_db) {
+                if db.append_db(other_db).is_err() {
                     panic!("Appending to DetachedDB failed");
                 }
 
                 Ok(())
             }
-            OperationContext::ReadFull { db } => Err(OperationContextError::ReadOnlyContext),
+            OperationContext::ReadFull { .. } => Err(OperationContextError::ReadOnlyContext),
             OperationContext::WriteFull { db } => {
                 let mut write_db = db.write().await;
-                write_db.append(other_db);
+                if write_db.append(other_db).is_err() {
+                    panic!("Appending to the main db failed");
+                }
 
                 Ok(())
             }
             OperationContext::AppendOnly { db } => {
-                if let Err(err) = db.append(other_db) {
+                if db.append(other_db).is_err() {
                     panic!("Appending to AppendOnly Db failed");
                 }
 
@@ -107,22 +95,21 @@ impl OperationContext {
     /// Can a get an immutable reference to the Db to process it
     /// Caution with holding this too long in the ReadFull and WriteFull context
     /// since it can lead to deadlocks in the system
-    pub async fn get_db<T, F, Fut>(&self, f: F) -> Result<T, OperationContextError>
-    where
-        F: for<'a> FnOnce(&'a dyn DbReader) -> Fut,
-        Fut: std::future::Future<Output = T>,
-    {
+    pub async fn get_db<T>(
+        &self,
+        f: impl FnOnce(&dyn DbReader) -> T,
+    ) -> Result<T, OperationContextError> {
         match self {
-            OperationContext::Detached { db } => Ok(f(db).await),
+            OperationContext::Detached { db } => Ok(f(db)),
             OperationContext::ReadFull { db } => {
                 let read_db = db.read().await;
-                Ok(f(&*read_db).await)
+                Ok(f(&*read_db))
             }
             OperationContext::WriteFull { db } => {
                 let read_db = db.read().await;
-                Ok(f(&*read_db).await)
+                Ok(f(&*read_db))
             }
-            OperationContext::AppendOnly { db } => Ok(f(db).await),
+            OperationContext::AppendOnly { db } => Ok(f(db)),
         }
     }
 
@@ -220,4 +207,21 @@ pub enum OperationResponse {
     Succeeded(&'static str),
     Failed(&'static str, Box<dyn Error + Send + Sync + 'static>),
     Aborted(&'static str),
+}
+
+pub trait DbReader: Send + Sync + 'static {
+    fn get_part<'a>(&'a self, part_id: &PartId) -> Option<&'a Part>;
+
+    fn get_parts<'a>(&'a self) -> Box<dyn Iterator<Item = (PartId, &'a Part)> + 'a>;
+
+    fn get_part_instance<'a>(
+        &'a self,
+        part_instance_id: &PartInstanceId,
+    ) -> Option<&'a PartInstance>;
+
+    fn get_part_instances<'a>(
+        &'a self,
+    ) -> Box<dyn Iterator<Item = (PartInstanceId, &'a PartInstance, &'a Part)> + 'a>;
+
+    fn get_scene<'a>(&'a self) -> Option<&'a Scene>;
 }
