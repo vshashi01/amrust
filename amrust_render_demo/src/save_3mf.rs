@@ -67,23 +67,23 @@ pub struct Save3mfOps {
 #[async_trait]
 impl Operation for Save3mfOps {
     fn get_operation_requirements(&self) -> Option<OperationRequirements> {
-        // let req = match &self.save_mode {
-        //     SaveMode::Scene => OperationRequirements::ReadFullDb,
-        //     SaveMode::PartsOnly(part_ids) => OperationRequirements::Identifiables {
-        //         identifiables: part_ids.iter().map(|id| Identifiable::Part(*id)).collect(),
-        //         detach_parts_with_part_instances: false,
-        //     },
-        //     SaveMode::PartInstances(part_instance_ids) => OperationRequirements::Identifiables {
-        //         identifiables: part_instance_ids
-        //             .iter()
-        //             .map(|id| Identifiable::PartInstance(*id))
-        //             .collect(),
-        //         detach_parts_with_part_instances: true,
-        //     },
-        // };
+        let req = match &self.save_mode {
+            SaveMode::Scene => OperationRequirements::ReadFullDb,
+            SaveMode::PartsOnly(part_ids) => OperationRequirements::Identifiables {
+                identifiables: part_ids.iter().map(|id| Identifiable::Part(*id)).collect(),
+                detach_parts_with_part_instances: false,
+            },
+            SaveMode::PartInstances(part_instance_ids) => OperationRequirements::Identifiables {
+                identifiables: part_instance_ids
+                    .iter()
+                    .map(|id| Identifiable::PartInstance(*id))
+                    .collect(),
+                detach_parts_with_part_instances: true,
+            },
+        };
 
-        // Some(req)
-        Some(OperationRequirements::ReadFullDb)
+        Some(req)
+        // Some(OperationRequirements::ReadFullDb)
     }
 
     async fn execute(&mut self, context: &mut OperationContext) -> OperationResponse {
@@ -321,8 +321,6 @@ fn process_all_remaining_parts(
     loop {
         if parts_to_be_processed.is_empty() {
             break;
-        } else {
-            println!("Parts to be processed: {parts_to_be_processed:?}");
         }
 
         for part_id in parts_to_be_processed.clone() {
@@ -349,9 +347,6 @@ fn process_all_remaining_parts(
                             part_instance_ids,
                         )
                         .collect::<Vec<_>>();
-
-                        // println!("Unprocessed Instances: {unprocessed_instances:?}");
-                        // println!("Components Instances: {part_instance_ids:?}");
 
                         if unprocessed_instances.is_empty() {
                             let instances = part_instance_ids
@@ -449,11 +444,12 @@ fn get_unprocessed_components<'a>(
     part_instance_ids: &[PartInstanceId],
 ) -> impl Iterator<Item = &'a PartInstance> {
     instance_map.iter().filter_map(|(id, instance)| {
-        if part_instance_ids.contains(id) && parts_already_processed.contains_key(&instance.part_id)
+        if part_instance_ids.contains(id)
+            && !parts_already_processed.contains_key(&instance.part_id)
         {
-            None
-        } else {
             Some(instance)
+        } else {
+            None
         }
     })
 }
