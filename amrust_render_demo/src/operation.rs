@@ -11,7 +11,10 @@ use crate::amrust_db::{
 };
 
 pub enum OperationRequirements {
-    Identifiables(Vec<Identifiable>),
+    Identifiables {
+        identifiables: Vec<Identifiable>,
+        detach_parts_with_part_instances: bool,
+    },
     ReadFullDb,
     WriteFullDb,
     AppendToDb,
@@ -202,6 +205,7 @@ impl OperationContext {
     //     }
 }
 
+#[derive(Debug)]
 pub enum OperationResponse {
     Ongoing(&'static str),
     Succeeded(&'static str),
@@ -210,9 +214,13 @@ pub enum OperationResponse {
 }
 
 pub trait DbReader: Send + Sync + 'static {
+    fn get_parts_count<'a>(&'a self) -> usize;
+
     fn get_part<'a>(&'a self, part_id: &PartId) -> Option<&'a Part>;
 
     fn get_parts<'a>(&'a self) -> Box<dyn Iterator<Item = (PartId, &'a Part)> + 'a>;
+
+    fn get_part_instance_count<'a>(&'a self) -> usize;
 
     fn get_part_instance<'a>(
         &'a self,

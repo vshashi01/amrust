@@ -11,6 +11,7 @@ use crate::operation_manager::{OperationManager, OperationMessage};
 use crate::part_list::PartList;
 use crate::render_db::RenderDb;
 use crate::render_worker::{RenderMessage, RenderResponse, RenderWorker, RendererSettings};
+use crate::save_3mf::SaveMode;
 use crate::toolsheets::Toolsheets;
 use crate::tree_item_viewer::TreeItemViewer;
 use crate::viewport::Viewport3D;
@@ -65,6 +66,7 @@ struct AppState {
     pub render_response_rx: Receiver<RenderResponse>,
     pub render_db: Arc<RwLock<RenderDb>>,
     pub detached_identifiables: Vec<Identifiable>,
+    pub selected_identifiables: Vec<Identifiable>,
 
     pub operation_manager: OperationManager,
     pub operation_queue_tx: Sender<OperationMessage>,
@@ -222,6 +224,7 @@ impl AppState {
             render_response_rx,
             render_db,
             detached_identifiables: vec![],
+            selected_identifiables: vec![],
 
             operation_manager,
             operation_queue_tx,
@@ -530,11 +533,37 @@ impl App {
             if let Some(path) = state.save_file_dlg.take_picked() {
                 println!("File path to save to is {path:?}");
 
-                let ops = save_3mf::Save3mfOps {
-                    path,
-                    app_mode: state.current_app_mode,
-                    entities_to_save: vec![],
+                let save_mode = {
+                    if !state.selected_identifiables.is_empty() {
+                        match state.current_app_mode {
+                            AppMode::Objects => {
+                                let parts =
+                                    state.selected_identifiables.iter().filter_map(|i| match i {
+                                        Identifiable::Part(part_id) => Some(*part_id),
+                                        Identifiable::PartInstance(_) => None,
+                                    });
+
+                                SaveMode::PartsOnly(parts.collect())
+                            }
+                            AppMode::Build => {
+                                let part_instances =
+                                    state.selected_identifiables.iter().filter_map(|i| match i {
+                                        Identifiable::Part(_) => None,
+
+                                        Identifiable::PartInstance(part_instance_id) => {
+                                            Some(*part_instance_id)
+                                        }
+                                    });
+
+                                SaveMode::PartInstances(part_instances.collect())
+                            }
+                        }
+                    } else {
+                        SaveMode::Scene
+                    }
                 };
+
+                let ops = save_3mf::Save3mfOps { path, save_mode };
                 if let Err(err) = state
                     .operation_queue_tx
                     .send_blocking(OperationMessage::AddAsyncOperation(Box::new(ops)))
@@ -609,14 +638,14 @@ impl App {
             if let Some(ref mut toolsheets) = state.toolsheets
                 && toolsheets.has_selection_changed()
             {
-                let selected_identifiables: Vec<_> = match state.current_app_mode {
+                state.selected_identifiables = match state.current_app_mode {
                     AppMode::Objects => toolsheets.selected_objects().copied().collect(),
                     AppMode::Build => toolsheets.selected_build_items().copied().collect(),
                 };
 
                 let mut tree_items = vec![];
-                for id in selected_identifiables {
-                    let item = create_object_tree_from_identifiable(state.db.clone(), id).unwrap();
+                for id in &state.selected_identifiables {
+                    let item = create_object_tree_from_identifiable(state.db.clone(), *id).unwrap();
                     tree_items.push(item);
                 }
 

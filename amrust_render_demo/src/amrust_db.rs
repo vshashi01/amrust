@@ -425,20 +425,24 @@ impl Db {
         self.unique_parts.clear();
     }
 
-    pub fn create_detached_db(
+    // detaching a part will also detach instances that are used by the Part (e.g Component instances within Composed Parts)
+    pub fn detach_parts_and_add_to_detached_db(
         &mut self,
+        detached_db: &mut DetachedDb,
         parts_to_detach: &[PartId],
-        part_instances_to_detach: &[PartInstanceId],
-    ) -> Result<DetachedDb, DbError> {
-        let mut detached_db = DetachedDb::new();
-
+    ) -> Result<(), DbError> {
         for part_id in parts_to_detach {
             let mut map_of_parts = HashMap::new();
-            if self.detach_part(part_id, &mut map_of_parts).is_err() {
+            if self.detach_part(&part_id, &mut map_of_parts).is_err() {
                 panic!("Detaching parts failed partially! Db is dirty!")
             }
 
             for (part_id, part) in map_of_parts {
+                if detached_db.map_part_id_to_detached.contains_key(&part_id) {
+                    // in this case the part was already previously detached and registered
+                    continue;
+                }
+
                 let instances_pointing_to_part = self
                     .get_part_instances()
                     .filter_map(|(instance_id, instance, _)| {
@@ -470,6 +474,17 @@ impl Db {
             }
         }
 
+        Ok(())
+    }
+
+    pub fn detach_part_instances_and_add_to_detached_db(
+        &mut self,
+        detached_db: &mut DetachedDb,
+        part_instances_to_detach: &[PartInstanceId],
+        is_detach_parts_pointed_to: bool,
+    ) -> Result<(), DbError> {
+        let mut parts_to_detach = vec![];
+
         for instance_id in part_instances_to_detach {
             if detached_db
                 .map_instance_id_to_detached
@@ -480,16 +495,25 @@ impl Db {
             }
 
             let instance = self.detach_part_instance(instance_id)?;
+            let part_pointed_to = instance.part_id.clone();
 
-            if detached_db
-                .add_detached_part_instance(instance_id, instance)
-                .is_err()
-            {
-                panic!("Registering Instance t Detached Db failed! Db is dirty")
+            match detached_db.add_detached_part_instance(instance_id, instance) {
+                Ok(_) => {
+                    if is_detach_parts_pointed_to {
+                        parts_to_detach.push(part_pointed_to);
+                    }
+                }
+                Err(err) => {
+                    panic!("Registering Instance to Detached Db failed: {err:?}");
+                }
             }
         }
 
-        Ok(detached_db)
+        if is_detach_parts_pointed_to {
+            self.detach_parts_and_add_to_detached_db(detached_db, &parts_to_detach)?;
+        }
+
+        Ok(())
     }
 
     pub fn reattach(&mut self, mut detached: DetachedDb) -> Result<(), DbError> {
@@ -625,8 +649,23 @@ impl Db {
 }
 
 impl DbReader for Db {
+    fn get_parts_count<'a>(&'a self) -> usize {
+        self.unique_parts.len()
+    }
+
     fn get_parts<'a>(&'a self) -> Box<dyn Iterator<Item = (PartId, &'a Part)> + 'a> {
         Box::new(self.get_parts())
+    }
+
+    fn get_part_instance_count<'a>(&'a self) -> usize {
+        self.part_instances.len()
+    }
+
+    fn get_part_instance<'a>(
+        &'a self,
+        part_instance_id: &PartInstanceId,
+    ) -> Option<&'a PartInstance> {
+        self.part_instances.get(*part_instance_id)
     }
 
     fn get_part_instances<'a>(
@@ -641,13 +680,6 @@ impl DbReader for Db {
 
     fn get_part<'a>(&'a self, part_id: &PartId) -> Option<&'a Part> {
         self.unique_parts.get(*part_id)
-    }
-
-    fn get_part_instance<'a>(
-        &'a self,
-        part_instance_id: &PartInstanceId,
-    ) -> Option<&'a PartInstance> {
-        self.part_instances.get(*part_instance_id)
     }
 }
 
@@ -754,6 +786,10 @@ pub fn create_build_items_list(
 }
 
 impl DbReader for DetachedDb {
+    fn get_parts_count<'a>(&'a self) -> usize {
+        self.detached_unique_parts.len()
+    }
+
     fn get_parts<'a>(&'a self) -> Box<dyn Iterator<Item = (PartId, &'a Part)> + 'a> {
         let iterator = self
             .map_part_id_to_detached
@@ -766,6 +802,21 @@ impl DbReader for DetachedDb {
             });
 
         Box::new(iterator)
+    }
+
+    fn get_part_instance_count<'a>(&'a self) -> usize {
+        self.detached_part_instances.len()
+    }
+
+    fn get_part_instance<'a>(
+        &'a self,
+        part_instance_id: &PartInstanceId,
+    ) -> Option<&'a PartInstance> {
+        if let Some(detached_id) = self.map_instance_id_to_detached.get(part_instance_id) {
+            self.detached_part_instances.get(*detached_id)
+        } else {
+            None
+        }
     }
 
     fn get_part_instances<'a>(
@@ -796,17 +847,6 @@ impl DbReader for DetachedDb {
     fn get_part<'a>(&'a self, part_id: &PartId) -> Option<&'a Part> {
         if let Some(detached_id) = self.map_part_id_to_detached.get(part_id) {
             self.detached_unique_parts.get(*detached_id)
-        } else {
-            None
-        }
-    }
-
-    fn get_part_instance<'a>(
-        &'a self,
-        part_instance_id: &PartInstanceId,
-    ) -> Option<&'a PartInstance> {
-        if let Some(detached_id) = self.map_instance_id_to_detached.get(part_instance_id) {
-            self.detached_part_instances.get(*detached_id)
         } else {
             None
         }

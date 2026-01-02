@@ -6,7 +6,7 @@ use smol::{
 };
 
 use crate::{
-    amrust_db::{Db, Identifiable},
+    amrust_db::{Db, DetachedDb, Identifiable},
     operation::{Operation, OperationContext, OperationRequirements, OperationResponse},
     render_worker::RenderMessage,
 };
@@ -156,7 +156,10 @@ async fn get_new_operation_context(
 ) -> Result<(OperationContext, Box<dyn Operation>), OperationContextGenerationError> {
     let context = if let Some(reqs) = operation.get_operation_requirements() {
         match reqs {
-            OperationRequirements::Identifiables(identifiables) => {
+            OperationRequirements::Identifiables {
+                identifiables,
+                detach_parts_with_part_instances,
+            } => {
                 let mut parts_to_detach = vec![];
                 let mut part_instances_to_detach = vec![];
 
@@ -168,14 +171,28 @@ async fn get_new_operation_context(
                         }
                     }
                 }
+
+                let mut detached_db = DetachedDb::new();
                 let mut write_db = db.write().await;
-                if let Ok(detached_db) =
-                    write_db.create_detached_db(&parts_to_detach, &part_instances_to_detach)
+
+                if !parts_to_detach.is_empty()
+                    && let Err(err) = write_db
+                        .detach_parts_and_add_to_detached_db(&mut detached_db, &parts_to_detach)
                 {
-                    OperationContext::Detached { db: detached_db }
-                } else {
-                    panic!("Cannot create Detached Db from existing Db")
+                    panic!("Unable to detach and add parts to DetachedDb: {err:?}");
                 }
+
+                if !part_instances_to_detach.is_empty()
+                    && let Err(err) = write_db.detach_part_instances_and_add_to_detached_db(
+                        &mut detached_db,
+                        &part_instances_to_detach,
+                        detach_parts_with_part_instances,
+                    )
+                {
+                    panic!("Unable to detach and add part instances to DetachedDb: {err:?}");
+                }
+
+                OperationContext::Detached { db: detached_db }
             }
             OperationRequirements::ReadFullDb => OperationContext::ReadFull { db: db.clone() },
             OperationRequirements::WriteFullDb => OperationContext::WriteFull { db: db.clone() },

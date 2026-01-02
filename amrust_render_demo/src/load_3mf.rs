@@ -55,7 +55,7 @@ impl Operation for Load3MFOps {
     }
 }
 
-fn load(threemf: std::fs::File) -> Result<Db, DbFrom3mfError> {
+pub fn load(threemf: std::fs::File) -> Result<Db, DbFrom3mfError> {
     let package = ThreemfPackage::from_reader_with_memory_optimized_deserializer(threemf, true)?;
 
     get_db_from_3mf(&package)

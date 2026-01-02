@@ -15,8 +15,8 @@ use crate::amrust_db::DbError;
 use crate::amrust_db::Identifiable;
 use crate::amrust_db::PartId;
 use crate::amrust_db::PartInstance;
+use crate::amrust_db::PartInstanceId;
 use crate::amrust_db::PartRep;
-use crate::app_mode::AppMode;
 use crate::operation::DbReader;
 use crate::operation::Operation;
 use crate::operation::OperationContext;
@@ -48,286 +48,446 @@ pub enum DbTo3mfError {
 
     #[error("Scene is empty")]
     SceneEmpty,
+
+    #[error("No Parts to be saved")]
+    NoPartsToBeSaved,
+}
+
+pub enum SaveMode {
+    Scene,
+    PartsOnly(Vec<PartId>),
+    PartInstances(Vec<PartInstanceId>),
 }
 
 pub struct Save3mfOps {
     pub path: PathBuf,
-    pub app_mode: AppMode,
-    pub entities_to_save: Vec<Identifiable>,
+    pub save_mode: SaveMode,
 }
 
 #[async_trait]
 impl Operation for Save3mfOps {
     fn get_operation_requirements(&self) -> Option<OperationRequirements> {
-        if self.entities_to_save.is_empty() {
-            Some(OperationRequirements::ReadFullDb)
-        } else {
-            Some(OperationRequirements::Identifiables(
-                self.entities_to_save.clone(),
-            ))
-        }
+        // let req = match &self.save_mode {
+        //     SaveMode::Scene => OperationRequirements::ReadFullDb,
+        //     SaveMode::PartsOnly(part_ids) => OperationRequirements::Identifiables {
+        //         identifiables: part_ids.iter().map(|id| Identifiable::Part(*id)).collect(),
+        //         detach_parts_with_part_instances: false,
+        //     },
+        //     SaveMode::PartInstances(part_instance_ids) => OperationRequirements::Identifiables {
+        //         identifiables: part_instance_ids
+        //             .iter()
+        //             .map(|id| Identifiable::PartInstance(*id))
+        //             .collect(),
+        //         detach_parts_with_part_instances: true,
+        //     },
+        // };
+
+        // Some(req)
+        Some(OperationRequirements::ReadFullDb)
     }
 
     async fn execute(&mut self, context: &mut OperationContext) -> OperationResponse {
         let file = std::fs::File::create_new(&self.path);
         match file {
-            Ok(f) => context
-                .get_db(|db| match save(db, f) {
-                    Ok(_) => OperationResponse::Succeeded("Save 3MF"),
-                    Err(err) => OperationResponse::Failed("Save 3MF", Box::new(err)),
-                })
-                .await
-                .unwrap(),
+            Ok(f) => {
+                match context
+                    .get_db(|db| match save(db, &self.save_mode, f) {
+                        Ok(_) => OperationResponse::Succeeded("Save 3MF"),
+                        Err(err) => OperationResponse::Failed("Save 3MF", Box::new(err)),
+                    })
+                    .await
+                {
+                    Ok(resp) => {
+                        println!("Operation Responsed: {resp:?}");
+                        resp
+                    }
+                    Err(err) => {
+                        println!("Context error: {err:?}");
+                        OperationResponse::Failed("Save 3MF", Box::new(err))
+                    }
+                }
+            }
             Err(err) => OperationResponse::Failed("Save 3MF", Box::new(err)),
         }
     }
 }
 
-fn save(db: &dyn DbReader, threemf: std::fs::File) -> Result<(), DbTo3mfError> {
-    let package = create_3mf_package(db)?;
+fn save(
+    db: &dyn DbReader,
+    save_mode: &SaveMode,
+    threemf: std::fs::File,
+) -> Result<(), DbTo3mfError> {
+    let model_builder = match save_mode {
+        SaveMode::Scene => {
+            println!("Saving Scene");
+            save_scene(db)
+        }
+        SaveMode::PartsOnly(part_ids) => {
+            if !part_ids.is_empty() {
+                println!("Saving Parts");
+                save_parts(db, part_ids)
+            } else {
+                Err(DbTo3mfError::NoPartsToBeSaved)
+            }
+        }
+        SaveMode::PartInstances(part_instance_ids) => {
+            if !part_instance_ids.is_empty() {
+                println!("Saving Specific Instances");
+                save_instances(db, part_instance_ids)
+            } else {
+                Err(DbTo3mfError::NoPartsToBeSaved)
+            }
+        }
+    };
 
-    Ok(package.write(threemf)?)
+    match model_builder {
+        Ok(builder) => {
+            let model = builder.build()?;
+            let package: ThreemfPackage = model.into();
+
+            Ok(package.write(threemf)?)
+        }
+        Err(err) => {
+            println!("Something went wrong: {err:?}");
+            Err(err)
+        }
+    }
 }
 
-// works best when parts are ordered such the they are return tip towards the root.
-// single body parts first, then the composed of said single body parts
-// then composed of other composed parts
-// fn create_objects_map(parts: &[(PartId, &Part)]) -> Result<ModelBuilder, DbTo3mfError> {
-//     let mut model_builder = ModelBuilder::new(Unit::Millimeter, true);
-//     let mut unique_part_to_object_map: HashMap<PartId, ObjectId> = HashMap::new();
-//     // let mut already_processed_composed_part = vec![];
-//     for (part_id, part) in parts {
-//         match part.get_rep() {
-//             PartRep::Mesh(mesh) => {
-//                 let object_id = process_and_insert_mesh_object(&mut model_builder, mesh)?;
-//                 unique_part_to_object_map.insert(*part_id, object_id);
-//             }
-//             PartRep::ComposedPart(components) => {
-//                 let can_process = components
-//                     .iter()
-//                     .all(|c| unique_part_to_object_map.contains_key(&c.id));
-
-//                 if !can_process {
-//                     continue;
-//                 }
-
-//                 let object_id = model_builder.add_components_object(|cb| {
-//                     for c in components {
-//                         if let Some(id) = unique_part_to_object_map.get(&c.id) {
-//                             let transform = convert_transformation_to_3mf_transform(&c.transform);
-//                             cb.add_component_advanced(*id, |c| {
-//                                 c.transform(transform);
-//                             });
-//                         }
-//                     }
-//                     Ok(())
-//                 })?;
-
-//                 unique_part_to_object_map.insert(part.id.clone(), object_id);
-//             }
-//         }
-//     }
-
-//     Ok(model_builder)
-// }
-
-fn create_3mf_package(db: &dyn DbReader) -> Result<ThreemfPackage, DbTo3mfError> {
-    let scene = db.get_scene().unwrap();
-    // if scene.is_none() {
-    //     return Err(DbTo3mfError::SceneEmpty);
-    // }
-
+fn save_scene(db: &dyn DbReader) -> Result<ModelBuilder, DbTo3mfError> {
     let mut model_builder = ModelBuilder::new(Unit::Millimeter, true);
-    let mut unique_part_to_object_map: HashMap<PartId, ObjectId> = HashMap::new();
-    let mut already_processed_composed_part = vec![];
+    model_builder.add_build(None)?;
 
-    //try to process all unique parts.
-    for (part_id, part) in db.get_parts() {
-        match part.get_rep() {
-            PartRep::Mesh(mesh) => {
-                let object_id = process_and_insert_mesh_object(&mut model_builder, mesh)?;
-                unique_part_to_object_map.insert(part_id, object_id);
-            }
-            PartRep::ComposedPart(instances) => {
-                let mut instances_data = vec![];
-                for i in instances {
-                    let instance_data = db.get_part_instance(i).unwrap();
-                    instances_data.push(instance_data);
-                }
-                //we only care about the processed objects if did not process then it proceeds
-                if let Ok(object_id) = process_composed_part_and_insert_component_object(
-                    &mut model_builder,
-                    instances_data.as_slice(),
-                    &unique_part_to_object_map,
-                ) {
-                    already_processed_composed_part.push(part_id);
-                    unique_part_to_object_map.insert(part_id, object_id);
-                }
-            }
+    let part_instances_to_save = if let Some(scene) = db.get_scene() {
+        if scene.instances.is_empty() {
+            return Err(DbTo3mfError::SceneEmpty);
+        } else {
+            scene.instances.clone()
+        }
+    } else {
+        return Err(DbTo3mfError::SceneEmpty);
+    };
+
+    let mut parts_already_processed =
+        HashMap::<PartId, ObjectId>::with_capacity(part_instances_to_save.len());
+    let mut parts_to_be_processed = Vec::<PartId>::with_capacity(part_instances_to_save.len());
+
+    let instance_map: HashMap<PartInstanceId, PartInstance> = db
+        .get_part_instances()
+        .map(|(id, instance, _)| (id, instance.clone()))
+        .collect();
+
+    // this is needed to identify all the parts that needs to be saved.
+    let parts_to_save = create_list_of_all_parts_to_save(db, &part_instances_to_save);
+
+    add_parts_to_model_builder(
+        db,
+        &mut model_builder,
+        &mut parts_already_processed,
+        &mut parts_to_be_processed,
+        &instance_map,
+        &parts_to_save,
+    )?;
+
+    for id in part_instances_to_save {
+        if let Some(instance) = instance_map.get(&id)
+            && let Some(object_id) = parts_already_processed.get(&instance.part_id)
+        {
+            let transform = convert_transformation_to_3mf_transform(&instance.transform);
+            model_builder.add_build_item_advanced(*object_id, |builder| {
+                builder.transform(transform);
+            })?;
         }
     }
 
-    //process remaining composed parts
-    let all_composed_parts = db
-        .get_parts()
-        .filter(|(_, part)| matches!(part.get_rep(), PartRep::ComposedPart(_)))
-        .collect::<Vec<_>>();
+    Ok(model_builder)
+}
 
+fn save_instances(
+    db: &dyn DbReader,
+    part_instances_to_save: &[PartInstanceId],
+) -> Result<ModelBuilder, DbTo3mfError> {
+    let mut model_builder = ModelBuilder::new(Unit::Millimeter, true);
+    model_builder.add_build(None)?;
+
+    //just guessing the capacity based on number of part_instances_to_save
+    let mut parts_already_processed =
+        HashMap::<PartId, ObjectId>::with_capacity(part_instances_to_save.len());
+    let mut parts_to_be_processed = Vec::with_capacity(part_instances_to_save.len());
+
+    let instance_map: HashMap<PartInstanceId, PartInstance> = db
+        .get_part_instances()
+        .map(|(id, instance, _)| (id, instance.clone()))
+        .collect();
+
+    // this is needed to identify all the parts that needs to be saved.
+    let parts_to_save = create_list_of_all_parts_to_save(db, part_instances_to_save);
+
+    add_parts_to_model_builder(
+        db,
+        &mut model_builder,
+        &mut parts_already_processed,
+        &mut parts_to_be_processed,
+        &instance_map,
+        &parts_to_save,
+    )?;
+
+    for id in part_instances_to_save {
+        if let Some(instance) = instance_map.get(id)
+            && let Some(object_id) = parts_already_processed.get(&instance.part_id)
+        {
+            let transform = convert_transformation_to_3mf_transform(&instance.transform);
+            model_builder.add_build_item_advanced(*object_id, |builder| {
+                builder.transform(transform);
+            })?;
+        }
+    }
+
+    Ok(model_builder)
+}
+
+fn save_parts(db: &dyn DbReader, parts_to_save: &[PartId]) -> Result<ModelBuilder, DbTo3mfError> {
+    println!("Saving Parts");
+    let mut model_builder = ModelBuilder::new(Unit::Millimeter, true);
+    model_builder.add_build(None)?;
+
+    //just guessing the capacity based on number of part_instances_to_save
+    let mut parts_already_processed =
+        HashMap::<PartId, ObjectId>::with_capacity(parts_to_save.len());
+    let mut parts_to_be_processed = Vec::with_capacity(parts_to_save.len());
+
+    let instance_map: HashMap<PartInstanceId, PartInstance> = db
+        .get_part_instances()
+        .map(|(id, instance, _)| (id, instance.clone()))
+        .collect();
+
+    add_parts_to_model_builder(
+        db,
+        &mut model_builder,
+        &mut parts_already_processed,
+        &mut parts_to_be_processed,
+        &instance_map,
+        parts_to_save,
+    )?;
+
+    // add a build item for every part
+    for id in parts_to_save {
+        if let Some(object_id) = parts_already_processed.get(id) {
+            model_builder.add_build_item(*object_id)?;
+        }
+    }
+    Ok(model_builder)
+}
+
+fn add_parts_to_model_builder(
+    db: &dyn DbReader,
+    model_builder: &mut ModelBuilder,
+    parts_already_processed: &mut HashMap<PartId, ObjectId>,
+    parts_to_be_processed: &mut Vec<PartId>,
+    instance_map: &HashMap<PartInstanceId, PartInstance>,
+    parts_to_save: &[PartId],
+) -> Result<(), DbTo3mfError> {
+    for (id, part) in db.get_parts() {
+        if parts_to_save.contains(&id) {
+            process_reps(
+                model_builder,
+                parts_already_processed,
+                parts_to_be_processed,
+                instance_map,
+                &id,
+                part,
+            )?;
+        }
+    }
+
+    process_all_remaining_parts(
+        db,
+        model_builder,
+        parts_already_processed,
+        parts_to_be_processed,
+        instance_map,
+    )?;
+
+    Ok(())
+}
+
+fn process_all_remaining_parts(
+    db: &(dyn DbReader + 'static),
+    model_builder: &mut ModelBuilder,
+    parts_already_processed: &mut HashMap<PartId, ObjectId>,
+    parts_to_be_processed: &mut Vec<PartId>,
+    instance_map: &HashMap<PartInstanceId, PartInstance>,
+) -> Result<(), DbTo3mfError> {
     loop {
-        if already_processed_composed_part.len() == all_composed_parts.len() {
+        if parts_to_be_processed.is_empty() {
             break;
         }
 
-        for (part_id, part) in &all_composed_parts {
-            if already_processed_composed_part.contains(part_id) {
-                continue;
-            }
+        for part_id in parts_to_be_processed.clone() {
+            match db.get_part(&part_id) {
+                Some(part) => match part.get_rep() {
+                    PartRep::Mesh(mesh) => {
+                        match process_and_insert_mesh_object(model_builder, mesh) {
+                            Ok(object_id) => {
+                                parts_already_processed.insert(part_id, object_id);
+                            }
+                            Err(err) => return Err(err),
+                        }
+                    }
+                    PartRep::ComposedPart(part_instance_ids) => {
+                        let unprocessed_instances = get_unprocessed_components(
+                            parts_already_processed,
+                            instance_map,
+                            part_instance_ids,
+                        )
+                        .collect::<Vec<_>>();
 
-            //only cares about the processed entity
-            if let PartRep::ComposedPart(instances) = part.get_rep() {
-                let mut instances_data = vec![];
-                for i in instances {
-                    let instance_data = db.get_part_instance(i).unwrap();
-                    instances_data.push(instance_data);
-                }
-                if let Ok(object_id) = process_composed_part_and_insert_component_object(
-                    &mut model_builder,
-                    &instances_data,
-                    &unique_part_to_object_map,
-                ) {
-                    already_processed_composed_part.push(*part_id);
-                    unique_part_to_object_map.insert(*part_id, object_id);
-                }
+                        println!("Unprocessed Instances: {unprocessed_instances:?}");
+                        println!("Components Instances: {part_instance_ids:?}");
+
+                        if unprocessed_instances.is_empty() {
+                            match process_composed_part_and_insert_component_object(
+                                model_builder,
+                                &unprocessed_instances,
+                                parts_already_processed,
+                            ) {
+                                Ok(object_id) => {
+                                    parts_already_processed.insert(part_id, object_id);
+                                    if let Some(pos) =
+                                        parts_to_be_processed.iter().position(|id| id == &part_id)
+                                    {
+                                        parts_to_be_processed.remove(pos);
+                                    }
+                                }
+                                Err(err) => return Err(err),
+                            }
+                        } else {
+                            for instance in unprocessed_instances {
+                                if !parts_to_be_processed.contains(&instance.part_id) {
+                                    parts_to_be_processed.push(instance.part_id);
+                                }
+                            }
+                        }
+                    }
+                },
+                None => panic!("Unable to get some Part from Db"),
             }
         }
     }
 
-    model_builder.add_build(None)?;
-    for part_instance in &scene.instances {
-        let instance_data = db.get_part_instance(part_instance).unwrap();
-        match unique_part_to_object_map.get(&instance_data.part_id) {
-            Some(object_id) => {
-                let transform = convert_transformation_to_3mf_transform(&instance_data.transform);
-                model_builder.add_build_item_advanced(*object_id, |i| {
-                    i.transform(transform);
-                })?;
-            }
-            None => {
-                return Err(DbTo3mfError::UniquePartNotFound(instance_data.part_id));
-            }
-        }
-    }
-
-    let model = model_builder.build()?;
-
-    Ok(model.into())
+    Ok(())
 }
 
-// fn create_3mf_package(db: &Db) -> Result<ThreemfPackage, DbTo3mfError> {
-//     let scene = db.get_scene()?;
-//     if db.is_scene_empty() {
-//         return Err(DbTo3mfError::SceneEmpty);
-//     }
+fn process_reps(
+    model_builder: &mut ModelBuilder,
+    parts_already_processed: &mut HashMap<PartId, ObjectId>,
+    parts_to_be_processed: &mut Vec<PartId>,
+    instance_map: &HashMap<PartInstanceId, PartInstance>,
+    id: &PartId,
+    part: &amrust_db::Part,
+) -> Result<(), DbTo3mfError> {
+    if parts_already_processed.contains_key(id) {
+        return Ok(());
+    }
 
-//     let mut model_builder = ModelBuilder::new(Unit::Millimeter, true);
-//     let mut unique_part_to_object_map: HashMap<PartId, ObjectId> = HashMap::new();
-//     let mut already_processed_composed_part = vec![];
+    match part.get_rep() {
+        PartRep::Mesh(mesh) => match process_and_insert_mesh_object(model_builder, mesh) {
+            Ok(object_id) => {
+                parts_already_processed.insert(*id, object_id);
+            }
+            Err(err) => return Err(err),
+        },
+        PartRep::ComposedPart(part_instance_ids) => {
+            let unprocessed_instances = get_unprocessed_components(
+                parts_already_processed,
+                instance_map,
+                part_instance_ids,
+            )
+            .collect::<Vec<_>>();
+            if unprocessed_instances.is_empty() {
+                match process_composed_part_and_insert_component_object(
+                    model_builder,
+                    &unprocessed_instances,
+                    parts_already_processed,
+                ) {
+                    Ok(object_id) => {
+                        // if processing succeeds then remove from parts to be processed
+                        parts_already_processed.insert(*id, object_id);
+                    }
+                    Err(err) => return Err(err),
+                }
+            } else {
+                parts_to_be_processed.push(*id);
+            }
+        }
+    }
 
-//     //try to process all unique parts.
-//     for (part_id, part) in db.get_parts() {
-//         match part.get_rep() {
-//             PartRep::Mesh(mesh) => {
-//                 let object_id = process_and_insert_mesh_object(&mut model_builder, mesh)?;
-//                 unique_part_to_object_map.insert(part_id, object_id);
-//             }
-//             PartRep::ComposedPart(instances) => {
-//                 let mut instances_data = vec![];
-//                 for i in instances {
-//                     let instance_data = db.get_part_instance_data(i)?;
-//                     instances_data.push(instance_data);
-//                 }
-//                 //we only care about the processed objects if did not process then it proceeds
-//                 if let Ok(object_id) = process_composed_part_and_insert_component_object(
-//                     &mut model_builder,
-//                     &instances_data,
-//                     &unique_part_to_object_map,
-//                 ) {
-//                     already_processed_composed_part.push(part_id);
-//                     unique_part_to_object_map.insert(part_id, object_id);
-//                 }
-//             }
-//         }
-//     }
+    Ok(())
+}
 
-//     //process remaining composed parts
-//     let all_composed_parts = db
-//         .get_parts()
-//         .filter(|(_, part)| matches!(part.get_rep(), PartRep::ComposedPart(_)))
-//         .collect::<Vec<_>>();
+fn get_unprocessed_components<'a>(
+    parts_already_processed: &HashMap<PartId, ObjectId>,
+    instance_map: &'a HashMap<PartInstanceId, PartInstance>,
+    part_instance_ids: &[PartInstanceId],
+) -> impl Iterator<Item = &'a PartInstance> {
+    instance_map.iter().filter_map(|(id, instance)| {
+        if part_instance_ids.contains(id) && parts_already_processed.contains_key(&instance.part_id)
+        {
+            None
+        } else {
+            Some(instance)
+        }
+    })
+}
 
-//     loop {
-//         if already_processed_composed_part.len() == all_composed_parts.len() {
-//             break;
-//         }
+// Accepts the user facing instances as input and then creates a new list that includes
+// all instances to be processed. Since Composed Parts are a collection of instances
+// these instances should also be processed and saved.
+fn create_list_of_all_parts_to_save(
+    db: &dyn DbReader,
+    instance_to_save: &[PartInstanceId],
+) -> Vec<PartId> {
+    let mut instances_to_visit = instance_to_save.to_vec();
+    let mut all_parts_to_save = vec![];
+    loop {
+        if instances_to_visit.is_empty() {
+            break;
+        }
 
-//         for (part_id, part) in &all_composed_parts {
-//             if already_processed_composed_part.contains(part_id) {
-//                 continue;
-//             }
+        for (id, instance_data, part) in db.get_part_instances() {
+            if instances_to_visit.contains(&id) {
+                //any instances that are visited anyways needs to be saved to get the full tree.
+                if !all_parts_to_save.contains(&instance_data.part_id) {
+                    all_parts_to_save.push(instance_data.part_id);
+                }
 
-//             //only cares about the processed entity
-//             if let PartRep::ComposedPart(instances) = part.get_rep() {
-//                 let mut instances_data = vec![];
-//                 for i in instances {
-//                     let instance_data = db.get_part_instance_data(i)?;
-//                     instances_data.push(instance_data);
-//                 }
-//                 if let Ok(object_id) = process_composed_part_and_insert_component_object(
-//                     &mut model_builder,
-//                     &instances_data,
-//                     &unique_part_to_object_map,
-//                 ) {
-//                     already_processed_composed_part.push(*part_id);
-//                     unique_part_to_object_map.insert(*part_id, object_id);
-//                 }
-//             }
-//         }
-//     }
+                match part.get_rep() {
+                    PartRep::Mesh(_) => {}
+                    PartRep::ComposedPart(part_instance_ids) => {
+                        for comp in part_instance_ids {
+                            if !instances_to_visit.contains(comp) {
+                                instances_to_visit.push(*comp);
+                            }
+                        }
+                    }
+                }
 
-//     model_builder.add_build(None)?;
-//     for part_instance in &scene.instances {
-//         let instance_data = db.get_part_instance_data(part_instance)?;
-//         match unique_part_to_object_map.get(&instance_data.part_id) {
-//             Some(object_id) => {
-//                 let transform = convert_transformation_to_3mf_transform(&instance_data.transform);
-//                 model_builder.add_build_item_advanced(*object_id, |i| {
-//                     i.transform(transform);
-//                 })?;
-//             }
-//             None => {
-//                 return Err(DbTo3mfError::UniquePartNotFound(instance_data.part_id));
-//             }
-//         }
-//     }
+                // we have already visited this instances
+                if let Some(pos) = instances_to_visit.iter().position(|i| *i == id) {
+                    instances_to_visit.remove(pos);
+                }
+            }
+        }
+    }
 
-//     let model = model_builder.build()?;
-
-//     Ok(model.into())
-// }
+    all_parts_to_save
+}
 
 fn process_composed_part_and_insert_component_object(
     model_builder: &mut ModelBuilder,
     instances: &[&PartInstance],
     unique_part_to_object_map: &HashMap<PartId, ObjectId>,
 ) -> Result<ObjectId, DbTo3mfError> {
-    let can_process = instances
-        .iter()
-        .all(|i| unique_part_to_object_map.contains_key(&i.part_id));
-
-    if !can_process {
-        return Err(DbTo3mfError::ComposedPartCannotBeProcessed);
-    }
-
     let object_id = model_builder.add_components_object(|cb| {
         for instance in instances {
             if let Some(id) = unique_part_to_object_map.get(&instance.part_id) {
@@ -387,4 +547,213 @@ fn convert_transformation_to_3mf_transform(transform: &Transformation) -> Transf
         cols[3][1] as f64,
         cols[3][2] as f64,
     ])
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs::File, path::PathBuf};
+
+    use crate::{
+        load_3mf,
+        save_3mf::{save_instances, save_parts, save_scene},
+    };
+
+    #[test]
+    fn test_save_scene() {
+        let threemf_file = File::open(PathBuf::from("../mesh-composedpart.3mf")).unwrap();
+        let db = load_3mf::load(threemf_file).unwrap();
+        let builder = save_scene(&db).unwrap();
+        let model = builder.build().unwrap();
+
+        assert_eq!(model.resources.object.len(), 4);
+        assert_eq!(
+            model
+                .resources
+                .object
+                .iter()
+                .filter(|o| o.mesh.is_some())
+                .count(),
+            3
+        );
+        assert_eq!(
+            model
+                .resources
+                .object
+                .iter()
+                .filter(|o| o.components.is_some())
+                .count(),
+            1
+        );
+        assert_eq!(model.build.item.len(), 2);
+    }
+
+    #[test]
+    fn test_save_mesh_instances() {
+        let threemf_file = File::open(PathBuf::from("../mesh-composedpart.3mf")).unwrap();
+        let db = load_3mf::load(threemf_file).unwrap();
+
+        //there should be 3 mesh instances in this db
+        let mesh_instances = db
+            .get_part_instances()
+            .filter_map(|(id, _, part)| {
+                if matches!(part.get_rep(), crate::amrust_db::PartRep::Mesh(_)) {
+                    Some(id)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        let builder = save_instances(&db, &mesh_instances).unwrap();
+        let model = builder.build().unwrap();
+
+        assert_eq!(model.resources.object.len(), 3);
+        assert_eq!(
+            model
+                .resources
+                .object
+                .iter()
+                .filter(|o| o.mesh.is_some())
+                .count(),
+            3
+        );
+        assert_eq!(
+            model
+                .resources
+                .object
+                .iter()
+                .filter(|o| o.components.is_some())
+                .count(),
+            0
+        );
+        assert_eq!(model.build.item.len(), 3);
+    }
+
+    #[test]
+    fn test_save_composed_part_instances() {
+        let threemf_file = File::open(PathBuf::from("../mesh-composedpart.3mf")).unwrap();
+        let db = load_3mf::load(threemf_file).unwrap();
+
+        // there should be 1 composed part instance
+        let composedpart_instance = db
+            .get_part_instances()
+            .filter_map(|(id, _, part)| {
+                if matches!(part.get_rep(), crate::amrust_db::PartRep::ComposedPart(_)) {
+                    Some(id)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        let builder = save_instances(&db, &composedpart_instance).unwrap();
+        let model = builder.build().unwrap();
+
+        // 2 mesh + 1 components object
+        assert_eq!(model.resources.object.len(), 3);
+        assert_eq!(
+            model
+                .resources
+                .object
+                .iter()
+                .filter(|o| o.mesh.is_some())
+                .count(),
+            2
+        );
+        assert_eq!(
+            model
+                .resources
+                .object
+                .iter()
+                .filter(|o| o.components.is_some())
+                .count(),
+            1
+        );
+
+        // only the components object appears in build
+        assert_eq!(model.build.item.len(), 1);
+    }
+
+    #[test]
+    fn test_save_mesh_parts() {
+        let threemf_file = File::open(PathBuf::from("../mesh-composedpart.3mf")).unwrap();
+        let db = load_3mf::load(threemf_file).unwrap();
+
+        //there should be 3 mesh instances in this db
+        let mesh_parts = db
+            .get_parts()
+            .filter_map(|(id, part)| {
+                if matches!(part.get_rep(), crate::amrust_db::PartRep::Mesh(_)) {
+                    Some(id)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        let builder = save_parts(&db, &mesh_parts).unwrap();
+        let model = builder.build().unwrap();
+
+        assert_eq!(model.resources.object.len(), 3);
+        assert_eq!(
+            model
+                .resources
+                .object
+                .iter()
+                .filter(|o| o.mesh.is_some())
+                .count(),
+            3
+        );
+        assert_eq!(
+            model
+                .resources
+                .object
+                .iter()
+                .filter(|o| o.components.is_some())
+                .count(),
+            0
+        );
+        assert_eq!(model.build.item.len(), 3);
+    }
+
+    #[test]
+    fn test_save_composed_part_object() {
+        let threemf_file = File::open(PathBuf::from("../mesh-composedpart.3mf")).unwrap();
+        let db = load_3mf::load(threemf_file).unwrap();
+
+        // there should be 1 composed part instance
+        let composed_part = db
+            .get_parts()
+            .filter_map(|(id, part)| {
+                if matches!(part.get_rep(), crate::amrust_db::PartRep::ComposedPart(_)) {
+                    Some(id)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        let builder = save_parts(&db, &composed_part).unwrap();
+        let model = builder.build().unwrap();
+
+        // 2 mesh + 1 components object
+        assert_eq!(model.resources.object.len(), 3);
+        assert_eq!(
+            model
+                .resources
+                .object
+                .iter()
+                .filter(|o| o.mesh.is_some())
+                .count(),
+            2
+        );
+        assert_eq!(
+            model
+                .resources
+                .object
+                .iter()
+                .filter(|o| o.components.is_some())
+                .count(),
+            1
+        );
+
+        // only the components object appears in build
+        assert_eq!(model.build.item.len(), 1);
+    }
 }
