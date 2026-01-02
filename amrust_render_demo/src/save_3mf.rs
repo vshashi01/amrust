@@ -321,6 +321,8 @@ fn process_all_remaining_parts(
     loop {
         if parts_to_be_processed.is_empty() {
             break;
+        } else {
+            println!("Parts to be processed: {parts_to_be_processed:?}");
         }
 
         for part_id in parts_to_be_processed.clone() {
@@ -330,6 +332,12 @@ fn process_all_remaining_parts(
                         match process_and_insert_mesh_object(model_builder, mesh) {
                             Ok(object_id) => {
                                 parts_already_processed.insert(part_id, object_id);
+
+                                if let Some(pos) =
+                                    parts_to_be_processed.iter().position(|id| id == &part_id)
+                                {
+                                    parts_to_be_processed.remove(pos);
+                                }
                             }
                             Err(err) => return Err(err),
                         }
@@ -342,13 +350,18 @@ fn process_all_remaining_parts(
                         )
                         .collect::<Vec<_>>();
 
-                        println!("Unprocessed Instances: {unprocessed_instances:?}");
-                        println!("Components Instances: {part_instance_ids:?}");
+                        // println!("Unprocessed Instances: {unprocessed_instances:?}");
+                        // println!("Components Instances: {part_instance_ids:?}");
 
                         if unprocessed_instances.is_empty() {
+                            let instances = part_instance_ids
+                                .iter()
+                                .filter_map(|id| instance_map.get(id))
+                                .collect::<Vec<_>>();
+
                             match process_composed_part_and_insert_component_object(
                                 model_builder,
-                                &unprocessed_instances,
+                                &instances,
                                 parts_already_processed,
                             ) {
                                 Ok(object_id) => {
@@ -405,9 +418,14 @@ fn process_reps(
             )
             .collect::<Vec<_>>();
             if unprocessed_instances.is_empty() {
+                let instances = part_instance_ids
+                    .iter()
+                    .filter_map(|id| instance_map.get(id))
+                    .collect::<Vec<_>>();
+
                 match process_composed_part_and_insert_component_object(
                     model_builder,
-                    &unprocessed_instances,
+                    &instances,
                     parts_already_processed,
                 ) {
                     Ok(object_id) => {
