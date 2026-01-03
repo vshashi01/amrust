@@ -247,7 +247,6 @@ fn save_instances(
 }
 
 fn save_parts(db: &dyn DbReader, parts_to_save: &[PartId]) -> Result<ModelBuilder, DbTo3mfError> {
-    println!("Saving Parts");
     let mut model_builder = ModelBuilder::new(Unit::Millimeter, true);
     model_builder.add_build(None)?;
 

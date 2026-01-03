@@ -10,7 +10,7 @@ use amrust_render::{
 };
 
 use core::fmt;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -425,95 +425,36 @@ impl Db {
         self.unique_parts.clear();
     }
 
-    // detaching a part will also detach instances that are used by the Part (e.g Component instances within Composed Parts)
-    pub fn detach_parts_and_add_to_detached_db(
+    pub fn create_detached_db(
         &mut self,
-        detached_db: &mut DetachedDb,
         parts_to_detach: &[PartId],
-    ) -> Result<(), DbError> {
-        for part_id in parts_to_detach {
-            let mut map_of_parts = HashMap::new();
-            if self.detach_part(&part_id, &mut map_of_parts).is_err() {
-                panic!("Detaching parts failed partially! Db is dirty!")
-            }
-
-            for (part_id, part) in map_of_parts {
-                if detached_db.map_part_id_to_detached.contains_key(&part_id) {
-                    // in this case the part was already previously detached and registered
-                    continue;
-                }
-
-                let instances_pointing_to_part = self
-                    .get_part_instances()
-                    .filter_map(|(instance_id, instance, _)| {
-                        if instance.part_id == part_id {
-                            Some(instance_id)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>();
-
-                if detached_db.add_detached_part(&part_id, part).is_ok() {
-                    //detaching Parts will detach all the instances the Part is pointed to as well.
-                    for id in instances_pointing_to_part {
-                        if let Ok(instance) = self.detach_part_instance(&id) {
-                            if detached_db
-                                .add_detached_part_instance(&id, instance)
-                                .is_err()
-                            {
-                                panic!("Registering Instance to Detached Db failed! Db is dirty!")
-                            }
-                        } else {
-                            panic!("Detaching Instance failed! Db is dirty!")
-                        }
-                    }
-                } else {
-                    panic!("Registering Part to DetachedDB failed! Db is dirty!")
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    pub fn detach_part_instances_and_add_to_detached_db(
-        &mut self,
-        detached_db: &mut DetachedDb,
         part_instances_to_detach: &[PartInstanceId],
-        is_detach_parts_pointed_to: bool,
-    ) -> Result<(), DbError> {
-        let mut parts_to_detach = vec![];
+    ) -> Result<DetachedDb, DbError> {
+        let mut detached_db = DetachedDb::new();
 
-        for instance_id in part_instances_to_detach {
-            if detached_db
-                .map_instance_id_to_detached
-                .contains_key(instance_id)
-            {
-                // in this case the instance was already previously detached and registered
-                continue;
-            }
-
-            let instance = self.detach_part_instance(instance_id)?;
-            let part_pointed_to = instance.part_id.clone();
-
-            match detached_db.add_detached_part_instance(instance_id, instance) {
-                Ok(_) => {
-                    if is_detach_parts_pointed_to {
-                        parts_to_detach.push(part_pointed_to);
+        for id in parts_to_detach {
+            match self.detach_part(id) {
+                Ok(part) => {
+                    if let Err(err) = detached_db.add_detached_part(id, part) {
+                        panic!("Registering part to detached db failed: {err:?}")
                     }
                 }
-                Err(err) => {
-                    panic!("Registering Instance to Detached Db failed: {err:?}");
-                }
+                Err(err) => panic!("Detaching parts failed: {err:?}"),
             }
         }
 
-        if is_detach_parts_pointed_to {
-            self.detach_parts_and_add_to_detached_db(detached_db, &parts_to_detach)?;
+        for id in part_instances_to_detach {
+            match self.detach_part_instance(id) {
+                Ok(part_instance) => {
+                    if let Err(err) = detached_db.add_detached_part_instance(id, part_instance) {
+                        panic!("Registering part instances to detached db failed: {err:?}");
+                    }
+                }
+                Err(err) => panic!("Detaching instances to detached db failed: {err:?}"),
+            }
         }
 
-        Ok(())
+        Ok(detached_db)
     }
 
     pub fn reattach(&mut self, mut detached: DetachedDb) -> Result<(), DbError> {
@@ -536,38 +477,90 @@ impl Db {
         Ok(())
     }
 
-    fn detach_part(
-        &mut self,
+    pub fn get_all_parts_and_part_instances_in_part(
+        &self,
         part_id: &PartId,
-        o_parts: &mut HashMap<PartId, Part>,
-    ) -> Result<(), DbError> {
-        if let Some(part) = self.unique_parts.detach(*part_id) {
-            self.detached_unique_parts.push(*part_id);
-            match part.get_rep() {
-                PartRep::Mesh(_) => {
-                    o_parts.insert(*part_id, part);
+    ) -> Result<(Vec<PartId>, Vec<PartInstanceId>), DbError> {
+        let part = self.get_part_data(part_id)?;
+
+        match part.get_rep() {
+            PartRep::Mesh(_) => Ok((vec![*part_id], vec![])),
+            PartRep::ComposedPart(part_instance_ids) => {
+                let mut all_parts = vec![];
+                let mut all_instances = vec![];
+
+                for id in part_instance_ids {
+                    all_instances.push(*id);
+                    let part_instance = self.get_part_instance_data(id)?;
+                    let (mut parts, mut instances) =
+                        self.get_all_parts_and_part_instances_in_part(&part_instance.part_id)?;
+                    all_parts.append(&mut parts);
+                    all_instances.append(&mut instances);
                 }
-                PartRep::ComposedPart(part_instance_ids) => {
-                    let mut undetached_parts = vec![];
-                    for id in part_instance_ids {
-                        let instance = self.get_part_instance_data(id)?;
-                        if !o_parts.contains_key(&instance.part_id) {
-                            undetached_parts.push(instance.part_id);
-                        }
-                    }
 
-                    for comp_id in undetached_parts {
-                        self.detach_part(&comp_id, o_parts)?;
-                    }
+                // ensure no repeating parts/part instances are in the list
+                let mut part_ids = HashSet::new();
+                for id in all_parts {
+                    part_ids.insert(id);
+                }
 
-                    o_parts.insert(*part_id, part);
+                let mut part_instances = HashSet::new();
+                for id in all_instances {
+                    part_instances.insert(id);
+                }
+
+                //include the original part id as well
+                part_ids.insert(*part_id);
+
+                Ok((
+                    part_ids.into_iter().collect(),
+                    part_instances.into_iter().collect(),
+                ))
+            }
+        }
+    }
+
+    /// Returns true if all parts can be detached
+    /// Returns false on the first part that cannot be detached.
+    /// Returns true if the part_ids is empty
+    pub fn can_detach_parts(&self, part_ids: &[PartId]) -> bool {
+        if part_ids.is_empty() {
+            true
+        } else {
+            for id in part_ids {
+                if self.detached_unique_parts.contains(id) {
+                    return false;
                 }
             }
-        } else {
-            return Err(DbError::PartIdNotFound(*part_id));
-        }
 
-        Ok(())
+            true
+        }
+    }
+
+    /// Returns true if all part instances can eb detached
+    /// Returns false on the first part instance that cannot be detached.
+    /// Returns true if part_instance_ids is empty
+    pub fn can_detach_part_instances(&self, part_instance_ids: &[PartInstanceId]) -> bool {
+        if part_instance_ids.is_empty() {
+            true
+        } else {
+            for id in part_instance_ids {
+                if self.detached_part_instances.contains(id) {
+                    return false;
+                }
+            }
+
+            true
+        }
+    }
+
+    fn detach_part(&mut self, part_id: &PartId) -> Result<Part, DbError> {
+        if let Some(part) = self.unique_parts.detach(*part_id) {
+            self.detached_unique_parts.push(*part_id);
+            Ok(part)
+        } else {
+            Err(DbError::PartIdNotFound(*part_id))
+        }
     }
 
     fn reattach_part(&mut self, part_id: &PartId, part: Part) -> Result<(), DbError> {

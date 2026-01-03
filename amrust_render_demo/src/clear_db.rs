@@ -7,7 +7,7 @@ pub struct ClearDbOps;
 #[async_trait]
 impl Operation for ClearDbOps {
     fn get_operation_requirements(&self) -> Option<OperationRequirements> {
-        return Some(OperationRequirements::WriteFullDb);
+        Some(OperationRequirements::WriteFullDb)
     }
 
     async fn execute(&mut self, context: &mut OperationContext) -> OperationResponse {

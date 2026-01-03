@@ -6,7 +6,7 @@ use smol::{
 };
 
 use crate::{
-    amrust_db::{Db, DetachedDb, Identifiable},
+    amrust_db::{Db, Identifiable},
     operation::{Operation, OperationContext, OperationRequirements, OperationResponse},
     render_worker::RenderMessage,
 };
@@ -160,39 +160,68 @@ async fn get_new_operation_context(
                 identifiables,
                 detach_parts_with_part_instances,
             } => {
-                let mut parts_to_detach = vec![];
-                let mut part_instances_to_detach = vec![];
+                let mut parts_to_detach = HashSet::new();
+                let mut part_instances_to_detach = HashSet::new();
 
-                for i in identifiables {
-                    match i {
-                        Identifiable::Part(part_id) => parts_to_detach.push(part_id),
-                        Identifiable::PartInstance(part_instance_id) => {
-                            part_instances_to_detach.push(part_instance_id)
+                {
+                    let read_db = db.read().await;
+
+                    for i in identifiables {
+                        match i {
+                            Identifiable::Part(part_id) => {
+                                if let Ok((parts, part_instances)) =
+                                    read_db.get_all_parts_and_part_instances_in_part(&part_id)
+                                {
+                                    for id in parts {
+                                        parts_to_detach.insert(id);
+                                    }
+
+                                    for id in part_instances {
+                                        part_instances_to_detach.insert(id);
+                                    }
+                                }
+
+                                parts_to_detach.insert(part_id);
+                            }
+                            Identifiable::PartInstance(part_instance_id) => {
+                                part_instances_to_detach.insert(part_instance_id);
+
+                                if detach_parts_with_part_instances
+                                    && let Ok(instance_data) =
+                                        read_db.get_part_instance_data(&part_instance_id)
+                                    && let Ok((parts, part_instances)) = read_db
+                                        .get_all_parts_and_part_instances_in_part(
+                                            &instance_data.part_id,
+                                        )
+                                {
+                                    for id in parts {
+                                        parts_to_detach.insert(id);
+                                    }
+
+                                    for id in part_instances {
+                                        part_instances_to_detach.insert(id);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
 
-                let mut detached_db = DetachedDb::new();
+                let parts_to_detach = parts_to_detach.into_iter().collect::<Vec<_>>();
+                let part_instances_to_detach =
+                    part_instances_to_detach.into_iter().collect::<Vec<_>>();
+
                 let mut write_db = db.write().await;
-
-                if !parts_to_detach.is_empty()
-                    && let Err(err) = write_db
-                        .detach_parts_and_add_to_detached_db(&mut detached_db, &parts_to_detach)
+                if write_db.can_detach_parts(&parts_to_detach)
+                    && write_db.can_detach_part_instances(&part_instances_to_detach)
                 {
-                    panic!("Unable to detach and add parts to DetachedDb: {err:?}");
+                    match write_db.create_detached_db(&parts_to_detach, &part_instances_to_detach) {
+                        Ok(detached_db) => OperationContext::Detached { db: detached_db },
+                        Err(err) => panic!("Created detached db failed! {err:?}"),
+                    }
+                } else {
+                    panic!("cannot detach parts!");
                 }
-
-                if !part_instances_to_detach.is_empty()
-                    && let Err(err) = write_db.detach_part_instances_and_add_to_detached_db(
-                        &mut detached_db,
-                        &part_instances_to_detach,
-                        detach_parts_with_part_instances,
-                    )
-                {
-                    panic!("Unable to detach and add part instances to DetachedDb: {err:?}");
-                }
-
-                OperationContext::Detached { db: detached_db }
             }
             OperationRequirements::ReadFullDb => OperationContext::ReadFull { db: db.clone() },
             OperationRequirements::WriteFullDb => OperationContext::WriteFull { db: db.clone() },
