@@ -8,7 +8,7 @@ use threemf2::core::mesh::{Triangle, Vertex};
 use threemf2::core::transform::Transform;
 use threemf2::io::ThreemfPackage;
 
-use crate::amrust_db::{Db, DbError, Mesh, PartId, PartRep, Scene};
+use crate::amrust_db::{self, Db, DbError, Mesh, PartId, PartRep, Scene};
 use crate::operation::{Operation, OperationContext, OperationRequirements, OperationResponse};
 
 use core::f32;
@@ -87,7 +87,7 @@ fn get_db_from_3mf(package: &ThreemfPackage) -> Result<Db, DbFrom3mfError> {
         }) {
             let transform = get_transformation(&item.transform);
             let instance_id =
-                db.make_new_part_instance_from_part(unique_part_id, Some(transform))?;
+                db.make_new_part_instance_from_part(unique_part_id, Some(transform.into()))?;
             parts_in_scene.push(instance_id);
         }
     }
@@ -138,7 +138,7 @@ fn process_composed_parts(
                         let transformation = get_transformation(&comp.transform);
                         let instance_id = db.make_new_part_instance_from_part(
                             unique_part_id,
-                            Some(transformation),
+                            Some(transformation.into()),
                         )?;
                         instances.push(instance_id);
                     } else {

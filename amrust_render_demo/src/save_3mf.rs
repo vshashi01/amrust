@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use amrust_render::transformation::Transformation;
 use async_trait::async_trait;
 use thiserror::Error;
 use threemf2::core::model::Unit;
@@ -17,6 +16,7 @@ use crate::amrust_db::PartId;
 use crate::amrust_db::PartInstance;
 use crate::amrust_db::PartInstanceId;
 use crate::amrust_db::PartRep;
+use crate::amrust_db::Transformation;
 use crate::operation::DbReader;
 use crate::operation::Operation;
 use crate::operation::OperationContext;

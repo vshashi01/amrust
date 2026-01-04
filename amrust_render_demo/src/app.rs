@@ -1,6 +1,7 @@
 use crate::amrust_db::{
-    Db, Identifiable, Mesh, add_render_items_from_scene, add_render_items_from_unique_parts,
-    create_build_items_list, create_object_tree_from_identifiable, create_objects_list,
+    Db, Identifiable, Mesh, Transformation, add_render_items_from_scene,
+    add_render_items_from_unique_parts, create_build_items_list,
+    create_object_tree_from_identifiable, create_objects_list,
     create_scene_tree_items_by_unique_parts,
 };
 use crate::app_mode::AppMode;
@@ -20,7 +21,6 @@ use amrust_render::bounding_box::BoundingBox;
 // use amrust_lib::widgets::dropped_files::DroppedFilesWidget;
 use amrust_render::camera::{self, CameraData, OrthographicCameraData};
 use amrust_render::normalized_box::{ORDERED_POSITIONS, ORDERED_POSITIONS_TRI_EDGE_INDICES};
-use amrust_render::transformation::Transformation;
 use egui::{Id, Layout, epaint};
 use egui_dock::{DockArea, DockState, NodeIndex};
 use egui_file_dialog::FileDialog;

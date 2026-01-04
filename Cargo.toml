@@ -26,7 +26,7 @@ cfg-if = { version = "1.0.0" }
 env_logger = { version = "0.11.8" }
 
 #math or data processing libraries
-glam = { version = "0.30.3" }
+glam = { version = "0.30.3", features = ["rkyv"] }
 bytemuck = { version = "1.23.0" }
 
 

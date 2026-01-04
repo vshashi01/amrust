@@ -1,12 +1,20 @@
 #![allow(clippy::needless_lifetimes)]
+use amrust_render::transformation::TransformationData;
 use glam::{Mat4, Vec3};
-use slotmap::{SlotMap, new_key_type};
+use rkyv::api::low::from_bytes_unchecked;
+use rkyv::bytecheck;
+use rkyv::bytecheck::CheckBytes;
+use rkyv::rancor::Fallible;
+use rkyv::util::AlignedVec;
+use rkyv::{from_bytes, to_bytes};
+use rkyv_derive::{Archive, Deserialize, Serialize};
+use slotmap::{KeyData, SlotMap, new_key_type};
 use smol::lock::RwLock;
 use thiserror::Error;
 
 use amrust_render::{
     bounding_box::BoundingBox, gpu_mesh::MeshBuilder, instance::InstanceDataBuilder,
-    material::Material, transformation::Transformation, vertex::Position,
+    material::Material, vertex::Position,
 };
 
 use core::fmt;
@@ -18,7 +26,7 @@ use crate::operation::DbReader;
 use crate::render_db::{RenderDb, RenderObject};
 use crate::tree_item_viewer::TreeItem;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Archive, Serialize, Deserialize, CheckBytes)]
 pub struct Part {
     rep: PartRep,
 }
@@ -39,13 +47,75 @@ impl fmt::Display for PartId {
     }
 }
 
-#[derive(Debug)]
+unsafe impl<C: ?Sized + Fallible> CheckBytes<C> for PartId {
+    unsafe fn check_bytes(
+        value: *const Self,
+        context: &mut C,
+    ) -> Result<(), <C as Fallible>::Error> {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Archive, CheckBytes, Hash, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct ArchivedSlotMapId(u64);
+
+unsafe impl rkyv::Portable for ArchivedSlotMapId {}
+
+unsafe impl rkyv::traits::NoUndef for ArchivedSlotMapId {}
+
+impl rkyv::Archive for PartId {
+    type Archived = ArchivedSlotMapId;
+
+    type Resolver = ();
+
+    fn resolve(&self, _: Self::Resolver, out: rkyv::Place<Self::Archived>) {
+        out.write(ArchivedSlotMapId(self.0.as_ffi()));
+    }
+}
+
+impl<S: Fallible + ?Sized> rkyv::Serialize<S> for PartId {
+    fn serialize(&self, _serializer: &mut S) -> Result<Self::Resolver, S::Error> {
+        Ok(())
+    }
+}
+
+impl<D: Fallible + ?Sized> rkyv::Deserialize<PartId, D> for ArchivedSlotMapId {
+    fn deserialize(&self, _deserializer: &mut D) -> Result<PartId, D::Error> {
+        Ok(PartId(KeyData::from_ffi(self.0)))
+    }
+}
+
+#[derive(Debug, Clone, Archive, Serialize, Deserialize)]
 pub enum PartRep {
     Mesh(Box<Mesh>),
     ComposedPart(Vec<PartInstanceId>),
 }
 
-#[derive(Debug, Clone)]
+unsafe impl rkyv::Portable for PartRep {}
+
+#[derive(Debug, Clone, Copy, Default, Archive, Serialize, Deserialize, CheckBytes)]
+pub struct Transformation(pub Mat4);
+
+impl Transformation {
+    pub fn into_data(&self) -> TransformationData {
+        TransformationData(self.0.to_cols_array_2d())
+    }
+}
+
+impl From<Transformation> for amrust_render::transformation::Transformation {
+    fn from(value: Transformation) -> Self {
+        amrust_render::transformation::Transformation(value.0)
+    }
+}
+
+impl From<amrust_render::transformation::Transformation> for Transformation {
+    fn from(value: amrust_render::transformation::Transformation) -> Self {
+        Transformation(value.0)
+    }
+}
+
+#[derive(Debug, Clone, Archive, Serialize, Deserialize, CheckBytes)]
 pub struct PartInstance {
     pub part_id: PartId,
     pub transform: Transformation,
@@ -70,13 +140,35 @@ impl fmt::Display for PartInstanceId {
     }
 }
 
+impl rkyv::Archive for PartInstanceId {
+    type Archived = ArchivedSlotMapId;
+
+    type Resolver = ();
+
+    fn resolve(&self, _: Self::Resolver, out: rkyv::Place<Self::Archived>) {
+        out.write(ArchivedSlotMapId(self.0.as_ffi()));
+    }
+}
+
+impl<S: Fallible + ?Sized> rkyv::Serialize<S> for PartInstanceId {
+    fn serialize(&self, _serializer: &mut S) -> Result<Self::Resolver, S::Error> {
+        Ok(())
+    }
+}
+
+impl<D: Fallible + ?Sized> rkyv::Deserialize<PartInstanceId, D> for ArchivedSlotMapId {
+    fn deserialize(&self, _deserializer: &mut D) -> Result<PartInstanceId, D::Error> {
+        Ok(PartInstanceId(KeyData::from_ffi(self.0)))
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum Identifiable {
     Part(PartId),
     PartInstance(PartInstanceId),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Archive, Serialize, Deserialize, CheckBytes)]
 pub struct Scene {
     pub instances: Vec<PartInstanceId>,
 }
@@ -102,9 +194,9 @@ impl Scene {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Archive, Serialize, Deserialize, CheckBytes)]
 pub struct Mesh {
-    pub vertices: Vec<Vec3>,
+    pub vertices: Vec<glam::Vec3>,
     pub triangles: Vec<u32>,
 }
 
@@ -118,7 +210,7 @@ impl Debug for Mesh {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, CheckBytes)]
 pub struct Db {
     /// List of all unique Part configurations
     unique_parts: SlotMap<PartId, Part>,
@@ -135,6 +227,81 @@ pub struct Db {
 
     /// The main scene
     scene: Option<Scene>,
+}
+
+#[derive(Debug, Clone, Archive, Serialize, Deserialize, CheckBytes)]
+pub struct ArchivedSlotMap<K, V> {
+    entries: Vec<(K, V)>,
+}
+
+impl<K: slotmap::Key + Copy, V: Clone> From<&SlotMap<K, V>> for ArchivedSlotMap<K, V> {
+    fn from(map: &SlotMap<K, V>) -> Self {
+        Self {
+            entries: map.iter().map(|(k, v)| (k, v.clone())).collect(),
+        }
+    }
+}
+
+impl<K: slotmap::Key, V: Clone> ArchivedSlotMap<K, V> {
+    pub fn into_slotmap(self) -> SlotMap<K, V> {
+        let mut map = SlotMap::with_key();
+        for (_, v) in self.entries {
+            map.insert(v);
+        }
+        map
+    }
+}
+
+#[derive(Debug, Clone, Archive, Serialize, Deserialize, CheckBytes)]
+pub struct ArchivedDb {
+    unique_parts: ArchivedSlotMap<PartId, Part>,
+    detached_unique_parts: Vec<PartId>,
+
+    part_instances: ArchivedSlotMap<PartInstanceId, PartInstance>,
+    detached_part_instances: Vec<PartInstanceId>,
+
+    scene: Option<Scene>,
+}
+
+unsafe impl rkyv::Portable for ArchivedDb {}
+
+unsafe impl rkyv::traits::NoUndef for ArchivedDb {}
+
+impl rkyv::Archive for Db {
+    type Archived = ArchivedDb;
+    type Resolver = ();
+
+    fn resolve(&self, _: (), out: rkyv::Place<Self::Archived>) {
+        out.write(ArchivedDb {
+            unique_parts: ArchivedSlotMap::from(&self.unique_parts),
+            detached_unique_parts: self.detached_unique_parts.clone(),
+
+            part_instances: ArchivedSlotMap::from(&self.part_instances),
+            detached_part_instances: self.detached_part_instances.clone(),
+
+            scene: self.scene.clone(),
+        });
+    }
+}
+
+impl<S: Fallible + ?Sized> rkyv::Serialize<S> for Db {
+    fn serialize(&self, _: &mut S) -> Result<Self::Resolver, S::Error> {
+        Ok(())
+    }
+}
+
+impl<D: Fallible + ?Sized> rkyv::Deserialize<Db, D> for ArchivedDb {
+    fn deserialize(&self, _: &mut D) -> Result<Db, D::Error> {
+        Ok(Db {
+            unique_parts: self.unique_parts.clone().into_slotmap(),
+            detached_unique_parts: self.detached_unique_parts.clone(),
+
+            part_instances: self.part_instances.clone().into_slotmap(),
+            detached_part_instances: self.detached_part_instances.clone(),
+
+            scene: self.scene.clone(),
+        })
+    }
 }
 
 #[derive(Debug, Error)]
@@ -425,6 +592,14 @@ impl Db {
         self.unique_parts.clear();
     }
 
+    pub fn get_archived_bytes(&self) -> Result<AlignedVec, rkyv::rancor::Error> {
+        to_bytes::<rkyv::rancor::Error>(self)
+    }
+
+    pub unsafe fn from_bytes(bytes: &AlignedVec) -> Result<Db, rkyv::rancor::Error> {
+        unsafe { rkyv::from_bytes_unchecked(bytes) }
+    }
+
     pub fn create_detached_db(
         &mut self,
         parts_to_detach: &[PartId],
@@ -686,19 +861,107 @@ pub enum DetachedDbError {
 }
 
 new_key_type! {
-pub struct DetachedPartID;
+pub struct DetachedPartId;
+}
+
+impl rkyv::Archive for DetachedPartId {
+    type Archived = ArchivedSlotMapId;
+
+    type Resolver = ();
+
+    fn resolve(&self, _: Self::Resolver, out: rkyv::Place<Self::Archived>) {
+        out.write(ArchivedSlotMapId(self.0.as_ffi()));
+    }
+}
+
+impl<S: Fallible + ?Sized> rkyv::Serialize<S> for DetachedPartId {
+    fn serialize(&self, _serializer: &mut S) -> Result<Self::Resolver, S::Error> {
+        Ok(())
+    }
+}
+
+impl<D: Fallible + ?Sized> rkyv::Deserialize<DetachedPartId, D> for ArchivedSlotMapId {
+    fn deserialize(&self, _deserializer: &mut D) -> Result<DetachedPartId, D::Error> {
+        Ok(DetachedPartId(KeyData::from_ffi(self.0)))
+    }
 }
 
 new_key_type! {
 pub struct DetachedPartInstanceId;
 }
 
+impl rkyv::Archive for DetachedPartInstanceId {
+    type Archived = ArchivedSlotMapId;
+
+    type Resolver = ();
+
+    fn resolve(&self, _: Self::Resolver, out: rkyv::Place<Self::Archived>) {
+        out.write(ArchivedSlotMapId(self.0.as_ffi()));
+    }
+}
+
+impl<S: Fallible + ?Sized> rkyv::Serialize<S> for DetachedPartInstanceId {
+    fn serialize(&self, _serializer: &mut S) -> Result<Self::Resolver, S::Error> {
+        Ok(())
+    }
+}
+
+impl<D: Fallible + ?Sized> rkyv::Deserialize<DetachedPartInstanceId, D> for ArchivedSlotMapId {
+    fn deserialize(&self, _deserializer: &mut D) -> Result<DetachedPartInstanceId, D::Error> {
+        Ok(DetachedPartInstanceId(KeyData::from_ffi(self.0)))
+    }
+}
+
 pub struct DetachedDb {
-    detached_unique_parts: SlotMap<DetachedPartID, Part>,
+    detached_unique_parts: SlotMap<DetachedPartId, Part>,
     detached_part_instances: SlotMap<DetachedPartInstanceId, PartInstance>,
 
-    map_part_id_to_detached: HashMap<PartId, DetachedPartID>,
+    map_part_id_to_detached: HashMap<PartId, DetachedPartId>,
     map_instance_id_to_detached: HashMap<PartInstanceId, DetachedPartInstanceId>,
+}
+
+#[derive(Debug, Clone, Archive, Serialize, Deserialize)]
+pub struct ArchivedDetachedDb {
+    detached_unique_parts: ArchivedSlotMap<DetachedPartId, Part>,
+    detached_part_instances: ArchivedSlotMap<DetachedPartInstanceId, PartInstance>,
+
+    map_part_id_to_detached: HashMap<PartId, DetachedPartId>,
+    map_instance_id_to_detached: HashMap<PartInstanceId, DetachedPartInstanceId>,
+}
+
+unsafe impl rkyv::Portable for ArchivedDetachedDb {}
+
+unsafe impl rkyv::traits::NoUndef for ArchivedDetachedDb {}
+
+impl rkyv::Archive for DetachedDb {
+    type Archived = ArchivedDetachedDb;
+    type Resolver = ();
+
+    fn resolve(&self, _: (), out: rkyv::Place<Self::Archived>) {
+        out.write(ArchivedDetachedDb {
+            detached_unique_parts: ArchivedSlotMap::from(&self.detached_unique_parts),
+            detached_part_instances: ArchivedSlotMap::from(&self.detached_part_instances),
+            map_part_id_to_detached: self.map_part_id_to_detached.clone(),
+            map_instance_id_to_detached: self.map_instance_id_to_detached.clone(),
+        });
+    }
+}
+
+impl<S: Fallible + ?Sized> rkyv::Serialize<S> for DetachedDb {
+    fn serialize(&self, _: &mut S) -> Result<Self::Resolver, S::Error> {
+        Ok(())
+    }
+}
+
+impl<D: Fallible + ?Sized> rkyv::Deserialize<DetachedDb, D> for ArchivedDetachedDb {
+    fn deserialize(&self, _: &mut D) -> Result<DetachedDb, D::Error> {
+        Ok(DetachedDb {
+            detached_unique_parts: self.detached_unique_parts.clone().into_slotmap(),
+            detached_part_instances: self.detached_part_instances.clone().into_slotmap(),
+            map_part_id_to_detached: self.map_part_id_to_detached.clone(),
+            map_instance_id_to_detached: self.map_instance_id_to_detached.clone(),
+        })
+    }
 }
 
 impl DetachedDb {
@@ -715,11 +978,21 @@ impl DetachedDb {
         todo!("Implement appending to Detach Db")
     }
 
+    pub fn get_archived_bytes(&self) -> Result<AlignedVec, rkyv::rancor::Error> {
+        to_bytes::<rkyv::rancor::Error>(self)
+    }
+
+    pub unsafe fn from_archived_bytes(
+        bytes: AlignedVec,
+    ) -> Result<DetachedDb, rkyv::rancor::Error> {
+        unsafe { from_bytes_unchecked::<DetachedDb, rkyv::rancor::Error>(&bytes) }
+    }
+
     fn add_detached_part(
         &mut self,
         part_id: &PartId,
         part: Part,
-    ) -> Result<DetachedPartID, DetachedDbError> {
+    ) -> Result<DetachedPartId, DetachedDbError> {
         if !self.map_part_id_to_detached.contains_key(part_id) {
             let detached_id = self.detached_unique_parts.insert(part);
             self.map_part_id_to_detached.insert(*part_id, detached_id);
@@ -1257,7 +1530,7 @@ fn add_render_object(device: &wgpu::Device, render_db: Arc<RwLock<RenderDb>>, da
     let transformation_data = data
         .transforms
         .iter()
-        .map(|t| t.to_data())
+        .map(|t| t.into_data())
         .collect::<Vec<_>>();
     let material_data = vec![Material::new(1.0, 1.0, 1.0).to_data(); transformation_data.len()];
     let object = RenderObject {
@@ -1311,7 +1584,7 @@ fn add_bounding_box_wireframe(
         renderable: amrust_render::Renderable::WireframeMesh,
         gpu_mesh_id: mesh_id,
         instance: InstanceDataBuilder::new()
-            .add_instance_stream(&[Transformation(Mat4::IDENTITY).to_data()])
+            .add_instance_stream(&[Transformation(Mat4::IDENTITY).into_data()])
             .add_instance_stream(&[Material::new(1.0, 1.0, 1.0).to_data()])
             .build(device),
         local_resources: vec![],

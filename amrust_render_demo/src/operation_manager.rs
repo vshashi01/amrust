@@ -1,4 +1,5 @@
 use egui::ahash::{HashSet, HashSetExt};
+use rkyv::{to_bytes, util::AlignedVec};
 use smol::{
     Executor, Task,
     channel::{Receiver, Sender, TryRecvError},
@@ -6,7 +7,7 @@ use smol::{
 };
 
 use crate::{
-    amrust_db::{Db, Identifiable},
+    amrust_db::{Db, DetachedDb, Identifiable},
     operation::{Operation, OperationContext, OperationRequirements, OperationResponse},
     render_worker::RenderMessage,
 };
@@ -16,6 +17,11 @@ use std::sync::Arc;
 pub enum OperationMessage {
     AddAsyncOperation(Box<dyn Operation>),
     AddSyncOperation(Box<dyn Operation>),
+}
+
+pub struct PreOperationArchive {
+    main_db: AlignedVec,
+    detached_db: Option<AlignedVec>,
 }
 
 pub struct OperationManager {
@@ -70,14 +76,15 @@ impl OperationManager {
 
                     let task = executor.spawn(async move {
                         match get_new_operation_context(&db, ops, render_message_tx).await {
-                            Ok((mut ops_context, mut ops)) => {
+                            Ok((mut ops_context, mut ops, mut ops_archive)) => {
                                 println!("running the Operation in separate thread");
-                                let response = ops.execute(&mut ops_context).await;
+                                //let response = ops.execute(&mut ops_context).await;
 
-                                process_operation_response(
+                                process_operation(
                                     db,
-                                    response,
+                                    ops,
                                     ops_context,
+                                    ops_archive,
                                     operation_response_tx,
                                 )
                                 .await;
@@ -104,16 +111,18 @@ impl OperationManager {
 
                     smol::block_on(async {
                         match get_new_operation_context(&db, ops, render_message_tx).await {
-                            Ok((mut ops_context, mut ops)) => {
+                            Ok((mut ops_context, mut ops, mut ops_archive)) => {
                                 println!(
                                     "running the Operation in same thread as Operation Manager"
                                 );
-                                let response = ops.execute(&mut ops_context).await;
 
-                                process_operation_response(
+                                //let response = ops.execute(&mut ops_context).await;
+
+                                process_operation(
                                     db,
-                                    response,
+                                    ops,
                                     ops_context,
+                                    ops_archive,
                                     operation_response_tx,
                                 )
                                 .await;
@@ -153,8 +162,20 @@ async fn get_new_operation_context(
     db: &Arc<RwLock<Db>>,
     operation: Box<dyn Operation>,
     render_message_tx: Sender<RenderMessage>,
-) -> Result<(OperationContext, Box<dyn Operation>), OperationContextGenerationError> {
-    let context = if let Some(reqs) = operation.get_operation_requirements() {
+) -> Result<
+    (OperationContext, Box<dyn Operation>, PreOperationArchive),
+    OperationContextGenerationError,
+> {
+    let main_db_archive = {
+        let read_db = db.read().await;
+        match read_db.get_archived_bytes() {
+            Ok(archived) => archived,
+            Err(err) => panic!("Archiving Db failed: {err:?}"),
+        }
+    };
+
+    let (context, detached_db_archive) = if let Some(reqs) = operation.get_operation_requirements()
+    {
         match reqs {
             OperationRequirements::Identifiables {
                 identifiables,
@@ -216,61 +237,166 @@ async fn get_new_operation_context(
                     && write_db.can_detach_part_instances(&part_instances_to_detach)
                 {
                     match write_db.create_detached_db(&parts_to_detach, &part_instances_to_detach) {
-                        Ok(detached_db) => OperationContext::Detached { db: detached_db },
+                        Ok(detached_db) => {
+                            if let Ok(archive) = detached_db.get_archived_bytes() {
+                                (
+                                    OperationContext::Detached { db: detached_db },
+                                    Some(archive),
+                                )
+                            } else {
+                                panic!("Creating Detached Db archive failed!")
+                            }
+                        }
                         Err(err) => panic!("Created detached db failed! {err:?}"),
                     }
                 } else {
                     panic!("cannot detach parts!");
                 }
             }
-            OperationRequirements::ReadFullDb => OperationContext::ReadFull { db: db.clone() },
-            OperationRequirements::WriteFullDb => OperationContext::WriteFull { db: db.clone() },
-            OperationRequirements::AppendToDb => OperationContext::AppendOnly { db: Db::new() },
+            OperationRequirements::ReadFullDb => {
+                (OperationContext::ReadFull { db: db.clone() }, None)
+            }
+            OperationRequirements::WriteFullDb => {
+                (OperationContext::WriteFull { db: db.clone() }, None)
+            }
+            OperationRequirements::AppendToDb => {
+                (OperationContext::AppendOnly { db: Db::new() }, None)
+            }
         }
     } else {
         //default is always to create an AppendOnly Context
-        OperationContext::AppendOnly { db: Db::new() }
+        (OperationContext::AppendOnly { db: Db::new() }, None)
     };
 
-    Ok((context, operation))
+    Ok((
+        context,
+        operation,
+        PreOperationArchive {
+            main_db: main_db_archive,
+            detached_db: detached_db_archive,
+        },
+    ))
 }
 pub enum OperationContextGenerationError {}
 
-async fn process_operation_response(
+async fn process_operation(
     main_db: Arc<RwLock<Db>>,
-    response: OperationResponse,
-    ops_context: OperationContext,
+    mut operation: Box<dyn Operation>,
+    mut ops_context: OperationContext,
+    preoperation_archive: PreOperationArchive,
     operation_response_tx: Sender<OperationResponse>,
 ) {
-    let should_post_process = match &response {
+    let response = operation.execute(&mut ops_context).await;
+
+    let requires_full_db_restore = match &response {
         OperationResponse::Ongoing(_) => false,
-        OperationResponse::Succeeded(_) => true,
-        OperationResponse::Failed(_, _error) => true,
-        OperationResponse::Aborted(_) => true,
+        OperationResponse::Succeeded(_) => match ops_context {
+            OperationContext::Detached { db } => {
+                let mut write_db = main_db.write().await;
+                if let Err(err) = write_db.reattach(db) {
+                    true
+                } else {
+                    false
+                }
+            }
+            OperationContext::ReadFull { db } => false,
+            OperationContext::WriteFull { db } => false,
+            OperationContext::AppendOnly { db } => {
+                let mut write_db = main_db.write().await;
+                if let Err(err) = write_db.append(db) {
+                    true
+                } else {
+                    false
+                }
+            }
+        },
+        OperationResponse::Failed(_, error) => match ops_context {
+            OperationContext::Detached { db } => {
+                if let Some(archive) = preoperation_archive.detached_db {
+                    unsafe {
+                        match DetachedDb::from_archived_bytes(archive) {
+                            Ok(db) => {
+                                let mut write_db = main_db.write().await;
+                                if let Err(err) = write_db.reattach(db) {
+                                    panic!(
+                                        "Reattaching archived DetachedDb to Db failed!: {err:?}"
+                                    );
+                                } else {
+                                    false
+                                }
+                            }
+                            Err(_) => true,
+                        }
+                    }
+                } else {
+                    true
+                }
+            }
+            OperationContext::ReadFull { db } => false,
+            OperationContext::WriteFull { db } => true,
+            OperationContext::AppendOnly { db } => todo!(),
+        },
+        OperationResponse::Aborted(_) => match ops_context {
+            OperationContext::Detached { db } => {
+                if let Some(archive) = preoperation_archive.detached_db {
+                    unsafe {
+                        match DetachedDb::from_archived_bytes(archive) {
+                            Ok(db) => {
+                                let mut write_db = main_db.write().await;
+                                if let Err(err) = write_db.reattach(db) {
+                                    panic!(
+                                        "Reattaching archived DetachedDb to Db failed!: {err:?}"
+                                    );
+                                } else {
+                                    false
+                                }
+                            }
+                            Err(_) => true,
+                        }
+                    }
+                } else {
+                    true
+                }
+            }
+            OperationContext::ReadFull { db } => false,
+            OperationContext::WriteFull { db } => true,
+            OperationContext::AppendOnly { db } => false,
+        },
     };
 
-    if should_post_process {
-        match ops_context {
-            OperationContext::Detached { db } => {
-                let mut write_main_db = main_db.write().await;
-                if write_main_db.reattach(db).is_err() {
-                    panic!("Reattaching the database failed");
-                }
-            }
-            OperationContext::ReadFull { .. } => {
-                //nothing to do since it was read only to begin with.
-            }
-            OperationContext::WriteFull { .. } => {
-                //whatever that needs to be done is probably done on the main db already
-            }
-            OperationContext::AppendOnly { db } => {
-                let mut write_main_db = main_db.write().await;
-                if write_main_db.append(db).is_err() {
-                    panic!("Appending a local db to main db failed");
-                }
-            }
-        }
+    if requires_full_db_restore {
+        //restore the full db here
     }
+
+    // let should_post_process = match &response {
+    //     OperationResponse::Ongoing(_) => false,
+    //     OperationResponse::Succeeded(_) => true,
+    //     OperationResponse::Failed(_, _error) => true,
+    //     OperationResponse::Aborted(_) => true,
+    // };
+
+    // if should_post_process {
+    //     match ops_context {
+    //         OperationContext::Detached { db } => {
+    //             let mut write_main_db = main_db.write().await;
+    //             if write_main_db.reattach(db).is_err() {
+    //                 panic!("Reattaching the database failed");
+    //             }
+    //         }
+    //         OperationContext::ReadFull { .. } => {
+    //             //nothing to do since it was read only to begin with.
+    //         }
+    //         OperationContext::WriteFull { .. } => {
+    //             //whatever that needs to be done is probably done on the main db already
+    //         }
+    //         OperationContext::AppendOnly { db } => {
+    //             let mut write_main_db = main_db.write().await;
+    //             if write_main_db.append(db).is_err() {
+    //                 panic!("Appending a local db to main db failed");
+    //             }
+    //         }
+    //     }
+    // }
 
     if let Err(err) = operation_response_tx.send(response).await {
         println!("{err:?}");
