@@ -17,6 +17,7 @@ use amrust_render::{
 };
 
 use core::fmt;
+use slotmap::Key;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -319,6 +320,9 @@ pub enum DbError {
 
     #[error("There is no scene set currently")]
     SceneNotSet,
+
+    #[error("Failed to restore DB from bytes: {0}")]
+    RestoreError(String),
 }
 
 impl Db {
@@ -602,12 +606,11 @@ impl Db {
     pub unsafe fn restore_from_bytes(&mut self, bytes: &AlignedVec) -> Result<(), DbError> {
         unsafe {
             match Self::from_bytes(bytes) {
-                Ok(_) => {
-                    todo!("Restore the Db from Archived Bytes");
+                Ok(db) => {
+                    *self = db;
+                    Ok(())
                 }
-                Err(err) => {
-                    todo!("Handle the restore from bytes error correctly: {err:?}")
-                }
+                Err(err) => Err(DbError::RestoreError(err.to_string())),
             }
         }
     }
@@ -1998,6 +2001,116 @@ mod tests {
     }
 
     #[test]
+    fn test_db_archiving_round_trip() {
+        let mut db = Db::new();
+        // Add some test data: a mesh part and instance
+        let mesh = Mesh {
+            vertices: vec![Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0)],
+            triangles: vec![0, 1, 0],
+        };
+        let part_id = db.add_part_rep(PartRep::Mesh(Box::new(mesh))).unwrap();
+        let instance_id = db.make_new_part_instance_from_part(&part_id, None).unwrap();
+        db.add_part_instance_to_scene(&instance_id).unwrap();
+
+        // Archive
+        let archived = db.get_archived_bytes().unwrap();
+
+        // Unarchive
+        let restored_db = unsafe { Db::from_bytes(&archived).unwrap() };
+
+        // Verify: Compare key fields (parts, instances, scene)
+        assert_eq!(db.get_parts().count(), restored_db.get_parts().count());
+        assert_eq!(
+            db.get_part_instances().count(),
+            restored_db.get_part_instances().count()
+        );
+        assert_eq!(
+            db.get_scene().unwrap().instances.len(),
+            restored_db.get_scene().unwrap().instances.len()
+        );
+    }
+
+    #[test]
+    fn test_restore_from_bytes() {
+        let mut db = Db::new();
+        // Initial state: Add a part
+        let mesh = Mesh {
+            vertices: vec![Vec3::new(1.0, 1.0, 1.0)],
+            triangles: vec![0],
+        };
+        let _part_id = db.add_part_rep(PartRep::Mesh(Box::new(mesh))).unwrap();
+
+        // Archive initial state
+        let archived = db.get_archived_bytes().unwrap();
+
+        // Modify DB: Add another part
+        let mesh2 = Mesh {
+            vertices: vec![Vec3::new(2.0, 2.0, 2.0)],
+            triangles: vec![0],
+        };
+        db.add_part_rep(PartRep::Mesh(Box::new(mesh2))).unwrap();
+        assert_eq!(db.get_parts().count(), 2); // Verify modification
+
+        // Restore from archive
+        unsafe {
+            db.restore_from_bytes(&archived).unwrap();
+        }
+
+        // Verify restoration: Should have only 1 part again
+        assert_eq!(db.get_parts().count(), 1);
+    }
+
+    #[test]
+    fn test_archiving_error_on_invalid_bytes() {
+        let invalid_bytes = AlignedVec::new(); // Empty bytes
+
+        // Test from_bytes
+        let result = unsafe { Db::from_bytes(&invalid_bytes) };
+        assert!(result.is_err());
+
+        // Test restore_from_bytes on a valid DB with invalid bytes
+        let mut db = Db::new();
+        let result = unsafe { db.restore_from_bytes(&invalid_bytes) };
+        assert!(result.is_err());
+        assert!(matches!(result, Err(DbError::RestoreError(_))));
+    }
+
+    #[test]
+    fn test_archiving_with_composed_parts() {
+        let mut db = Db::new();
+        // Create mesh parts
+        let mesh1 = Mesh {
+            vertices: vec![Vec3::ZERO],
+            triangles: vec![0],
+        };
+        let part1_id = db.add_part_rep(PartRep::Mesh(Box::new(mesh1))).unwrap();
+        let mesh2 = Mesh {
+            vertices: vec![Vec3::ONE],
+            triangles: vec![0],
+        };
+        let part2_id = db.add_part_rep(PartRep::Mesh(Box::new(mesh2))).unwrap();
+
+        // Create instances and composed part
+        let inst1 = db
+            .make_new_part_instance_from_part(&part1_id, None)
+            .unwrap();
+        let inst2 = db
+            .make_new_part_instance_from_part(&part2_id, None)
+            .unwrap();
+        let _composed_id = db
+            .add_part_rep(PartRep::ComposedPart(vec![inst1, inst2]))
+            .unwrap();
+
+        // Archive and restore
+        let archived = db.get_archived_bytes().unwrap();
+        let restored_db = unsafe { Db::from_bytes(&archived).unwrap() };
+
+        // Verify composed part and instances
+        assert_eq!(restored_db.get_parts().count(), 3); // 2 meshes + 1 composed
+        assert_eq!(restored_db.get_part_instances().count(), 2); // 2 instances
+    }
+
+    #[test]
     fn get_all_parts_and_instances_in_composed_part() {
         let mut db = Db::new();
         let mesh_id = db
@@ -2048,7 +2161,7 @@ mod tests {
         assert_eq!(colors.len(), vertices.len());
         // All colors should be [0.5, 0.5, 0.5]
         for color in colors {
-            assert_eq!(color, Color([0.5, 0.5, 0.5]));
+            assert_eq!(color, amrust_render::vertex::Color([0.5, 0.5, 0.5]));
         }
     }
 
