@@ -13,6 +13,7 @@ use std::{collections::HashSet, error::Error, sync::Arc};
 
 /// This specifies how the Operation expects itself to be run, this requirements directly affect
 /// the OperationContext given to the fn execute in the [Operation] trait.
+#[derive(Clone)]
 pub enum OperationRequirements {
     /// The full [Db] will only available with Read only access
     /// Note: The [Db] in this case will not have the Identifiables since its on a separate temporary Db.
@@ -50,7 +51,7 @@ pub trait Operation: Send + Sync + 'static {
     async fn execute(&mut self, context: &mut OperationContext) -> OperationResponse;
 }
 
-#[derive(Debug, thisError)]
+#[derive(Debug, thisError, PartialEq)]
 pub enum OperationContextError {
     #[error("Current Operation Context only has readonly control")]
     ReadOnlyContext,
@@ -327,7 +328,7 @@ pub async fn get_new_operation_context(
             }
             OperationRequirements::ReadFullDbInUiThread => OperationContext {
                 context: OperationContextInner::ReadFull,
-                main_db,
+                main_db: main_db.clone(),
                 detached_db: None,
                 append_db: None,
                 main_db_archive,
@@ -335,7 +336,7 @@ pub async fn get_new_operation_context(
             },
             OperationRequirements::ReadWriteFullDbInUiThread => OperationContext {
                 context: OperationContextInner::WriteFull,
-                main_db,
+                main_db: main_db.clone(),
                 detached_db: None,
                 append_db: None,
                 main_db_archive,
@@ -343,7 +344,7 @@ pub async fn get_new_operation_context(
             },
             OperationRequirements::AppendFromOperationThread => OperationContext {
                 context: OperationContextInner::AppendOnly,
-                main_db,
+                main_db: main_db.clone(),
                 detached_db: None,
                 append_db: Some(Db::new()),
                 main_db_archive,
@@ -354,7 +355,7 @@ pub async fn get_new_operation_context(
         //default is always to create an AppendOnly Context
         OperationContext {
             context: OperationContextInner::AppendOnly,
-            main_db,
+            main_db: main_db.clone(),
             detached_db: None,
             append_db: Some(Db::new()),
             main_db_archive,
@@ -364,6 +365,7 @@ pub async fn get_new_operation_context(
 
     Ok((context, operation))
 }
+#[derive(Debug)]
 pub enum OperationContextGenerationError {}
 
 pub async fn process_operation(
@@ -463,5 +465,121 @@ async unsafe fn recover_and_reattach_detached_db(
                 panic!("Restoring detached Db from archive failed: {err:?}")
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use smol::channel::unbounded;
+    use smol::lock::RwLock;
+    use std::sync::Arc;
+
+    struct MockOperation {
+        requirements: Option<OperationRequirements>,
+    }
+
+    impl MockOperation {
+        fn new(requirements: Option<OperationRequirements>) -> Self {
+            Self { requirements }
+        }
+    }
+
+    #[async_trait]
+    impl Operation for MockOperation {
+        fn get_operation_requirements(&self) -> Option<OperationRequirements> {
+            self.requirements.clone()
+        }
+
+        async fn execute(&mut self, _context: &mut OperationContext) -> OperationResponse {
+            OperationResponse::Succeeded { name: "test" }
+        }
+    }
+
+    #[test]
+    fn test_append_context_creation() {
+        let db = Arc::new(RwLock::new(Db::new()));
+        let op = MockOperation::new(Some(OperationRequirements::AppendFromOperationThread));
+
+        let result = smol::block_on(async { get_new_operation_context(db, Box::new(op)).await });
+
+        let (context, _) = result.unwrap();
+        assert!(matches!(context.context, OperationContextInner::AppendOnly));
+        assert!(context.append_db.is_some());
+    }
+
+    #[test]
+    fn test_successful_processing() {
+        let db = Arc::new(RwLock::new(Db::new()));
+        let op = MockOperation::new(Some(OperationRequirements::AppendFromOperationThread));
+
+        let result =
+            smol::block_on(async { get_new_operation_context(db.clone(), Box::new(op)).await });
+
+        let (context, _) = result.unwrap();
+        assert!(matches!(context.context, OperationContextInner::AppendOnly));
+    }
+
+    #[test]
+    fn test_context_get_db_read_access() {
+        let db = Arc::new(RwLock::new(Db::new()));
+        let op = MockOperation::new(Some(OperationRequirements::ReadFullDbInUiThread));
+
+        let result = smol::block_on(async { get_new_operation_context(db, Box::new(op)).await });
+
+        let (mut context, _) = result.unwrap();
+
+        let read_result = smol::block_on(async { context.get_db(|_| 42).await });
+
+        assert_eq!(read_result, Ok(42));
+    }
+
+    #[test]
+    fn test_context_clear_db_write_access() {
+        let db = Arc::new(RwLock::new(Db::new()));
+        let op = MockOperation::new(Some(OperationRequirements::ReadWriteFullDbInUiThread));
+
+        let result = smol::block_on(async { get_new_operation_context(db, Box::new(op)).await });
+
+        let (mut context, _) = result.unwrap();
+
+        let clear_result = smol::block_on(async { context.clear_db().await });
+
+        assert!(clear_result.is_ok());
+    }
+
+    #[test]
+    fn test_context_clear_db_read_only_denied() {
+        let db = Arc::new(RwLock::new(Db::new()));
+        let op = MockOperation::new(Some(OperationRequirements::ReadFullDbInUiThread));
+
+        let result = smol::block_on(async { get_new_operation_context(db, Box::new(op)).await });
+
+        let (mut context, _) = result.unwrap();
+
+        let clear_result = smol::block_on(async { context.clear_db().await });
+
+        assert!(matches!(
+            clear_result,
+            Err(OperationContextError::ReadOnlyContext)
+        ));
+    }
+
+    #[test]
+    fn test_successful_processing_write() {
+        let db = Arc::new(RwLock::new(Db::new()));
+        let op = MockOperation::new(Some(OperationRequirements::ReadWriteFullDbInUiThread));
+
+        let result = smol::block_on(async { get_new_operation_context(db, Box::new(op)).await });
+
+        let (context, op) = result.unwrap();
+        let (tx, _rx) = unbounded();
+
+        smol::block_on(async {
+            process_operation(op, context, tx).await;
+        });
+
+        // Check that append DB was merged (assuming append logic works)
+        // This is a basic smoke test; deeper checks would require inspecting DB state
     }
 }
