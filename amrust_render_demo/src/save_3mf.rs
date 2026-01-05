@@ -68,18 +68,20 @@ pub struct Save3mfOps {
 impl Operation for Save3mfOps {
     fn get_operation_requirements(&self) -> Option<OperationRequirements> {
         let req = match &self.save_mode {
-            SaveMode::Scene => OperationRequirements::ReadFullDb,
-            SaveMode::PartsOnly(part_ids) => OperationRequirements::Identifiables {
+            SaveMode::Scene => OperationRequirements::ReadFullDbInUiThread,
+            SaveMode::PartsOnly(part_ids) => OperationRequirements::ReadWriteFromOperationThread {
                 identifiables: part_ids.iter().map(|id| Identifiable::Part(*id)).collect(),
                 detach_parts_with_part_instances: false,
             },
-            SaveMode::PartInstances(part_instance_ids) => OperationRequirements::Identifiables {
-                identifiables: part_instance_ids
-                    .iter()
-                    .map(|id| Identifiable::PartInstance(*id))
-                    .collect(),
-                detach_parts_with_part_instances: true,
-            },
+            SaveMode::PartInstances(part_instance_ids) => {
+                OperationRequirements::ReadWriteFromOperationThread {
+                    identifiables: part_instance_ids
+                        .iter()
+                        .map(|id| Identifiable::PartInstance(*id))
+                        .collect(),
+                    detach_parts_with_part_instances: true,
+                }
+            }
         };
 
         Some(req)

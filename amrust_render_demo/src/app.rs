@@ -269,9 +269,6 @@ impl AppState {
 
         match self.operation_response_rx.try_recv() {
             Ok(response) => match response {
-                OperationResponse::Ongoing { .. } => {
-                    //update ui?
-                }
                 OperationResponse::Succeeded { name } => {
                     println!("Operation Success: {name}");
                     self.need_viewport_update = true;
@@ -671,9 +668,7 @@ impl App {
 
             //run the operation manager
             {
-                state
-                    .operation_manager
-                    .run(&state.db, &state.executor, &state.render_message_tx);
+                state.operation_manager.run(&state.db, &state.executor);
 
                 state.detached_identifiables = state.operation_manager.get_detached_identifiables();
             }

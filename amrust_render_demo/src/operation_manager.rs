@@ -1,5 +1,4 @@
 use egui::ahash::{HashSet, HashSetExt};
-use rkyv::{to_bytes, util::AlignedVec};
 use smol::{
     Executor, Task,
     channel::{Receiver, Sender, TryRecvError},
@@ -7,12 +6,8 @@ use smol::{
 };
 
 use crate::{
-    amrust_db::{Db, DetachedDb, Identifiable},
-    operation::{
-        Operation, OperationContext, OperationRequirements, OperationResponse,
-        get_new_operation_context, process_operation,
-    },
-    render_worker::RenderMessage,
+    amrust_db::{Db, Identifiable},
+    operation::{Operation, OperationResponse, get_new_operation_context, process_operation},
 };
 
 use std::sync::Arc;
@@ -29,7 +24,6 @@ pub struct OperationManager {
     task_queue: Vec<Task<()>>,
 
     detached_identifiables: HashSet<Identifiable>,
-    is_db_blocked: bool,
 }
 
 impl OperationManager {
@@ -42,7 +36,6 @@ impl OperationManager {
             operation_response_tx,
             task_queue: vec![],
             detached_identifiables: HashSet::new(),
-            is_db_blocked: false,
         }
     }
 
@@ -50,7 +43,7 @@ impl OperationManager {
         &mut self,
         db: &Arc<RwLock<Db>>,
         executor: &Arc<Executor<'static>>,
-        render_message_tx: &Sender<RenderMessage>,
+        //render_message_tx: &Sender<RenderMessage>,
     ) {
         // remove finished tasks
         let mut finished_task_index = vec![];
@@ -69,23 +62,16 @@ impl OperationManager {
             Ok(op) => match op {
                 OperationMessage::AddAsyncOperation(ops) => {
                     let db = db.clone();
-                    let render_message_tx = render_message_tx.clone();
+                    //let render_message_tx = render_message_tx.clone();
                     let operation_response_tx = self.operation_response_tx.clone();
 
                     let task = executor.spawn(async move {
-                        match get_new_operation_context(&db, ops).await {
-                            Ok((mut ops_context, mut ops, mut ops_archive)) => {
+                        match get_new_operation_context(db, ops).await {
+                            Ok((ops_context, ops)) => {
                                 println!("running the Operation in separate thread");
                                 //let response = ops.execute(&mut ops_context).await;
 
-                                process_operation(
-                                    db,
-                                    ops,
-                                    ops_context,
-                                    ops_archive,
-                                    operation_response_tx,
-                                )
-                                .await;
+                                process_operation(ops, ops_context, operation_response_tx).await;
                             }
                             Err(_) => {
                                 if let Err(err) = operation_response_tx
@@ -105,26 +91,19 @@ impl OperationManager {
 
                 OperationMessage::AddSyncOperation(ops) => {
                     let db = db.clone();
-                    let render_message_tx = render_message_tx.clone();
+                    //let render_message_tx = render_message_tx.clone();
                     let operation_response_tx = self.operation_response_tx.clone();
 
                     smol::block_on(async {
-                        match get_new_operation_context(&db, ops).await {
-                            Ok((mut ops_context, mut ops, mut ops_archive)) => {
+                        match get_new_operation_context(db, ops).await {
+                            Ok((ops_context, ops)) => {
                                 println!(
                                     "running the Operation in same thread as Operation Manager"
                                 );
 
                                 //let response = ops.execute(&mut ops_context).await;
 
-                                process_operation(
-                                    db,
-                                    ops,
-                                    ops_context,
-                                    ops_archive,
-                                    operation_response_tx,
-                                )
-                                .await;
+                                process_operation(ops, ops_context, operation_response_tx).await;
                             }
                             Err(_) => {
                                 if let Err(err) = operation_response_tx

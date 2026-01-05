@@ -8,7 +8,7 @@ use threemf2::core::mesh::{Triangle, Vertex};
 use threemf2::core::transform::Transform;
 use threemf2::io::ThreemfPackage;
 
-use crate::amrust_db::{self, Db, DbError, Mesh, PartId, PartRep, Scene};
+use crate::amrust_db::{Db, DbError, Mesh, PartId, PartRep, Scene};
 use crate::operation::{Operation, OperationContext, OperationRequirements, OperationResponse};
 
 use core::f32;
@@ -34,7 +34,7 @@ pub struct Load3MFOps {
 #[async_trait]
 impl Operation for Load3MFOps {
     fn get_operation_requirements(&self) -> Option<OperationRequirements> {
-        Some(OperationRequirements::AppendToDb)
+        Some(OperationRequirements::AppendFromOperationThread)
     }
 
     async fn execute(&mut self, context: &mut OperationContext) -> OperationResponse {

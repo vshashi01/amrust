@@ -2,11 +2,10 @@
 use amrust_render::transformation::TransformationData;
 use glam::{Mat4, Vec3};
 use rkyv::api::low::from_bytes_unchecked;
-use rkyv::bytecheck;
 use rkyv::bytecheck::CheckBytes;
 use rkyv::rancor::Fallible;
+use rkyv::to_bytes;
 use rkyv::util::AlignedVec;
-use rkyv::{from_bytes, to_bytes};
 use rkyv_derive::{Archive, Deserialize, Serialize};
 use slotmap::{KeyData, SlotMap, new_key_type};
 use smol::lock::RwLock;
@@ -49,8 +48,8 @@ impl fmt::Display for PartId {
 
 unsafe impl<C: ?Sized + Fallible> CheckBytes<C> for PartId {
     unsafe fn check_bytes(
-        value: *const Self,
-        context: &mut C,
+        _value: *const Self,
+        _context: &mut C,
     ) -> Result<(), <C as Fallible>::Error> {
         Ok(())
     }
@@ -603,7 +602,7 @@ impl Db {
     pub unsafe fn restore_from_bytes(&mut self, bytes: &AlignedVec) -> Result<(), DbError> {
         unsafe {
             match Self::from_bytes(bytes) {
-                Ok(db) => {
+                Ok(_) => {
                     todo!("Restore the Db from Archived Bytes");
                 }
                 Err(err) => {
@@ -987,7 +986,7 @@ impl DetachedDb {
         }
     }
 
-    pub fn append_db(&mut self, other: Db) -> Result<(), DetachedDbError> {
+    pub fn append_db(&mut self, _other: Db) -> Result<(), DetachedDbError> {
         todo!("Implement appending to Detach Db")
     }
 
