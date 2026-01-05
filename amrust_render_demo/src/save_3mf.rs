@@ -92,8 +92,12 @@ impl Operation for Save3mfOps {
             Ok(f) => {
                 match context
                     .get_db(|db| match save(db, &self.save_mode, f) {
-                        Ok(_) => OperationResponse::Succeeded("Save 3MF"),
-                        Err(err) => OperationResponse::Failed("Save 3MF", Box::new(err)),
+                        Ok(_) => OperationResponse::Succeeded { name: "Save 3MF" },
+                        Err(err) => OperationResponse::Failed {
+                            name: "Save 3MF",
+                            error: Box::new(err),
+                            is_restore_db_required: false,
+                        },
                     })
                     .await
                 {
@@ -103,11 +107,19 @@ impl Operation for Save3mfOps {
                     }
                     Err(err) => {
                         println!("Context error: {err:?}");
-                        OperationResponse::Failed("Save 3MF", Box::new(err))
+                        OperationResponse::Failed {
+                            name: "Save 3MF",
+                            error: Box::new(err),
+                            is_restore_db_required: false,
+                        }
                     }
                 }
             }
-            Err(err) => OperationResponse::Failed("Save 3MF", Box::new(err)),
+            Err(err) => OperationResponse::Failed {
+                name: "Save 3MF",
+                error: Box::new(err),
+                is_restore_db_required: false,
+            },
         }
     }
 }

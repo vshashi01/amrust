@@ -115,102 +115,25 @@ impl OperationContext {
             OperationContext::AppendOnly { db } => Ok(f(db)),
         }
     }
-
-    // pub fn new(db: DetachedDb, render_message_tx: Sender<RenderMessage>) -> Self {
-    //     Self {
-    //         db,
-    //         render_message_tx,
-    //     }
-    // }
-
-    //     pub async fn get_part<'a>(
-    //         &'a mut self,
-    //         part_id: &PartId,
-    //         f: impl AsyncFnOnce(&HashMap<PartId, Part>),
-    //     ) {
-    //         let mut parts: HashMap<PartId, Part> = HashMap::new();
-
-    //         {
-    //             let mut read_db = self.db.write().await;
-    //             read_db.detach_part(part_id, &mut parts).unwrap();
-    //         }
-
-    //         let identifiables = parts
-    //             .keys()
-    //             .map(|id| Identifiable::Part(id.clone()))
-    //             .collect::<Vec<_>>();
-    //         if let Err(err) = self
-    //             .detached_parts_message_tx
-    //             .send(OperationContextMessage::Detached(identifiables.clone()))
-    //             .await
-    //         {
-    //             println!("{err:?}");
-    //         }
-
-    //         f(&parts).await;
-
-    //         for (part_id, part) in parts {
-    //             let mut write_db = self.db.write().await;
-    //             write_db.reattach_part(&part_id, part);
-    //         }
-
-    //         if let Err(err) = self
-    //             .detached_parts_message_tx
-    //             .send(OperationContextMessage::Reattached(identifiables.clone()))
-    //             .await
-    //         {
-    //             println!("{err:?}");
-    //         }
-    //     }
-
-    //     pub async fn get_part_instance<'a>(
-    //         &'a mut self,
-    //         part_instance_id: &PartInstanceId,
-    //         f: impl AsyncFnOnce(&PartInstance),
-    //     ) {
-    //         let mut part_instance_option: Option<PartInstance> = None;
-
-    //         {
-    //             let mut read_db = self.db.write().await;
-    //             let part_instance = read_db.detach_part_instance(part_instance_id).unwrap();
-    //             part_instance_option.insert(part_instance);
-    //         }
-
-    //         if let Some(part_instance) = part_instance_option {
-    //             if let Err(err) = self
-    //                 .detached_parts_message_tx
-    //                 .send(OperationContextMessage::Detached(vec![
-    //                     Identifiable::PartInstance(*part_instance_id),
-    //                 ]))
-    //                 .await
-    //             {
-    //                 println!("{err:?}");
-    //             }
-
-    //             f(&part_instance).await;
-
-    //             let mut write_db = self.db.write().await;
-    //             write_db.reattach_part_instance(part_instance_id, part_instance);
-
-    //             if let Err(err) = self
-    //                 .detached_parts_message_tx
-    //                 .send(OperationContextMessage::Reattached(vec![
-    //                     Identifiable::PartInstance(*part_instance_id),
-    //                 ]))
-    //                 .await
-    //             {
-    //                 println!("{err:?}");
-    //             }
-    //         }
-    //     }
 }
 
 #[derive(Debug)]
 pub enum OperationResponse {
-    Ongoing(&'static str),
-    Succeeded(&'static str),
-    Failed(&'static str, Box<dyn Error + Send + Sync + 'static>),
-    Aborted(&'static str),
+    Ongoing {
+        name: &'static str,
+    },
+    Succeeded {
+        name: &'static str,
+    },
+    Failed {
+        name: &'static str,
+        error: Box<dyn Error + Send + Sync + 'static>,
+        is_restore_db_required: bool,
+    },
+    Aborted {
+        name: &'static str,
+        is_restore_db_required: bool,
+    },
 }
 
 pub trait DbReader: Send + Sync + 'static {

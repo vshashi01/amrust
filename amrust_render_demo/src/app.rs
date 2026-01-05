@@ -269,18 +269,18 @@ impl AppState {
 
         match self.operation_response_rx.try_recv() {
             Ok(response) => match response {
-                OperationResponse::Ongoing(_) => {
+                OperationResponse::Ongoing { .. } => {
                     //update ui?
                 }
-                OperationResponse::Succeeded(text) => {
-                    println!("Operation Success: {text}");
+                OperationResponse::Succeeded { name } => {
+                    println!("Operation Success: {name}");
                     self.need_viewport_update = true;
                 }
-                OperationResponse::Failed(text, error) => {
-                    println!("Operation Failed: {text} with error {error:?}");
+                OperationResponse::Failed { name, error, .. } => {
+                    println!("Operation Failed: {name} with error {error:?}");
                 }
-                OperationResponse::Aborted(text) => {
-                    println!("Operation Cancelled: {text}");
+                OperationResponse::Aborted { name, .. } => {
+                    println!("Operation Cancelled: {name}");
                 }
             },
             Err(err) => match err {

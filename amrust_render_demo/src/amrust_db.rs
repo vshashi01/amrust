@@ -600,6 +600,19 @@ impl Db {
         unsafe { rkyv::from_bytes_unchecked(bytes) }
     }
 
+    pub unsafe fn restore_from_bytes(&mut self, bytes: &AlignedVec) -> Result<(), DbError> {
+        unsafe {
+            match Self::from_bytes(bytes) {
+                Ok(db) => {
+                    todo!("Restore the Db from Archived Bytes");
+                }
+                Err(err) => {
+                    todo!("Handle the restore from bytes error correctly: {err:?}")
+                }
+            }
+        }
+    }
+
     pub fn create_detached_db(
         &mut self,
         parts_to_detach: &[PartId],
@@ -983,9 +996,9 @@ impl DetachedDb {
     }
 
     pub unsafe fn from_archived_bytes(
-        bytes: AlignedVec,
+        bytes: &AlignedVec,
     ) -> Result<DetachedDb, rkyv::rancor::Error> {
-        unsafe { from_bytes_unchecked::<DetachedDb, rkyv::rancor::Error>(&bytes) }
+        unsafe { from_bytes_unchecked::<DetachedDb, rkyv::rancor::Error>(bytes) }
     }
 
     fn add_detached_part(

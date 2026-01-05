@@ -12,8 +12,14 @@ impl Operation for ClearDbOps {
 
     async fn execute(&mut self, context: &mut OperationContext) -> OperationResponse {
         match context.clear_db().await {
-            Ok(_) => OperationResponse::Succeeded("Clear Database"),
-            Err(err) => OperationResponse::Failed("Clear Database", Box::new(err)),
+            Ok(_) => OperationResponse::Succeeded {
+                name: "Clear Database",
+            },
+            Err(err) => OperationResponse::Failed {
+                name: "Clear Database",
+                error: Box::new(err),
+                is_restore_db_required: false,
+            },
         }
     }
 }

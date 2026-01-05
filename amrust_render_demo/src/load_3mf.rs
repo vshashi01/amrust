@@ -43,14 +43,28 @@ impl Operation for Load3MFOps {
             Ok(threemf_file) => match load(threemf_file) {
                 Ok(db) => {
                     if let Err(err) = context.append_db(db).await {
-                        return OperationResponse::Failed("Load 3MF", Box::new(err));
+                        return OperationResponse::Failed {
+                            name: "Load 3MF",
+                            error: Box::new(err),
+                            is_restore_db_required: false,
+                        };
                     } else {
-                        return OperationResponse::Succeeded("Load 3MF Operation");
+                        return OperationResponse::Succeeded {
+                            name: "Load 3MF Operation",
+                        };
                     }
                 }
-                Err(err) => OperationResponse::Failed("Load 3MF", Box::new(err)),
+                Err(err) => OperationResponse::Failed {
+                    name: "Load 3MF",
+                    error: Box::new(err),
+                    is_restore_db_required: false,
+                },
             },
-            Err(err) => OperationResponse::Failed("Load 3MF", Box::new(err)),
+            Err(err) => OperationResponse::Failed {
+                name: "Load 3MF",
+                error: Box::new(err),
+                is_restore_db_required: false,
+            },
         }
     }
 }
