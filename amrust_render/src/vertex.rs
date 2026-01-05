@@ -5,7 +5,7 @@ pub trait VertexDescriptor {
 }
 
 #[repr(transparent)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Debug, Copy, Clone, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Position(pub [f32; 3]);
 
 impl VertexDescriptor for Position {
@@ -23,7 +23,7 @@ impl VertexDescriptor for Position {
 }
 
 #[repr(transparent)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Debug, Copy, Clone, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Color(pub [f32; 3]);
 
 impl VertexDescriptor for Color {
