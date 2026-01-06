@@ -183,7 +183,7 @@ mod tests {
     use super::*;
     use crate::amrust_db::Mesh;
     use crate::amrust_db::{Identifiable, PartRep};
-    use crate::operation::{OperationContext, OperationContextInner, OperationThreadReqs};
+    use crate::operation::{DbContext, DbContextType, OperationThreadReqs};
     use async_trait::async_trait;
     use glam::Vec3;
     use smol::Executor;
@@ -209,9 +209,9 @@ mod tests {
             self.reqs.clone()
         }
 
-        async fn execute(&mut self, context: &mut OperationContext) -> OperationResponse {
+        async fn execute(&mut self, context: &mut DbContext) -> OperationResponse {
             match &context.context {
-                OperationContextInner::Detached => {
+                DbContextType::Detached => {
                     // Test entity counts in DetachedDb
                     context
                         .get_db(|db| {
@@ -221,7 +221,7 @@ mod tests {
                         .await
                         .unwrap();
                 }
-                OperationContextInner::ReadFull => {
+                DbContextType::ReadFull => {
                     // Test that can get db
                     context
                         .get_db(|db| {
@@ -231,7 +231,7 @@ mod tests {
                         .await
                         .unwrap();
                 }
-                OperationContextInner::WriteFull => {
+                DbContextType::WriteFull => {
                     // Test that can get db
                     context
                         .get_db(|db| {
@@ -244,7 +244,7 @@ mod tests {
                     // Test that can write by clear_db
                     context.clear_db().await.unwrap();
                 }
-                OperationContextInner::AppendOnly => {
+                DbContextType::AppendOnly => {
                     // Test that can append Db
                     let mut db = Db::new();
                     let _ = db

@@ -19,7 +19,7 @@ use crate::amrust_db::PartRep;
 use crate::amrust_db::Transformation;
 use crate::operation::DbReader;
 use crate::operation::Operation;
-use crate::operation::OperationContext;
+use crate::operation::DbContext;
 use crate::operation::OperationResponse;
 use crate::operation::OperationThreadReqs;
 
@@ -88,7 +88,7 @@ impl Operation for Save3mfOps {
         // Some(OperationRequirements::ReadFullDb)
     }
 
-    async fn execute(&mut self, context: &mut OperationContext) -> OperationResponse {
+    async fn execute(&mut self, context: &mut DbContext) -> OperationResponse {
         let file = std::fs::File::create_new(&self.path);
         match file {
             Ok(f) => {

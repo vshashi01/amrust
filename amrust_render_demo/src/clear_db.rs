@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::operation::{Operation, OperationContext, OperationResponse, OperationThreadReqs};
+use crate::operation::{DbContext, Operation, OperationResponse, OperationThreadReqs};
 
 pub struct ClearDbOps;
 
@@ -10,7 +10,7 @@ impl Operation for ClearDbOps {
         Some(OperationThreadReqs::ReadWriteFullDbInUi)
     }
 
-    async fn execute(&mut self, context: &mut OperationContext) -> OperationResponse {
+    async fn execute(&mut self, context: &mut DbContext) -> OperationResponse {
         match context.clear_db().await {
             Ok(_) => OperationResponse::Succeeded {
                 name: "Clear Database",
