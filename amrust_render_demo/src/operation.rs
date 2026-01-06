@@ -228,6 +228,7 @@ pub trait DbReader: Send + Sync + 'static {
     fn get_scene<'a>(&'a self) -> Option<&'a Scene>;
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum DbChangeMsg {
     Detached(Vec<Identifiable>),
     Reattached(Vec<Identifiable>),
@@ -328,8 +329,9 @@ pub async fn get_new_operation_context(
                                     detached_identifiables.push(Identifiable::PartInstance(id));
                                 }
 
-                                db_changes_message_sender
-                                    .send(DbChangeMsg::Detached(detached_identifiables));
+                                let _ = db_changes_message_sender
+                                    .send(DbChangeMsg::Detached(detached_identifiables))
+                                    .await;
 
                                 OperationContext {
                                     context: OperationContextInner::Detached,
@@ -389,125 +391,158 @@ pub async fn get_new_operation_context(
     Ok((context, operation))
 }
 
+/// Executes the operation and deals with the fallout from the execution
 pub async fn process_operation(
     mut operation: Box<dyn Operation>,
     mut ops_context: OperationContext,
-    operation_response_tx: Sender<OperationResponse>,
     db_changes_message_sender: Sender<DbChangeMsg>,
-) {
+) -> OperationResponse {
     let response = operation.execute(&mut ops_context).await;
 
     match &response {
-        OperationResponse::Succeeded { .. } => match ops_context.context {
-            OperationContextInner::Detached => {
-                if let Some(detached_db) = ops_context.detached_db {
-                    let mut detached_identifiables = vec![];
-                    for (id, _) in detached_db.get_parts() {
-                        detached_identifiables.push(Identifiable::Part(id));
-                    }
-
-                    for (id, _, _) in detached_db.get_part_instances() {
-                        detached_identifiables.push(Identifiable::PartInstance(id));
-                    }
-
-                    let mut write_db = ops_context.main_db.write().await;
-                    if let Err(err) = write_db.reattach(detached_db) {
-                        println!("Reattaching DetachedDb failed: {err:?}");
-
-                        if let Some(archive) = &ops_context.detached_db_archive {
-                            unsafe {
-                                recover_and_reattach_detached_db(&ops_context.main_db, archive)
-                                    .await;
-
-                                db_changes_message_sender
-                                    .send(DbChangeMsg::RecoveredDbFromDetached);
-                            }
-                        }
-                    } else {
-                        db_changes_message_sender
-                            .send(DbChangeMsg::Reattached(detached_identifiables));
-                    }
-                }
-            }
-            OperationContextInner::AppendOnly => {
-                if let Some(db) = ops_context.append_db {
-                    let mut write_main_db = ops_context.main_db.write().await;
-                    if let Err(err) = write_main_db.append(db) {
-                        println!("Appending AppendDb failed: {err:?}");
-
-                        unsafe {
-                            if let Err(err) =
-                                write_main_db.restore_from_bytes(&ops_context.main_db_archive)
-                            {
-                                panic!("Restoring the MainDb from Archived Bytes failed: {err:?}")
-                            } else {
-                                db_changes_message_sender.send(DbChangeMsg::RecoveredDbFromMainDb);
-                            }
-                        }
-                    }
-                }
-            }
-            _ => {}
-        },
+        OperationResponse::Succeeded { .. } => {
+            handle_success(ops_context, &db_changes_message_sender).await;
+        }
         OperationResponse::Failed {
-            name: _,
-            error: _,
             is_restore_db_required,
+            ..
         }
         | OperationResponse::Aborted {
-            name: _,
             is_restore_db_required,
+            ..
         } => {
-            if *is_restore_db_required {
-                match ops_context.context {
-                    OperationContextInner::Detached => {
-                        if let Some(archive) = &ops_context.detached_db_archive {
-                            unsafe {
-                                recover_and_reattach_detached_db(&ops_context.main_db, archive)
-                                    .await;
-                                db_changes_message_sender
-                                    .send(DbChangeMsg::RecoveredDbFromDetached);
-                            }
-                        }
-                    }
-                    _ => {
-                        let mut write_main_db = ops_context.main_db.write().await;
-                        unsafe {
-                            if let Err(err) =
-                                write_main_db.restore_from_bytes(&ops_context.main_db_archive)
-                            {
-                                panic!("Restoring the MainDb from Archived Bytes failed: {err:?}")
-                            } else {
-                                db_changes_message_sender.send(DbChangeMsg::RecoveredDbFromMainDb);
-                            }
-                        }
-                    }
-                }
+            // Detached and WriteFull are always restored after fail/abort.
+            let risky_context = matches!(
+                ops_context.context,
+                OperationContextInner::Detached | OperationContextInner::WriteFull
+            );
+
+            if risky_context || *is_restore_db_required {
+                handle_failure_or_abort(&mut ops_context, &db_changes_message_sender).await;
             }
         }
     }
 
-    if let Err(err) = operation_response_tx.send(response).await {
-        println!("{err:?}");
+    response
+}
+
+/// --- Helper functions ---
+
+/// On success, commit or reattach data depending on context.
+async fn handle_success(ctx: OperationContext, db_changes_tx: &Sender<DbChangeMsg>) {
+    match ctx.context {
+        // DETACHED: reattach temporary DB back into main DB
+        OperationContextInner::Detached => {
+            if let Some(detached_db) = ctx.detached_db {
+                let detached_identifiables = collect_identifiables(&detached_db);
+
+                let mut write_db = ctx.main_db.write().await;
+                if let Err(err) = write_db.reattach(detached_db) {
+                    println!("Reattaching DetachedDb failed: {err:?}");
+
+                    if let Some(archive) = &ctx.detached_db_archive {
+                        unsafe {
+                            restore_detached_from_archive(&ctx.main_db, archive).await;
+                            let _ = db_changes_tx
+                                .send(DbChangeMsg::RecoveredDbFromDetached)
+                                .await;
+                        }
+                    }
+                } else {
+                    let _ = db_changes_tx
+                        .send(DbChangeMsg::Reattached(detached_identifiables))
+                        .await;
+                }
+            }
+        }
+
+        // APPEND-ONLY: append temporary DB into main DB
+        OperationContextInner::AppendOnly => {
+            if let Some(db) = ctx.append_db {
+                let mut write_main_db = ctx.main_db.write().await;
+                if let Err(err) = write_main_db.append(db) {
+                    println!("Appending AppendDb failed: {err:?}");
+                    unsafe {
+                        if let Err(err) = write_main_db.restore_from_bytes(&ctx.main_db_archive) {
+                            panic!("Restoring the MainDb from Archived Bytes failed: {err:?}")
+                        } else {
+                            let _ = db_changes_tx.send(DbChangeMsg::RecoveredDbFromMainDb).await;
+                        }
+                    }
+                }
+            }
+        }
+
+        _ => {}
     }
 }
 
-async unsafe fn recover_and_reattach_detached_db(
-    main_db: &Arc<RwLock<Db>>,
-    detached_db_archive: &AlignedVec,
-) {
-    unsafe {
-        match DetachedDb::from_archived_bytes(detached_db_archive) {
-            Ok(detached_db) => {
-                let mut write_main_db = main_db.write().await;
-                if let Err(err) = write_main_db.reattach(detached_db) {
-                    panic!("Reattaching a restored DetacedDB has failed: {err:?}");
-                }
-            }
-            Err(err) => {
-                panic!("Restoring detached Db from archive failed: {err:?}")
+/// Called when an operation fails or aborts and a restore is required.
+/// Chooses the right archive based on context and performs rollback.
+async fn handle_failure_or_abort(ctx: &mut OperationContext, db_changes_tx: &Sender<DbChangeMsg>) {
+    restore_context(ctx).await;
+
+    match ctx.context {
+        OperationContextInner::Detached => {
+            let _ = db_changes_tx
+                .send(DbChangeMsg::RecoveredDbFromDetached)
+                .await;
+        }
+        _ => {
+            let _ = db_changes_tx.send(DbChangeMsg::RecoveredDbFromMainDb).await;
+        }
+    }
+}
+
+/// Collect Identifiable parts & part instances from a DetachedDb.
+fn collect_identifiables(detached_db: &DetachedDb) -> Vec<Identifiable> {
+    let mut ids = vec![];
+
+    for (id, _) in detached_db.get_parts() {
+        ids.push(Identifiable::Part(id));
+    }
+    for (id, _, _) in detached_db.get_part_instances() {
+        ids.push(Identifiable::PartInstance(id));
+    }
+
+    ids
+}
+
+/// Restore DetachedDb from its archive and reattach to main DB.
+async unsafe fn restore_detached_from_archive(main_db: &Arc<RwLock<Db>>, archive: &AlignedVec) {
+    let db = unsafe { DetachedDb::from_archived_bytes(archive) };
+    match db {
+        Ok(detached_db) => {
+            let mut write_main_db = main_db.write().await;
+            if let Err(err) = write_main_db.reattach(detached_db) {
+                panic!("Reattaching a restored DetachedDB has failed: {err:?}");
             }
         }
+        Err(err) => {
+            panic!("Restoring detached Db from archive failed: {err:?}")
+        }
+    }
+}
+
+/// Restore MainDb from its archive.
+async unsafe fn restore_main_from_archive(ctx: &OperationContext) {
+    let mut write_main_db = ctx.main_db.write().await;
+    unsafe {
+        if let Err(err) = write_main_db.restore_from_bytes(&ctx.main_db_archive) {
+            panic!("Restoring the MainDb from Archived Bytes failed: {err:?}")
+        }
+    }
+}
+
+/// Restore DB depending on context.
+async fn restore_context(ctx: &OperationContext) {
+    match ctx.context {
+        OperationContextInner::Detached => {
+            if let Some(archive) = &ctx.detached_db_archive {
+                unsafe { restore_detached_from_archive(&ctx.main_db, archive).await }
+            }
+        }
+        _ => unsafe { restore_main_from_archive(ctx).await },
     }
 }
 
@@ -520,18 +555,18 @@ mod tests {
     use smol::lock::RwLock;
     use std::sync::Arc;
 
-    struct MockOperation {
+    struct MockSuccessfulOperation {
         requirements: Option<OperationThreadReqs>,
     }
 
-    impl MockOperation {
+    impl MockSuccessfulOperation {
         fn new(requirements: Option<OperationThreadReqs>) -> Self {
             Self { requirements }
         }
     }
 
     #[async_trait]
-    impl Operation for MockOperation {
+    impl Operation for MockSuccessfulOperation {
         fn get_operation_requirements(&self) -> Option<OperationThreadReqs> {
             self.requirements.clone()
         }
@@ -596,11 +631,14 @@ mod tests {
     #[test]
     fn test_append_context_creation() {
         let db = Arc::new(RwLock::new(Db::new()));
-        let op = MockOperation::new(Some(OperationThreadReqs::AppendFromSeparateThread));
+        let op = MockSuccessfulOperation::new(Some(OperationThreadReqs::AppendFromSeparateThread));
+        let (db_changes_msg_tx, _) = smol::channel::bounded(1);
 
-        let result = smol::block_on(async { get_new_operation_context(db, Box::new(op)).await });
+        let result = smol::block_on(async {
+            get_new_operation_context(db, Box::new(op), db_changes_msg_tx).await
+        });
 
-        let (context, _, _) = result.unwrap();
+        let (context, _) = result.unwrap();
         assert!(matches!(context.context, OperationContextInner::AppendOnly));
         assert!(context.append_db.is_some());
     }
@@ -608,21 +646,21 @@ mod tests {
     #[test]
     fn test_append_execution() {
         let db = Arc::new(RwLock::new(Db::new()));
-        let op = MockOperation::new(Some(OperationThreadReqs::AppendFromSeparateThread));
+        let op = MockSuccessfulOperation::new(Some(OperationThreadReqs::AppendFromSeparateThread));
+        let (db_changes_msg_tx, _) = smol::channel::bounded(1);
 
-        let result =
-            smol::block_on(async { get_new_operation_context(db.clone(), Box::new(op)).await });
-        let (ops_context, ops, _) = result.unwrap();
+        let result = smol::block_on(async {
+            get_new_operation_context(db.clone(), Box::new(op), db_changes_msg_tx.clone()).await
+        });
+        let (ops_context, ops) = result.unwrap();
 
         assert_eq!(db.read_blocking().get_parts().count(), 0);
 
-        let (ops_response_tx, ops_response_rx) = smol::channel::unbounded();
-        smol::block_on(async { process_operation(ops, ops_context, ops_response_tx).await });
+        //let (ops_response_tx, ops_response_rx) = smol::channel::unbounded();
+        let response =
+            smol::block_on(async { process_operation(ops, ops_context, db_changes_msg_tx).await });
 
-        assert!(matches!(
-            ops_response_rx.recv_blocking().unwrap(),
-            OperationResponse::Succeeded { .. }
-        ));
+        assert!(matches!(response, OperationResponse::Succeeded { .. }));
 
         assert_eq!(db.read_blocking().get_parts().count(), 1);
     }
@@ -645,14 +683,18 @@ mod tests {
         let instance_id = db.make_new_part_instance_from_part(&mesh_id, None).unwrap();
 
         let db = Arc::new(RwLock::new(db));
-        let op = MockOperation::new(Some(OperationThreadReqs::ReadWriteFromSeparateThread {
-            identifiables: vec![Identifiable::PartInstance(instance_id)],
-            detach_parts_with_part_instances: true,
-        }));
+        let op =
+            MockSuccessfulOperation::new(Some(OperationThreadReqs::ReadWriteFromSeparateThread {
+                identifiables: vec![Identifiable::PartInstance(instance_id)],
+                detach_parts_with_part_instances: true,
+            }));
+        let (db_changes_msg_tx, db_changes_msg_rx) = smol::channel::bounded(1);
 
-        let result = smol::block_on(async { get_new_operation_context(db, Box::new(op)).await });
+        let result = smol::block_on(async {
+            get_new_operation_context(db, Box::new(op), db_changes_msg_tx).await
+        });
+        let (context, _) = result.unwrap();
 
-        let (context, _, detached_identifiables) = result.unwrap();
         assert!(matches!(context.context, OperationContextInner::Detached));
         match &context.detached_db {
             Some(db) => {
@@ -662,7 +704,13 @@ mod tests {
             None => panic!("DetachedDb not created!"),
         }
         assert!(context.detached_db_archive.is_some());
-        assert_eq!(detached_identifiables.unwrap().len(), 2);
+        assert_eq!(
+            db_changes_msg_rx.recv_blocking().unwrap(),
+            DbChangeMsg::Detached(vec![
+                Identifiable::Part(mesh_id),
+                Identifiable::PartInstance(instance_id)
+            ])
+        );
     }
 
     #[test]
@@ -683,39 +731,56 @@ mod tests {
         let instance_id = db.make_new_part_instance_from_part(&mesh_id, None).unwrap();
 
         let db = Arc::new(RwLock::new(db));
-        let op = MockOperation::new(Some(OperationThreadReqs::ReadWriteFromSeparateThread {
-            identifiables: vec![Identifiable::PartInstance(instance_id)],
-            detach_parts_with_part_instances: true,
-        }));
+        let op =
+            MockSuccessfulOperation::new(Some(OperationThreadReqs::ReadWriteFromSeparateThread {
+                identifiables: vec![Identifiable::PartInstance(instance_id)],
+                detach_parts_with_part_instances: true,
+            }));
+        let (db_changes_msg_tx, db_changes_msg_rx) = smol::channel::bounded(1);
 
-        let result =
-            smol::block_on(async { get_new_operation_context(db.clone(), Box::new(op)).await });
-        let (ops_context, ops, detached_identifiables) = result.unwrap();
-        assert_eq!(detached_identifiables.unwrap().len(), 2);
+        let result = smol::block_on(async {
+            get_new_operation_context(db.clone(), Box::new(op), db_changes_msg_tx.clone()).await
+        });
+        let (ops_context, ops) = result.unwrap();
+        assert_eq!(
+            db_changes_msg_rx.recv_blocking().unwrap(),
+            DbChangeMsg::Detached(vec![
+                Identifiable::Part(mesh_id),
+                Identifiable::PartInstance(instance_id)
+            ])
+        );
 
         //assert that part is detached when the context is created
         assert!(db.read_blocking().get_part_data(&mesh_id).is_err());
 
-        let (ops_response_tx, ops_response_rx) = smol::channel::unbounded();
-        smol::block_on(async { process_operation(ops, ops_context, ops_response_tx).await });
+        //let (ops_response_tx, ops_response_rx) = smol::channel::unbounded();
+        let response =
+            smol::block_on(async { process_operation(ops, ops_context, db_changes_msg_tx).await });
 
-        assert!(matches!(
-            ops_response_rx.recv_blocking().unwrap(),
-            OperationResponse::Succeeded { .. }
-        ));
+        assert!(matches!(response, OperationResponse::Succeeded { .. }));
 
         //assert that part is reattached when the operation is succeeded
         assert!(db.read_blocking().get_part_data(&mesh_id).is_ok());
+        assert_eq!(
+            db_changes_msg_rx.recv_blocking().unwrap(),
+            DbChangeMsg::Reattached(vec![
+                Identifiable::Part(mesh_id),
+                Identifiable::PartInstance(instance_id)
+            ])
+        );
     }
 
     #[test]
     fn test_read_in_ui_context_creation() {
         let db = Arc::new(RwLock::new(Db::new()));
-        let op = MockOperation::new(Some(OperationThreadReqs::ReadFullDbInUi));
+        let op = MockSuccessfulOperation::new(Some(OperationThreadReqs::ReadFullDbInUi));
+        let (db_changes_msg_tx, _) = smol::channel::bounded(1);
 
-        let result = smol::block_on(async { get_new_operation_context(db, Box::new(op)).await });
+        let result = smol::block_on(async {
+            get_new_operation_context(db, Box::new(op), db_changes_msg_tx).await
+        });
 
-        let (context, _, _) = result.unwrap();
+        let (context, _) = result.unwrap();
         assert!(matches!(context.context, OperationContextInner::ReadFull));
     }
 
@@ -737,32 +802,35 @@ mod tests {
         let _ = db.make_new_part_instance_from_part(&mesh_id, None).unwrap();
 
         let db = Arc::new(RwLock::new(db));
-        let op = MockOperation::new(Some(OperationThreadReqs::ReadFullDbInUi));
+        let op = MockSuccessfulOperation::new(Some(OperationThreadReqs::ReadFullDbInUi));
+        let (db_changes_msg_tx, _) = smol::channel::bounded(1);
 
-        let result =
-            smol::block_on(async { get_new_operation_context(db.clone(), Box::new(op)).await });
-        let (ops_context, ops, _) = result.unwrap();
+        let result = smol::block_on(async {
+            get_new_operation_context(db.clone(), Box::new(op), db_changes_msg_tx.clone()).await
+        });
+        let (ops_context, ops) = result.unwrap();
 
         //assert that part is still in Db
         assert!(db.read_blocking().get_part_data(&mesh_id).is_ok());
 
-        let (ops_response_tx, ops_response_rx) = smol::channel::unbounded();
-        smol::block_on(async { process_operation(ops, ops_context, ops_response_tx).await });
+        //let (ops_response_tx, ops_response_rx) = smol::channel::unbounded();
+        let response =
+            smol::block_on(async { process_operation(ops, ops_context, db_changes_msg_tx).await });
 
-        assert!(matches!(
-            ops_response_rx.recv_blocking().unwrap(),
-            OperationResponse::Succeeded { .. }
-        ));
+        assert!(matches!(response, OperationResponse::Succeeded { .. }));
     }
 
     #[test]
     fn test_write_in_ui_context_creation() {
         let db = Arc::new(RwLock::new(Db::new()));
-        let op = MockOperation::new(Some(OperationThreadReqs::ReadWriteFullDbInUi));
+        let op = MockSuccessfulOperation::new(Some(OperationThreadReqs::ReadWriteFullDbInUi));
+        let (db_changes_msg_tx, _) = smol::channel::bounded(1);
 
-        let result = smol::block_on(async { get_new_operation_context(db, Box::new(op)).await });
+        let result = smol::block_on(async {
+            get_new_operation_context(db, Box::new(op), db_changes_msg_tx).await
+        });
 
-        let (context, _, _) = result.unwrap();
+        let (context, _) = result.unwrap();
         assert!(matches!(context.context, OperationContextInner::WriteFull));
     }
 
@@ -784,22 +852,22 @@ mod tests {
         let _ = db.make_new_part_instance_from_part(&mesh_id, None).unwrap();
 
         let db = Arc::new(RwLock::new(db));
-        let op = MockOperation::new(Some(OperationThreadReqs::ReadWriteFullDbInUi));
+        let op = MockSuccessfulOperation::new(Some(OperationThreadReqs::ReadWriteFullDbInUi));
+        let (db_changes_msg_tx, _) = smol::channel::bounded(1);
 
-        let result =
-            smol::block_on(async { get_new_operation_context(db.clone(), Box::new(op)).await });
-        let (ops_context, ops, _) = result.unwrap();
+        let result = smol::block_on(async {
+            get_new_operation_context(db.clone(), Box::new(op), db_changes_msg_tx.clone()).await
+        });
+        let (ops_context, ops) = result.unwrap();
 
         //assert that part is still in Db
         assert!(db.read_blocking().get_part_data(&mesh_id).is_ok());
 
-        let (ops_response_tx, ops_response_rx) = smol::channel::unbounded();
-        smol::block_on(async { process_operation(ops, ops_context, ops_response_tx).await });
+        //let (ops_response_tx, ops_response_rx) = smol::channel::unbounded();
+        let response =
+            smol::block_on(async { process_operation(ops, ops_context, db_changes_msg_tx).await });
 
-        assert!(matches!(
-            ops_response_rx.recv_blocking().unwrap(),
-            OperationResponse::Succeeded { .. }
-        ));
+        assert!(matches!(response, OperationResponse::Succeeded { .. }));
 
         //assert that Db is cleared
         assert!(db.read_blocking().is_empty());
@@ -808,11 +876,14 @@ mod tests {
     #[test]
     fn test_context_clear_db_read_only_denied() {
         let db = Arc::new(RwLock::new(Db::new()));
-        let op = MockOperation::new(Some(OperationThreadReqs::ReadFullDbInUi));
+        let op = MockSuccessfulOperation::new(Some(OperationThreadReqs::ReadFullDbInUi));
+        let (db_changes_msg_tx, _) = smol::channel::bounded(1);
 
-        let result = smol::block_on(async { get_new_operation_context(db, Box::new(op)).await });
+        let result = smol::block_on(async {
+            get_new_operation_context(db, Box::new(op), db_changes_msg_tx).await
+        });
 
-        let (mut context, _, _) = result.unwrap();
+        let (mut context, _) = result.unwrap();
 
         let clear_result = smol::block_on(async { context.clear_db().await });
 
@@ -820,5 +891,230 @@ mod tests {
             clear_result,
             Err(OperationContextError::ReadOnlyContext)
         ));
+    }
+
+    struct MockRestoreOperation {
+        requirements: Option<OperationThreadReqs>,
+        require_db_restore: bool,
+        abort_operation: bool,
+    }
+
+    impl MockRestoreOperation {
+        fn new(
+            requirements: Option<OperationThreadReqs>,
+            require_db_restore: bool,
+            abort_operation: bool,
+        ) -> Self {
+            Self {
+                requirements,
+                require_db_restore,
+                abort_operation,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Operation for MockRestoreOperation {
+        fn get_operation_requirements(&self) -> Option<OperationThreadReqs> {
+            self.requirements.clone()
+        }
+
+        async fn execute(&mut self, _context: &mut OperationContext) -> OperationResponse {
+            if self.abort_operation {
+                OperationResponse::Aborted {
+                    name: "Aborted Operation",
+                    is_restore_db_required: self.require_db_restore,
+                }
+            } else {
+                OperationResponse::Failed {
+                    name: "Failed Operation",
+                    error: Box::new(OperationContextError::ReadOnlyContext),
+                    is_restore_db_required: self.require_db_restore,
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_recover_detached_execution_on_failure() {
+        let mut db = Db::new();
+        // Add mesh part
+        let mesh_id = db
+            .add_part_rep(PartRep::Mesh(Box::new(Mesh {
+                vertices: vec![
+                    Vec3::new(0.0, 0.0, 0.0),
+                    Vec3::new(1.0, 0.0, 0.0),
+                    Vec3::new(0.0, 1.0, 0.0),
+                ],
+                triangles: vec![0, 1, 2],
+            })))
+            .unwrap();
+
+        let instance_id = db.make_new_part_instance_from_part(&mesh_id, None).unwrap();
+
+        let db = Arc::new(RwLock::new(db));
+        let op = MockRestoreOperation::new(
+            Some(OperationThreadReqs::ReadWriteFromSeparateThread {
+                identifiables: vec![Identifiable::PartInstance(instance_id)],
+                detach_parts_with_part_instances: true,
+            }),
+            false,
+            false,
+        );
+        let (db_changes_msg_tx, db_changes_msg_rx) = smol::channel::bounded(1);
+
+        let result = smol::block_on(async {
+            get_new_operation_context(db.clone(), Box::new(op), db_changes_msg_tx.clone()).await
+        });
+        let (ops_context, ops) = result.unwrap();
+        assert_eq!(
+            db_changes_msg_rx.recv_blocking().unwrap(),
+            DbChangeMsg::Detached(vec![
+                Identifiable::Part(mesh_id),
+                Identifiable::PartInstance(instance_id)
+            ])
+        );
+
+        //assert that part is detached when the context is created
+        assert!(db.read_blocking().get_part_data(&mesh_id).is_err());
+
+        //let (ops_response_tx, ops_response_rx) = smol::channel::unbounded();
+        let response =
+            smol::block_on(async { process_operation(ops, ops_context, db_changes_msg_tx).await });
+
+        assert!(matches!(response, OperationResponse::Failed { .. }));
+
+        //assert that part is reattached when the operation is succeeded
+        assert!(db.read_blocking().get_part_data(&mesh_id).is_ok());
+        assert_eq!(
+            db_changes_msg_rx.recv_blocking().unwrap(),
+            DbChangeMsg::RecoveredDbFromDetached
+        );
+    }
+
+    #[test]
+    fn test_recover_detached_execution_on_abort() {
+        let mut db = Db::new();
+        // Add mesh part
+        let mesh_id = db
+            .add_part_rep(PartRep::Mesh(Box::new(Mesh {
+                vertices: vec![
+                    Vec3::new(0.0, 0.0, 0.0),
+                    Vec3::new(1.0, 0.0, 0.0),
+                    Vec3::new(0.0, 1.0, 0.0),
+                ],
+                triangles: vec![0, 1, 2],
+            })))
+            .unwrap();
+
+        let instance_id = db.make_new_part_instance_from_part(&mesh_id, None).unwrap();
+
+        let db = Arc::new(RwLock::new(db));
+        let op = MockRestoreOperation::new(
+            Some(OperationThreadReqs::ReadWriteFromSeparateThread {
+                identifiables: vec![Identifiable::PartInstance(instance_id)],
+                detach_parts_with_part_instances: true,
+            }),
+            false,
+            true,
+        );
+        let (db_changes_msg_tx, db_changes_msg_rx) = smol::channel::bounded(1);
+
+        let result = smol::block_on(async {
+            get_new_operation_context(db.clone(), Box::new(op), db_changes_msg_tx.clone()).await
+        });
+        let (ops_context, ops) = result.unwrap();
+        assert_eq!(
+            db_changes_msg_rx.recv_blocking().unwrap(),
+            DbChangeMsg::Detached(vec![
+                Identifiable::Part(mesh_id),
+                Identifiable::PartInstance(instance_id)
+            ])
+        );
+
+        //assert that part is detached when the context is created
+        assert!(db.read_blocking().get_part_data(&mesh_id).is_err());
+
+        //let (ops_response_tx, ops_response_rx) = smol::channel::unbounded();
+        let response =
+            smol::block_on(async { process_operation(ops, ops_context, db_changes_msg_tx).await });
+
+        assert!(matches!(response, OperationResponse::Aborted { .. }));
+
+        //assert that part is reattached when the operation is succeeded
+        assert!(db.read_blocking().get_part_data(&mesh_id).is_ok());
+        assert_eq!(
+            db_changes_msg_rx.recv_blocking().unwrap(),
+            DbChangeMsg::RecoveredDbFromDetached
+        );
+    }
+
+    #[test]
+    fn test_recover_write_in_ui_execution_on_failure() {
+        let db = Arc::new(RwLock::new(Db::new()));
+        let op =
+            MockRestoreOperation::new(Some(OperationThreadReqs::ReadWriteFullDbInUi), false, false);
+        let (db_changes_msg_tx, db_changes_msg_rx) = smol::channel::bounded(1);
+
+        let result = smol::block_on(async {
+            get_new_operation_context(db.clone(), Box::new(op), db_changes_msg_tx.clone()).await
+        });
+        let (ops_context, ops) = result.unwrap();
+        let response =
+            smol::block_on(async { process_operation(ops, ops_context, db_changes_msg_tx).await });
+
+        assert!(matches!(response, OperationResponse::Failed { .. }));
+        assert_eq!(
+            db_changes_msg_rx.recv_blocking().unwrap(),
+            DbChangeMsg::RecoveredDbFromMainDb
+        );
+    }
+
+    #[test]
+    fn test_recover_write_in_ui_execution_on_abort() {
+        let db = Arc::new(RwLock::new(Db::new()));
+        let op =
+            MockRestoreOperation::new(Some(OperationThreadReqs::ReadWriteFullDbInUi), false, true);
+        let (db_changes_msg_tx, db_changes_msg_rx) = smol::channel::bounded(1);
+
+        let result = smol::block_on(async {
+            get_new_operation_context(db.clone(), Box::new(op), db_changes_msg_tx.clone()).await
+        });
+        let (ops_context, ops) = result.unwrap();
+        let response =
+            smol::block_on(async { process_operation(ops, ops_context, db_changes_msg_tx).await });
+
+        assert!(matches!(response, OperationResponse::Aborted { .. }));
+        assert_eq!(
+            db_changes_msg_rx.recv_blocking().unwrap(),
+            DbChangeMsg::RecoveredDbFromMainDb
+        );
+    }
+
+    #[test]
+    fn test_recover_append_execution_on_failure_request() {
+        let db = Arc::new(RwLock::new(Db::new()));
+        let op = MockRestoreOperation::new(
+            Some(OperationThreadReqs::AppendFromSeparateThread),
+            true,
+            false,
+        );
+        let (db_changes_msg_tx, db_changes_msg_rx) = smol::channel::bounded(1);
+
+        let result = smol::block_on(async {
+            get_new_operation_context(db.clone(), Box::new(op), db_changes_msg_tx.clone()).await
+        });
+        let (ops_context, ops) = result.unwrap();
+
+        assert_eq!(db.read_blocking().get_parts().count(), 0);
+
+        let response =
+            smol::block_on(async { process_operation(ops, ops_context, db_changes_msg_tx).await });
+
+        assert!(matches!(response, OperationResponse::Failed { .. }));
+        assert_eq!(
+            db_changes_msg_rx.recv_blocking().unwrap(),
+            DbChangeMsg::RecoveredDbFromMainDb
+        );
     }
 }

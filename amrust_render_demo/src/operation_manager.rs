@@ -80,13 +80,12 @@ impl OperationManager {
                                 println!("running the Operation in separate thread");
                                 //let response = ops.execute(&mut ops_context).await;
 
-                                process_operation(
-                                    ops,
-                                    ops_context,
-                                    operation_response_tx,
-                                    db_changes_tx,
-                                )
-                                .await;
+                                let response =
+                                    process_operation(ops, ops_context, db_changes_tx).await;
+
+                                if let Err(err) = operation_response_tx.send(response).await {
+                                    println!("{err:?}");
+                                }
                             }
                             Err(_) => {
                                 if let Err(err) = operation_response_tx
@@ -117,15 +116,12 @@ impl OperationManager {
                                     "running the Operation in same thread as Operation Manager"
                                 );
 
-                                //let response = ops.execute(&mut ops_context).await;
+                                let response =
+                                    process_operation(ops, ops_context, db_changes_tx).await;
 
-                                process_operation(
-                                    ops,
-                                    ops_context,
-                                    operation_response_tx,
-                                    db_changes_tx,
-                                )
-                                .await;
+                                if let Err(err) = operation_response_tx.send(response).await {
+                                    println!("{err:?}");
+                                }
                             }
                             Err(_) => {
                                 if let Err(err) = operation_response_tx
@@ -145,7 +141,30 @@ impl OperationManager {
             Err(err) => match err {
                 TryRecvError::Empty => {}
                 TryRecvError::Closed => {
-                    println!("Operations channel is disconnected for some reason")
+                    panic!("Operations channel is disconnected for some reason")
+                }
+            },
+        }
+
+        match self.db_changes_msg_rx.try_recv() {
+            Ok(msg) => match msg {
+                DbChangeMsg::Detached(identifiables) => {
+                    for identifiable in identifiables {
+                        self.detached_identifiables.insert(identifiable);
+                    }
+                }
+                DbChangeMsg::Reattached(identifiables) => {
+                    for identifiable in identifiables {
+                        self.detached_identifiables.remove(&identifiable);
+                    }
+                }
+                DbChangeMsg::RecoveredDbFromDetached => {}
+                DbChangeMsg::RecoveredDbFromMainDb => {}
+            },
+            Err(err) => match err {
+                TryRecvError::Empty => {}
+                TryRecvError::Closed => {
+                    panic!("Operations channel is disconnected for some reason")
                 }
             },
         }
@@ -171,7 +190,7 @@ mod tests {
     use smol::Timer;
     use smol::channel::bounded;
     use smol::lock::RwLock;
-    use std::collections::HashSet;
+
     use std::sync::Arc;
 
     struct MockOperation {
