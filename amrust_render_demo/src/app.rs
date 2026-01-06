@@ -530,9 +530,9 @@ impl App {
             if let Some(path) = state.save_file_dlg.take_picked() {
                 println!("File path to save to is {path:?}");
 
-                let save_mode = {
+                let ops_msg = {
                     if !state.selected_identifiables.is_empty() {
-                        match state.current_app_mode {
+                        let save_mode = match state.current_app_mode {
                             AppMode::Objects => {
                                 let parts =
                                     state.selected_identifiables.iter().filter_map(|i| match i {
@@ -554,17 +554,20 @@ impl App {
 
                                 SaveMode::PartInstances(part_instances.collect())
                             }
-                        }
+                        };
+                        OperationMessage::AddAsyncOperation(Box::new(save_3mf::Save3mfOps {
+                            path,
+                            save_mode,
+                        }))
                     } else {
-                        SaveMode::Scene
+                        OperationMessage::AddSyncOperation(Box::new(save_3mf::Save3mfOps {
+                            path,
+                            save_mode: SaveMode::Scene,
+                        }))
                     }
                 };
 
-                let ops = save_3mf::Save3mfOps { path, save_mode };
-                if let Err(err) = state
-                    .operation_queue_tx
-                    .send_blocking(OperationMessage::AddAsyncOperation(Box::new(ops)))
-                {
+                if let Err(err) = state.operation_queue_tx.send_blocking(ops_msg) {
                     println!("{err:?}");
                 }
             }
