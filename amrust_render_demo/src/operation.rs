@@ -75,7 +75,7 @@ pub enum OperationContextInner {
 }
 
 pub struct OperationContext {
-    context: OperationContextInner,
+    pub context: OperationContextInner,
     main_db: Arc<RwLock<Db>>,
     detached_db: Option<DetachedDb>,
     append_db: Option<Db>,
@@ -228,9 +228,20 @@ pub trait DbReader: Send + Sync + 'static {
     fn get_scene<'a>(&'a self) -> Option<&'a Scene>;
 }
 
+pub enum DbChangeMsg {
+    Detached(Vec<Identifiable>),
+    Reattached(Vec<Identifiable>),
+    RecoveredDbFromDetached,
+    RecoveredDbFromMainDb,
+}
+
+#[derive(Debug)]
+pub enum OperationContextGenerationError {}
+
 pub async fn get_new_operation_context(
     main_db: Arc<RwLock<Db>>,
     operation: Box<dyn Operation>,
+    db_changes_message_sender: Sender<DbChangeMsg>,
 ) -> Result<(OperationContext, Box<dyn Operation>), OperationContextGenerationError> {
     let main_db_archive = {
         let read_db = main_db.read().await;
@@ -308,6 +319,18 @@ pub async fn get_new_operation_context(
                     match write_db.create_detached_db(&parts_to_detach, &part_instances_to_detach) {
                         Ok(detached_db) => {
                             if let Ok(detached_db_archive) = detached_db.get_archived_bytes() {
+                                let mut detached_identifiables = vec![];
+                                for (id, _) in detached_db.get_parts() {
+                                    detached_identifiables.push(Identifiable::Part(id));
+                                }
+
+                                for (id, _, _) in detached_db.get_part_instances() {
+                                    detached_identifiables.push(Identifiable::PartInstance(id));
+                                }
+
+                                db_changes_message_sender
+                                    .send(DbChangeMsg::Detached(detached_identifiables));
+
                                 OperationContext {
                                     context: OperationContextInner::Detached,
                                     main_db: main_db.clone(),
@@ -328,7 +351,7 @@ pub async fn get_new_operation_context(
             }
             OperationThreadReqs::ReadFullDbInUi => OperationContext {
                 context: OperationContextInner::ReadFull,
-                main_db: main_db.clone(),
+                main_db,
                 detached_db: None,
                 append_db: None,
                 main_db_archive,
@@ -365,13 +388,12 @@ pub async fn get_new_operation_context(
 
     Ok((context, operation))
 }
-#[derive(Debug)]
-pub enum OperationContextGenerationError {}
 
 pub async fn process_operation(
     mut operation: Box<dyn Operation>,
     mut ops_context: OperationContext,
     operation_response_tx: Sender<OperationResponse>,
+    db_changes_message_sender: Sender<DbChangeMsg>,
 ) {
     let response = operation.execute(&mut ops_context).await;
 
@@ -379,6 +401,15 @@ pub async fn process_operation(
         OperationResponse::Succeeded { .. } => match ops_context.context {
             OperationContextInner::Detached => {
                 if let Some(detached_db) = ops_context.detached_db {
+                    let mut detached_identifiables = vec![];
+                    for (id, _) in detached_db.get_parts() {
+                        detached_identifiables.push(Identifiable::Part(id));
+                    }
+
+                    for (id, _, _) in detached_db.get_part_instances() {
+                        detached_identifiables.push(Identifiable::PartInstance(id));
+                    }
+
                     let mut write_db = ops_context.main_db.write().await;
                     if let Err(err) = write_db.reattach(detached_db) {
                         println!("Reattaching DetachedDb failed: {err:?}");
@@ -387,8 +418,14 @@ pub async fn process_operation(
                             unsafe {
                                 recover_and_reattach_detached_db(&ops_context.main_db, archive)
                                     .await;
+
+                                db_changes_message_sender
+                                    .send(DbChangeMsg::RecoveredDbFromDetached);
                             }
                         }
+                    } else {
+                        db_changes_message_sender
+                            .send(DbChangeMsg::Reattached(detached_identifiables));
                     }
                 }
             }
@@ -403,6 +440,8 @@ pub async fn process_operation(
                                 write_main_db.restore_from_bytes(&ops_context.main_db_archive)
                             {
                                 panic!("Restoring the MainDb from Archived Bytes failed: {err:?}")
+                            } else {
+                                db_changes_message_sender.send(DbChangeMsg::RecoveredDbFromMainDb);
                             }
                         }
                     }
@@ -426,6 +465,8 @@ pub async fn process_operation(
                             unsafe {
                                 recover_and_reattach_detached_db(&ops_context.main_db, archive)
                                     .await;
+                                db_changes_message_sender
+                                    .send(DbChangeMsg::RecoveredDbFromDetached);
                             }
                         }
                     }
@@ -436,6 +477,8 @@ pub async fn process_operation(
                                 write_main_db.restore_from_bytes(&ops_context.main_db_archive)
                             {
                                 panic!("Restoring the MainDb from Archived Bytes failed: {err:?}")
+                            } else {
+                                db_changes_message_sender.send(DbChangeMsg::RecoveredDbFromMainDb);
                             }
                         }
                     }
@@ -557,7 +600,7 @@ mod tests {
 
         let result = smol::block_on(async { get_new_operation_context(db, Box::new(op)).await });
 
-        let (context, _) = result.unwrap();
+        let (context, _, _) = result.unwrap();
         assert!(matches!(context.context, OperationContextInner::AppendOnly));
         assert!(context.append_db.is_some());
     }
@@ -569,7 +612,7 @@ mod tests {
 
         let result =
             smol::block_on(async { get_new_operation_context(db.clone(), Box::new(op)).await });
-        let (ops_context, ops) = result.unwrap();
+        let (ops_context, ops, _) = result.unwrap();
 
         assert_eq!(db.read_blocking().get_parts().count(), 0);
 
@@ -609,7 +652,7 @@ mod tests {
 
         let result = smol::block_on(async { get_new_operation_context(db, Box::new(op)).await });
 
-        let (context, _) = result.unwrap();
+        let (context, _, detached_identifiables) = result.unwrap();
         assert!(matches!(context.context, OperationContextInner::Detached));
         match &context.detached_db {
             Some(db) => {
@@ -619,6 +662,7 @@ mod tests {
             None => panic!("DetachedDb not created!"),
         }
         assert!(context.detached_db_archive.is_some());
+        assert_eq!(detached_identifiables.unwrap().len(), 2);
     }
 
     #[test]
@@ -646,7 +690,8 @@ mod tests {
 
         let result =
             smol::block_on(async { get_new_operation_context(db.clone(), Box::new(op)).await });
-        let (ops_context, ops) = result.unwrap();
+        let (ops_context, ops, detached_identifiables) = result.unwrap();
+        assert_eq!(detached_identifiables.unwrap().len(), 2);
 
         //assert that part is detached when the context is created
         assert!(db.read_blocking().get_part_data(&mesh_id).is_err());
@@ -670,7 +715,7 @@ mod tests {
 
         let result = smol::block_on(async { get_new_operation_context(db, Box::new(op)).await });
 
-        let (context, _) = result.unwrap();
+        let (context, _, _) = result.unwrap();
         assert!(matches!(context.context, OperationContextInner::ReadFull));
     }
 
@@ -696,7 +741,7 @@ mod tests {
 
         let result =
             smol::block_on(async { get_new_operation_context(db.clone(), Box::new(op)).await });
-        let (ops_context, ops) = result.unwrap();
+        let (ops_context, ops, _) = result.unwrap();
 
         //assert that part is still in Db
         assert!(db.read_blocking().get_part_data(&mesh_id).is_ok());
@@ -717,7 +762,7 @@ mod tests {
 
         let result = smol::block_on(async { get_new_operation_context(db, Box::new(op)).await });
 
-        let (context, _) = result.unwrap();
+        let (context, _, _) = result.unwrap();
         assert!(matches!(context.context, OperationContextInner::WriteFull));
     }
 
@@ -743,7 +788,7 @@ mod tests {
 
         let result =
             smol::block_on(async { get_new_operation_context(db.clone(), Box::new(op)).await });
-        let (ops_context, ops) = result.unwrap();
+        let (ops_context, ops, _) = result.unwrap();
 
         //assert that part is still in Db
         assert!(db.read_blocking().get_part_data(&mesh_id).is_ok());
@@ -767,7 +812,7 @@ mod tests {
 
         let result = smol::block_on(async { get_new_operation_context(db, Box::new(op)).await });
 
-        let (mut context, _) = result.unwrap();
+        let (mut context, _, _) = result.unwrap();
 
         let clear_result = smol::block_on(async { context.clear_db().await });
 
