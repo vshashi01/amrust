@@ -14,12 +14,12 @@ use std::{collections::HashSet, error::Error, sync::Arc};
 /// This specifies how the Operation expects itself to be run, this requirements directly affect
 /// the OperationContext given to the fn execute in the [Operation] trait.
 #[derive(Clone)]
-pub enum OperationRequirements {
+pub enum OperationThreadReqs {
     /// The full [Db] will only available with Read only access
     /// Note: The [Db] in this case will not have the Identifiables since its on a separate temporary Db.
     /// Only the specified [Identifiable] will be accessible to the operation with Read & Write access
     /// The operation will run automatically in a separate Operation thread.
-    ReadWriteFromOperationThread {
+    ReadWriteFromSeparateThread {
         /// The identifiables that should be accessible from the detached Database for Read & Write access
         identifiables: Vec<Identifiable>,
 
@@ -29,23 +29,23 @@ pub enum OperationRequirements {
 
     /// The full Db will be available with Read only access
     /// The operation will run on the same thread as the Ui thread.
-    ReadFullDbInUiThread,
+    ReadFullDbInUi,
 
     /// The full Db will be available with Read & Write access
     /// The operation will run on the same thread as the Ui thread.
-    ReadWriteFullDbInUiThread,
+    ReadWriteFullDbInUi,
 
     /// The full Db will be available with Read only access
     /// An additional temporary Db is available with Read & Write access to append new data.
     /// The operation will run automatically in a separate Operation thread.
-    AppendFromOperationThread,
+    AppendFromSeparateThread,
 }
 
 /// This is the trait that an Operation logic should implement to be run by the OperationManager
 #[async_trait]
 pub trait Operation: Send + Sync + 'static {
     /// Defines the input and execution context required by the Operation logic.
-    fn get_operation_requirements(&self) -> Option<OperationRequirements>;
+    fn get_operation_requirements(&self) -> Option<OperationThreadReqs>;
 
     /// Executes the actual logic.
     async fn execute(&mut self, context: &mut OperationContext) -> OperationResponse;
@@ -86,7 +86,7 @@ pub struct OperationContext {
 
 impl OperationContext {
     pub fn get_inner_context(&self) -> OperationContextInner {
-        self.context.clone()
+        self.context
     }
 
     /// Allows clearing the db only on WriteFull and AppendOnly context
@@ -117,10 +117,10 @@ impl OperationContext {
     pub async fn append_db(&mut self, other_db: Db) -> Result<(), OperationContextError> {
         match &mut self.context {
             OperationContextInner::Detached => {
-                if let Some(detached_db) = &mut self.detached_db {
-                    if detached_db.append_db(other_db).is_err() {
-                        panic!("Appending to DetachedDB failed");
-                    }
+                if let Some(detached_db) = &mut self.detached_db
+                    && detached_db.append_db(other_db).is_err()
+                {
+                    panic!("Appending to DetachedDB failed");
                 }
 
                 Ok(())
@@ -135,10 +135,10 @@ impl OperationContext {
                 Ok(())
             }
             OperationContextInner::AppendOnly => {
-                if let Some(db) = &mut self.append_db {
-                    if db.append(other_db).is_err() {
-                        panic!("Appending to AppendOnly Db failed");
-                    }
+                if let Some(db) = &mut self.append_db
+                    && let Err(err) = db.append(other_db)
+                {
+                    panic!("Appending to AppendOnly Db failed: {err:?}");
                 }
 
                 Ok(())
@@ -241,7 +241,7 @@ pub async fn get_new_operation_context(
 
     let context = if let Some(reqs) = operation.get_operation_requirements() {
         match reqs {
-            OperationRequirements::ReadWriteFromOperationThread {
+            OperationThreadReqs::ReadWriteFromSeparateThread {
                 identifiables,
                 detach_parts_with_part_instances,
             } => {
@@ -326,7 +326,7 @@ pub async fn get_new_operation_context(
                     panic!("cannot detach parts!");
                 }
             }
-            OperationRequirements::ReadFullDbInUiThread => OperationContext {
+            OperationThreadReqs::ReadFullDbInUi => OperationContext {
                 context: OperationContextInner::ReadFull,
                 main_db: main_db.clone(),
                 detached_db: None,
@@ -334,7 +334,7 @@ pub async fn get_new_operation_context(
                 main_db_archive,
                 detached_db_archive: None,
             },
-            OperationRequirements::ReadWriteFullDbInUiThread => OperationContext {
+            OperationThreadReqs::ReadWriteFullDbInUi => OperationContext {
                 context: OperationContextInner::WriteFull,
                 main_db: main_db.clone(),
                 detached_db: None,
@@ -342,7 +342,7 @@ pub async fn get_new_operation_context(
                 main_db_archive,
                 detached_db_archive: None,
             },
-            OperationRequirements::AppendFromOperationThread => OperationContext {
+            OperationThreadReqs::AppendFromSeparateThread => OperationContext {
                 context: OperationContextInner::AppendOnly,
                 main_db: main_db.clone(),
                 detached_db: None,
@@ -470,28 +470,82 @@ async unsafe fn recover_and_reattach_detached_db(
 
 #[cfg(test)]
 mod tests {
+    use crate::amrust_db::{Mesh, PartRep};
+
     use super::*;
-    use smol::channel::unbounded;
+    use glam::Vec3;
     use smol::lock::RwLock;
     use std::sync::Arc;
 
     struct MockOperation {
-        requirements: Option<OperationRequirements>,
+        requirements: Option<OperationThreadReqs>,
     }
 
     impl MockOperation {
-        fn new(requirements: Option<OperationRequirements>) -> Self {
+        fn new(requirements: Option<OperationThreadReqs>) -> Self {
             Self { requirements }
         }
     }
 
     #[async_trait]
     impl Operation for MockOperation {
-        fn get_operation_requirements(&self) -> Option<OperationRequirements> {
+        fn get_operation_requirements(&self) -> Option<OperationThreadReqs> {
             self.requirements.clone()
         }
 
-        async fn execute(&mut self, _context: &mut OperationContext) -> OperationResponse {
+        async fn execute(&mut self, context: &mut OperationContext) -> OperationResponse {
+            match &context.context {
+                OperationContextInner::Detached => {
+                    //test entity counts in DetachedDb
+                    context
+                        .get_db(|db| {
+                            assert_eq!(db.get_parts_count(), 1);
+                            assert_eq!(db.get_part_instance_count(), 1);
+                        })
+                        .await
+                        .unwrap();
+                }
+                OperationContextInner::ReadFull => {
+                    //test that can get db
+                    context
+                        .get_db(|db| {
+                            assert_eq!(db.get_parts_count(), 1);
+                            assert_eq!(db.get_part_instance_count(), 1);
+                        })
+                        .await
+                        .unwrap();
+                }
+                OperationContextInner::WriteFull => {
+                    //test that can get db
+                    context
+                        .get_db(|db| {
+                            assert_eq!(db.get_parts_count(), 1);
+                            assert_eq!(db.get_part_instance_count(), 1);
+                        })
+                        .await
+                        .unwrap();
+
+                    //test that can write by clear_db
+                    context.clear_db().await.unwrap();
+                }
+                OperationContextInner::AppendOnly => {
+                    //test that can append Db
+                    let mut db = Db::new();
+
+                    let _ = db
+                        .add_part_rep(PartRep::Mesh(Box::new(Mesh {
+                            vertices: vec![
+                                Vec3::new(0.0, 0.0, 0.0),
+                                Vec3::new(1.0, 0.0, 0.0),
+                                Vec3::new(0.0, 1.0, 0.0),
+                            ],
+                            triangles: vec![0, 1, 2],
+                        })))
+                        .unwrap();
+
+                    context.append_db(db).await.unwrap();
+                }
+            }
             OperationResponse::Succeeded { name: "test" }
         }
     }
@@ -499,7 +553,7 @@ mod tests {
     #[test]
     fn test_append_context_creation() {
         let db = Arc::new(RwLock::new(Db::new()));
-        let op = MockOperation::new(Some(OperationRequirements::AppendFromOperationThread));
+        let op = MockOperation::new(Some(OperationThreadReqs::AppendFromSeparateThread));
 
         let result = smol::block_on(async { get_new_operation_context(db, Box::new(op)).await });
 
@@ -509,49 +563,207 @@ mod tests {
     }
 
     #[test]
-    fn test_successful_processing() {
+    fn test_append_execution() {
         let db = Arc::new(RwLock::new(Db::new()));
-        let op = MockOperation::new(Some(OperationRequirements::AppendFromOperationThread));
+        let op = MockOperation::new(Some(OperationThreadReqs::AppendFromSeparateThread));
 
         let result =
             smol::block_on(async { get_new_operation_context(db.clone(), Box::new(op)).await });
+        let (ops_context, ops) = result.unwrap();
+
+        assert_eq!(db.read_blocking().get_parts().count(), 0);
+
+        let (ops_response_tx, ops_response_rx) = smol::channel::unbounded();
+        smol::block_on(async { process_operation(ops, ops_context, ops_response_tx).await });
+
+        assert!(matches!(
+            ops_response_rx.recv_blocking().unwrap(),
+            OperationResponse::Succeeded { .. }
+        ));
+
+        assert_eq!(db.read_blocking().get_parts().count(), 1);
+    }
+
+    #[test]
+    fn test_detached_db_context_creation() {
+        let mut db = Db::new();
+        // Add mesh part
+        let mesh_id = db
+            .add_part_rep(PartRep::Mesh(Box::new(Mesh {
+                vertices: vec![
+                    Vec3::new(0.0, 0.0, 0.0),
+                    Vec3::new(1.0, 0.0, 0.0),
+                    Vec3::new(0.0, 1.0, 0.0),
+                ],
+                triangles: vec![0, 1, 2],
+            })))
+            .unwrap();
+
+        let instance_id = db.make_new_part_instance_from_part(&mesh_id, None).unwrap();
+
+        let db = Arc::new(RwLock::new(db));
+        let op = MockOperation::new(Some(OperationThreadReqs::ReadWriteFromSeparateThread {
+            identifiables: vec![Identifiable::PartInstance(instance_id)],
+            detach_parts_with_part_instances: true,
+        }));
+
+        let result = smol::block_on(async { get_new_operation_context(db, Box::new(op)).await });
 
         let (context, _) = result.unwrap();
-        assert!(matches!(context.context, OperationContextInner::AppendOnly));
+        assert!(matches!(context.context, OperationContextInner::Detached));
+        match &context.detached_db {
+            Some(db) => {
+                assert!(db.get_part(&mesh_id).is_some());
+                assert!(db.get_part_instance(&instance_id).is_some());
+            }
+            None => panic!("DetachedDb not created!"),
+        }
+        assert!(context.detached_db_archive.is_some());
     }
 
     #[test]
-    fn test_context_get_db_read_access() {
-        let db = Arc::new(RwLock::new(Db::new()));
-        let op = MockOperation::new(Some(OperationRequirements::ReadFullDbInUiThread));
+    fn test_detached_execution() {
+        let mut db = Db::new();
+        // Add mesh part
+        let mesh_id = db
+            .add_part_rep(PartRep::Mesh(Box::new(Mesh {
+                vertices: vec![
+                    Vec3::new(0.0, 0.0, 0.0),
+                    Vec3::new(1.0, 0.0, 0.0),
+                    Vec3::new(0.0, 1.0, 0.0),
+                ],
+                triangles: vec![0, 1, 2],
+            })))
+            .unwrap();
 
-        let result = smol::block_on(async { get_new_operation_context(db, Box::new(op)).await });
+        let instance_id = db.make_new_part_instance_from_part(&mesh_id, None).unwrap();
 
-        let (mut context, _) = result.unwrap();
+        let db = Arc::new(RwLock::new(db));
+        let op = MockOperation::new(Some(OperationThreadReqs::ReadWriteFromSeparateThread {
+            identifiables: vec![Identifiable::PartInstance(instance_id)],
+            detach_parts_with_part_instances: true,
+        }));
 
-        let read_result = smol::block_on(async { context.get_db(|_| 42).await });
+        let result =
+            smol::block_on(async { get_new_operation_context(db.clone(), Box::new(op)).await });
+        let (ops_context, ops) = result.unwrap();
 
-        assert_eq!(read_result, Ok(42));
+        //assert that part is detached when the context is created
+        assert!(db.read_blocking().get_part_data(&mesh_id).is_err());
+
+        let (ops_response_tx, ops_response_rx) = smol::channel::unbounded();
+        smol::block_on(async { process_operation(ops, ops_context, ops_response_tx).await });
+
+        assert!(matches!(
+            ops_response_rx.recv_blocking().unwrap(),
+            OperationResponse::Succeeded { .. }
+        ));
+
+        //assert that part is reattached when the operation is succeeded
+        assert!(db.read_blocking().get_part_data(&mesh_id).is_ok());
     }
 
     #[test]
-    fn test_context_clear_db_write_access() {
+    fn test_read_in_ui_context_creation() {
         let db = Arc::new(RwLock::new(Db::new()));
-        let op = MockOperation::new(Some(OperationRequirements::ReadWriteFullDbInUiThread));
+        let op = MockOperation::new(Some(OperationThreadReqs::ReadFullDbInUi));
 
         let result = smol::block_on(async { get_new_operation_context(db, Box::new(op)).await });
 
-        let (mut context, _) = result.unwrap();
+        let (context, _) = result.unwrap();
+        assert!(matches!(context.context, OperationContextInner::ReadFull));
+    }
 
-        let clear_result = smol::block_on(async { context.clear_db().await });
+    #[test]
+    fn test_read_in_ui_execution() {
+        let mut db = Db::new();
+        // Add mesh part
+        let mesh_id = db
+            .add_part_rep(PartRep::Mesh(Box::new(Mesh {
+                vertices: vec![
+                    Vec3::new(0.0, 0.0, 0.0),
+                    Vec3::new(1.0, 0.0, 0.0),
+                    Vec3::new(0.0, 1.0, 0.0),
+                ],
+                triangles: vec![0, 1, 2],
+            })))
+            .unwrap();
 
-        assert!(clear_result.is_ok());
+        let _ = db.make_new_part_instance_from_part(&mesh_id, None).unwrap();
+
+        let db = Arc::new(RwLock::new(db));
+        let op = MockOperation::new(Some(OperationThreadReqs::ReadFullDbInUi));
+
+        let result =
+            smol::block_on(async { get_new_operation_context(db.clone(), Box::new(op)).await });
+        let (ops_context, ops) = result.unwrap();
+
+        //assert that part is still in Db
+        assert!(db.read_blocking().get_part_data(&mesh_id).is_ok());
+
+        let (ops_response_tx, ops_response_rx) = smol::channel::unbounded();
+        smol::block_on(async { process_operation(ops, ops_context, ops_response_tx).await });
+
+        assert!(matches!(
+            ops_response_rx.recv_blocking().unwrap(),
+            OperationResponse::Succeeded { .. }
+        ));
+    }
+
+    #[test]
+    fn test_write_in_ui_context_creation() {
+        let db = Arc::new(RwLock::new(Db::new()));
+        let op = MockOperation::new(Some(OperationThreadReqs::ReadWriteFullDbInUi));
+
+        let result = smol::block_on(async { get_new_operation_context(db, Box::new(op)).await });
+
+        let (context, _) = result.unwrap();
+        assert!(matches!(context.context, OperationContextInner::WriteFull));
+    }
+
+    #[test]
+    fn test_write_in_ui_execution() {
+        let mut db = Db::new();
+        // Add mesh part
+        let mesh_id = db
+            .add_part_rep(PartRep::Mesh(Box::new(Mesh {
+                vertices: vec![
+                    Vec3::new(0.0, 0.0, 0.0),
+                    Vec3::new(1.0, 0.0, 0.0),
+                    Vec3::new(0.0, 1.0, 0.0),
+                ],
+                triangles: vec![0, 1, 2],
+            })))
+            .unwrap();
+
+        let _ = db.make_new_part_instance_from_part(&mesh_id, None).unwrap();
+
+        let db = Arc::new(RwLock::new(db));
+        let op = MockOperation::new(Some(OperationThreadReqs::ReadWriteFullDbInUi));
+
+        let result =
+            smol::block_on(async { get_new_operation_context(db.clone(), Box::new(op)).await });
+        let (ops_context, ops) = result.unwrap();
+
+        //assert that part is still in Db
+        assert!(db.read_blocking().get_part_data(&mesh_id).is_ok());
+
+        let (ops_response_tx, ops_response_rx) = smol::channel::unbounded();
+        smol::block_on(async { process_operation(ops, ops_context, ops_response_tx).await });
+
+        assert!(matches!(
+            ops_response_rx.recv_blocking().unwrap(),
+            OperationResponse::Succeeded { .. }
+        ));
+
+        //assert that Db is cleared
+        assert!(db.read_blocking().is_empty());
     }
 
     #[test]
     fn test_context_clear_db_read_only_denied() {
         let db = Arc::new(RwLock::new(Db::new()));
-        let op = MockOperation::new(Some(OperationRequirements::ReadFullDbInUiThread));
+        let op = MockOperation::new(Some(OperationThreadReqs::ReadFullDbInUi));
 
         let result = smol::block_on(async { get_new_operation_context(db, Box::new(op)).await });
 
@@ -563,23 +775,5 @@ mod tests {
             clear_result,
             Err(OperationContextError::ReadOnlyContext)
         ));
-    }
-
-    #[test]
-    fn test_successful_processing_write() {
-        let db = Arc::new(RwLock::new(Db::new()));
-        let op = MockOperation::new(Some(OperationRequirements::ReadWriteFullDbInUiThread));
-
-        let result = smol::block_on(async { get_new_operation_context(db, Box::new(op)).await });
-
-        let (context, op) = result.unwrap();
-        let (tx, _rx) = unbounded();
-
-        smol::block_on(async {
-            process_operation(op, context, tx).await;
-        });
-
-        // Check that append DB was merged (assuming append logic works)
-        // This is a basic smoke test; deeper checks would require inspecting DB state
     }
 }

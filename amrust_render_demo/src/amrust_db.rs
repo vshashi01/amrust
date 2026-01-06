@@ -17,7 +17,6 @@ use amrust_render::{
 };
 
 use core::fmt;
-use slotmap::Key;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -468,9 +467,9 @@ impl Db {
     }
 
     pub fn append(&mut self, other: Db) -> Result<(), DbError> {
-        if other.is_scene_empty() {
-            return Err(DbError::SceneNotSet);
-        }
+        // if other.is_scene_empty() {
+        //     return Err(DbError::SceneNotSet);
+        // }
 
         //key is from other, and the value is from current
         let mut unique_part_other_to_unique_part_self: HashMap<PartId, PartId> = HashMap::new();
@@ -1854,7 +1853,7 @@ fn compute_transformed_bounding_box_from_mesh(
 
 #[cfg(test)]
 mod tests {
-    use amrust_render::vertex::Color;
+
     use slotmap::Key;
 
     use super::*;
@@ -2422,7 +2421,7 @@ mod tests {
             } => {
                 assert_eq!(*id, Identifiable::PartInstance(instance_id));
                 assert!(name.contains("Mesh"));
-                assert_eq!(*selectable, true);
+                assert!(*selectable);
             }
             _ => panic!("Expected Leaf"),
         }
@@ -2443,7 +2442,7 @@ mod tests {
         let inst_id = db.make_new_part_instance_from_part(&mesh_id, None).unwrap();
 
         // Composed part
-        let composed_id = db
+        let _ = db
             .add_part_rep(PartRep::ComposedPart(vec![inst_id]))
             .unwrap();
 

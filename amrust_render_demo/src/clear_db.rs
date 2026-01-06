@@ -1,13 +1,13 @@
 use async_trait::async_trait;
 
-use crate::operation::{Operation, OperationContext, OperationRequirements, OperationResponse};
+use crate::operation::{Operation, OperationContext, OperationResponse, OperationThreadReqs};
 
 pub struct ClearDbOps;
 
 #[async_trait]
 impl Operation for ClearDbOps {
-    fn get_operation_requirements(&self) -> Option<OperationRequirements> {
-        Some(OperationRequirements::ReadWriteFullDbInUiThread)
+    fn get_operation_requirements(&self) -> Option<OperationThreadReqs> {
+        Some(OperationThreadReqs::ReadWriteFullDbInUi)
     }
 
     async fn execute(&mut self, context: &mut OperationContext) -> OperationResponse {

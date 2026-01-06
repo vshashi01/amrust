@@ -20,8 +20,8 @@ use crate::amrust_db::Transformation;
 use crate::operation::DbReader;
 use crate::operation::Operation;
 use crate::operation::OperationContext;
-use crate::operation::OperationRequirements;
 use crate::operation::OperationResponse;
+use crate::operation::OperationThreadReqs;
 
 #[derive(Debug, Error)]
 pub enum DbTo3mfError {
@@ -66,15 +66,15 @@ pub struct Save3mfOps {
 
 #[async_trait]
 impl Operation for Save3mfOps {
-    fn get_operation_requirements(&self) -> Option<OperationRequirements> {
+    fn get_operation_requirements(&self) -> Option<OperationThreadReqs> {
         let req = match &self.save_mode {
-            SaveMode::Scene => OperationRequirements::ReadFullDbInUiThread,
-            SaveMode::PartsOnly(part_ids) => OperationRequirements::ReadWriteFromOperationThread {
+            SaveMode::Scene => OperationThreadReqs::ReadFullDbInUi,
+            SaveMode::PartsOnly(part_ids) => OperationThreadReqs::ReadWriteFromSeparateThread {
                 identifiables: part_ids.iter().map(|id| Identifiable::Part(*id)).collect(),
                 detach_parts_with_part_instances: false,
             },
             SaveMode::PartInstances(part_instance_ids) => {
-                OperationRequirements::ReadWriteFromOperationThread {
+                OperationThreadReqs::ReadWriteFromSeparateThread {
                     identifiables: part_instance_ids
                         .iter()
                         .map(|id| Identifiable::PartInstance(*id))

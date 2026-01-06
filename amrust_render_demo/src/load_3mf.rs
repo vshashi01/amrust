@@ -9,7 +9,7 @@ use threemf2::core::transform::Transform;
 use threemf2::io::ThreemfPackage;
 
 use crate::amrust_db::{Db, DbError, Mesh, PartId, PartRep, Scene};
-use crate::operation::{Operation, OperationContext, OperationRequirements, OperationResponse};
+use crate::operation::{Operation, OperationContext, OperationResponse, OperationThreadReqs};
 
 use core::f32;
 use std::collections::HashMap;
@@ -33,8 +33,8 @@ pub struct Load3MFOps {
 
 #[async_trait]
 impl Operation for Load3MFOps {
-    fn get_operation_requirements(&self) -> Option<OperationRequirements> {
-        Some(OperationRequirements::AppendFromOperationThread)
+    fn get_operation_requirements(&self) -> Option<OperationThreadReqs> {
+        Some(OperationThreadReqs::AppendFromSeparateThread)
     }
 
     async fn execute(&mut self, context: &mut OperationContext) -> OperationResponse {
