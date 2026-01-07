@@ -14,13 +14,22 @@ use crate::{
 
 use std::sync::Arc;
 
-pub enum OperationMessage {
-    AddAsyncOperation(Box<dyn Operation>),
-    AddSyncOperation(Box<dyn Operation>),
+/// Defines the Mode to run the Operation in
+pub enum OperationMode {
+    /// A non-blocking operation meant for long running operations
+    /// The MainUI is still accessible but such operations should refrain
+    /// from taking the WriteFull [DbContext]
+    /// Multiple background operation may run at the same time.
+    BackgroundOperation(Box<dyn Operation>),
+
+    /// A modal operation that blocks the UI till the operation is completed
+    /// Only a single modal operation can run at a time.Existing BackgroundOperations may continue.
+    /// All subsequent Operations will only be run after the current ModalOperation is completed.
+    ModalOperation(Box<dyn Operation>),
 }
 
 pub struct OperationManager {
-    operation_queue_rx: Receiver<OperationMessage>,
+    operation_queue_rx: Receiver<OperationMode>,
     operation_response_tx: Sender<OperationResponse>,
     db_changes_msg_rx: Receiver<DbChangeMsg>,
     db_changes_msg_tx: Sender<DbChangeMsg>,
@@ -32,7 +41,7 @@ pub struct OperationManager {
 
 impl OperationManager {
     pub fn new(
-        operation_queue_rx: Receiver<OperationMessage>,
+        operation_queue_rx: Receiver<OperationMode>,
         operation_response_tx: Sender<OperationResponse>,
     ) -> Self {
         let (db_changes_msg_tx, db_changes_msg_rx) = channel::unbounded::<DbChangeMsg>();
@@ -68,7 +77,7 @@ impl OperationManager {
 
         match self.operation_queue_rx.try_recv() {
             Ok(op) => match op {
-                OperationMessage::AddAsyncOperation(ops) => {
+                OperationMode::BackgroundOperation(ops) => {
                     let db = db.clone();
                     //let render_message_tx = render_message_tx.clone();
                     let operation_response_tx = self.operation_response_tx.clone();
@@ -103,7 +112,7 @@ impl OperationManager {
                     self.task_queue.push(task);
                 }
 
-                OperationMessage::AddSyncOperation(ops) => {
+                OperationMode::ModalOperation(ops) => {
                     let db = db.clone();
                     //let render_message_tx = render_message_tx.clone();
                     let operation_response_tx = self.operation_response_tx.clone();
@@ -210,7 +219,7 @@ mod tests {
         }
 
         async fn execute(&mut self, context: &mut DbContext) -> OperationResponse {
-            match &context.context {
+            match &context.r#type {
                 DbContextType::Detached => {
                     // Test entity counts in DetachedDb
                     context
@@ -309,7 +318,7 @@ mod tests {
 
         smol::block_on(async {
             op_tx
-                .send(OperationMessage::AddAsyncOperation(Box::new(op)))
+                .send(OperationMode::BackgroundOperation(Box::new(op)))
                 .await
                 .unwrap();
         });

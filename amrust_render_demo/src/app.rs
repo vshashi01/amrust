@@ -8,7 +8,7 @@ use crate::app_mode::AppMode;
 use crate::clear_db::ClearDbOps;
 use crate::egui_tools::EguiRenderer;
 use crate::operation::OperationResponse;
-use crate::operation_manager::{OperationManager, OperationMessage};
+use crate::operation_manager::{OperationManager, OperationMode};
 use crate::part_list::PartList;
 use crate::render_db::RenderDb;
 use crate::render_worker::{RenderMessage, RenderResponse, RenderWorker, RendererSettings};
@@ -69,7 +69,7 @@ struct AppState {
     pub selected_identifiables: Vec<Identifiable>,
 
     pub operation_manager: OperationManager,
-    pub operation_queue_tx: Sender<OperationMessage>,
+    pub operation_queue_tx: Sender<OperationMode>,
     pub operation_response_rx: Receiver<OperationResponse>,
 }
 
@@ -438,7 +438,7 @@ impl App {
                             if ui.button("Clear All").clicked() {
                                 let clear_ops = ClearDbOps;
                                 if let Err(err) = state.operation_queue_tx.send_blocking(
-                                    OperationMessage::AddSyncOperation(Box::new(clear_ops)),
+                                    OperationMode::ModalOperation(Box::new(clear_ops)),
                                 ) {
                                     println!("{err:?}");
                                 }
@@ -519,7 +519,7 @@ impl App {
                     let ops = load_3mf::Load3MFOps { path };
                     if let Err(err) = state
                         .operation_queue_tx
-                        .send_blocking(OperationMessage::AddAsyncOperation(Box::new(ops)))
+                        .send_blocking(OperationMode::BackgroundOperation(Box::new(ops)))
                     {
                         println!("{err:?}");
                     }
@@ -555,12 +555,12 @@ impl App {
                                 SaveMode::PartInstances(part_instances.collect())
                             }
                         };
-                        OperationMessage::AddAsyncOperation(Box::new(save_3mf::Save3mfOps {
+                        OperationMode::BackgroundOperation(Box::new(save_3mf::Save3mfOps {
                             path,
                             save_mode,
                         }))
                     } else {
-                        OperationMessage::AddSyncOperation(Box::new(save_3mf::Save3mfOps {
+                        OperationMode::ModalOperation(Box::new(save_3mf::Save3mfOps {
                             path,
                             save_mode: SaveMode::Scene,
                         }))

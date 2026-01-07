@@ -75,7 +75,7 @@ pub enum DbContextType {
 }
 
 pub struct DbContext {
-    pub context: DbContextType,
+    pub r#type: DbContextType,
     main_db: Arc<RwLock<Db>>,
     detached_db: Option<DetachedDb>,
     append_db: Option<Db>,
@@ -85,13 +85,9 @@ pub struct DbContext {
 }
 
 impl DbContext {
-    pub fn get_inner_context(&self) -> DbContextType {
-        self.context
-    }
-
     /// Allows clearing the db only on WriteFull and AppendOnly context
     pub async fn clear_db(&mut self) -> Result<(), DbContextError> {
-        match &mut self.context {
+        match &mut self.r#type {
             DbContextType::Detached => Err(DbContextError::DetachedContext),
             DbContextType::ReadFull => Err(DbContextError::ReadOnlyContext),
             DbContextType::WriteFull => {
@@ -115,7 +111,7 @@ impl DbContext {
     /// Caution on doing this on very large datasets with WriteFull Context
     /// AppendOnyl context might be better.
     pub async fn append_db(&mut self, other_db: Db) -> Result<(), DbContextError> {
-        match &mut self.context {
+        match &mut self.r#type {
             DbContextType::Detached => {
                 if let Some(detached_db) = &mut self.detached_db
                     && detached_db.append_db(other_db).is_err()
@@ -152,7 +148,7 @@ impl DbContext {
     /// Caution with holding this too long in the ReadFull and WriteFull context
     /// since it can lead to deadlocks in the system
     pub async fn get_db<T>(&self, f: impl FnOnce(&dyn DbReader) -> T) -> Result<T, DbContextError> {
-        match &self.context {
+        match &self.r#type {
             DbContextType::Detached => {
                 if let Some(detached_db) = &self.detached_db {
                     Ok(f(detached_db))
@@ -331,7 +327,7 @@ pub async fn get_new_operation_context(
                                     .await;
 
                                 DbContext {
-                                    context: DbContextType::Detached,
+                                    r#type: DbContextType::Detached,
                                     main_db: main_db.clone(),
                                     detached_db: Some(detached_db),
                                     append_db: None,
@@ -349,7 +345,7 @@ pub async fn get_new_operation_context(
                 }
             }
             OperationThreadReqs::ReadFullDbInUi => DbContext {
-                context: DbContextType::ReadFull,
+                r#type: DbContextType::ReadFull,
                 main_db,
                 detached_db: None,
                 append_db: None,
@@ -357,7 +353,7 @@ pub async fn get_new_operation_context(
                 detached_db_archive: None,
             },
             OperationThreadReqs::ReadWriteFullDbInUi => DbContext {
-                context: DbContextType::WriteFull,
+                r#type: DbContextType::WriteFull,
                 main_db: main_db.clone(),
                 detached_db: None,
                 append_db: None,
@@ -365,7 +361,7 @@ pub async fn get_new_operation_context(
                 detached_db_archive: None,
             },
             OperationThreadReqs::AppendFromSeparateThread => DbContext {
-                context: DbContextType::AppendOnly,
+                r#type: DbContextType::AppendOnly,
                 main_db: main_db.clone(),
                 detached_db: None,
                 append_db: Some(Db::new()),
@@ -376,7 +372,7 @@ pub async fn get_new_operation_context(
     } else {
         //default is always to create an AppendOnly Context
         DbContext {
-            context: DbContextType::AppendOnly,
+            r#type: DbContextType::AppendOnly,
             main_db: main_db.clone(),
             detached_db: None,
             append_db: Some(Db::new()),
@@ -410,7 +406,7 @@ pub async fn process_operation(
         } => {
             // Detached and WriteFull are always restored after fail/abort.
             let risky_context = matches!(
-                ops_context.context,
+                ops_context.r#type,
                 DbContextType::Detached | DbContextType::WriteFull
             );
 
@@ -427,7 +423,7 @@ pub async fn process_operation(
 
 /// On success, commit or reattach data depending on context.
 async fn handle_success(ctx: DbContext, db_changes_tx: &Sender<DbChangeMsg>) {
-    match ctx.context {
+    match ctx.r#type {
         // DETACHED: reattach temporary DB back into main DB
         DbContextType::Detached => {
             if let Some(detached_db) = ctx.detached_db {
@@ -479,7 +475,7 @@ async fn handle_success(ctx: DbContext, db_changes_tx: &Sender<DbChangeMsg>) {
 async fn handle_failure_or_abort(ctx: &mut DbContext, db_changes_tx: &Sender<DbChangeMsg>) {
     restore_context(ctx).await;
 
-    match ctx.context {
+    match ctx.r#type {
         DbContextType::Detached => {
             let _ = db_changes_tx
                 .send(DbChangeMsg::RecoveredDbFromDetached)
@@ -533,7 +529,7 @@ async unsafe fn restore_main_from_archive(ctx: &DbContext) {
 
 /// Restore DB depending on context.
 async fn restore_context(ctx: &DbContext) {
-    match ctx.context {
+    match ctx.r#type {
         DbContextType::Detached => {
             if let Some(archive) = &ctx.detached_db_archive {
                 unsafe { restore_detached_from_archive(&ctx.main_db, archive).await }
@@ -569,7 +565,7 @@ mod tests {
         }
 
         async fn execute(&mut self, context: &mut DbContext) -> OperationResponse {
-            match &context.context {
+            match &context.r#type {
                 DbContextType::Detached => {
                     //test entity counts in DetachedDb
                     context
@@ -636,7 +632,7 @@ mod tests {
         });
 
         let (context, _) = result.unwrap();
-        assert!(matches!(context.context, DbContextType::AppendOnly));
+        assert!(matches!(context.r#type, DbContextType::AppendOnly));
         assert!(context.append_db.is_some());
     }
 
@@ -692,7 +688,7 @@ mod tests {
         });
         let (context, _) = result.unwrap();
 
-        assert!(matches!(context.context, DbContextType::Detached));
+        assert!(matches!(context.r#type, DbContextType::Detached));
         match &context.detached_db {
             Some(db) => {
                 assert!(db.get_part(&mesh_id).is_some());
@@ -778,7 +774,7 @@ mod tests {
         });
 
         let (context, _) = result.unwrap();
-        assert!(matches!(context.context, DbContextType::ReadFull));
+        assert!(matches!(context.r#type, DbContextType::ReadFull));
     }
 
     #[test]
@@ -828,7 +824,7 @@ mod tests {
         });
 
         let (context, _) = result.unwrap();
-        assert!(matches!(context.context, DbContextType::WriteFull));
+        assert!(matches!(context.r#type, DbContextType::WriteFull));
     }
 
     #[test]
