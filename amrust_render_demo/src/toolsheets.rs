@@ -45,8 +45,8 @@ impl Toolsheets {
         let _ = self.selected_identifiable_properties.insert(props);
     }
 
-    pub fn set_blocked_entities(&mut self, identifiables: Vec<Identifiable>) {
-        self.blocked_items_on_part_list = identifiables;
+    pub fn set_blocked_entities(&mut self, identifiables: &[Identifiable]) {
+        self.blocked_items_on_part_list = identifiables.to_vec();
     }
 
     pub fn selected_items_on_part_list(&self) -> impl Iterator<Item = &Identifiable> {

@@ -658,8 +658,7 @@ impl App {
                     skip_inert_node: false,
                 });
 
-                toolsheets
-                    .set_blocked_entities(state.operation_manager.get_detached_identifiables());
+                toolsheets.set_blocked_entities(&state.detached_identifiables);
 
                 toolsheets.clear_selection_changed();
             }
