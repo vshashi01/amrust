@@ -679,7 +679,7 @@ impl App {
                                     childs: tree_items,
                                     skip_inert_node: false,
                                 });
-                                toolsheets.set_blocked_entities(&state.detached_identifiables);
+                                // toolsheets.set_blocked_entities(&state.detached_identifiables);
                                 toolsheets.clear_selection_changed();
 
                                 let _ = state.toolsheets.insert(toolsheets);
@@ -719,9 +719,13 @@ impl App {
                     skip_inert_node: false,
                 });
 
-                toolsheets.set_blocked_entities(&state.detached_identifiables);
+                // toolsheets.set_blocked_entities(&state.detached_identifiables);
 
                 toolsheets.clear_selection_changed();
+            }
+
+            if let Some(ref mut toolsheets) = state.toolsheets {
+                toolsheets.set_blocked_entities(&state.detached_identifiables);
             }
 
             //update the camera if the camera data is changed
