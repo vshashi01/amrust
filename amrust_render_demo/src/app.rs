@@ -498,21 +498,26 @@ impl App {
                     });
                 });
 
-             if let Some(tree) = &mut state.toolsheets {
-                 egui::SidePanel::left(Id::new("object list"))
-                     .min_width(400.0)
-                     .show(state.egui_renderer.context(), |ui| {
-                         // Allocate a response for the entire panel to detect clicks on empty space
-                         let bg_response = ui.interact(ui.available_rect_before_wrap(), ui.id().with("dock_bg"), egui::Sense::click());
-                         if bg_response.clicked() {
-                             state.selected_identifiables.clear();
-                         }
-                         DockArea::new(&mut self.toolsheets_dock_tree)
-                             .show_leaf_close_all_buttons(false)
-                             .show_close_buttons(false)
-                             .show_inside(ui, tree);
-                     });
-             }
+            if let Some(tree) = &mut state.toolsheets {
+                egui::SidePanel::left(Id::new("object list"))
+                    .min_width(400.0)
+                    .show(state.egui_renderer.context(), |ui| {
+                        // Allocate a response for the entire panel to detect clicks on empty space
+                        let bg_response = ui.interact(
+                            ui.available_rect_before_wrap(),
+                            ui.id().with("dock_bg"),
+                            egui::Sense::click(),
+                        );
+                        if bg_response.clicked() {
+                            state.selected_identifiables.clear();
+                            state.need_viewport_update = true;
+                        }
+                        DockArea::new(&mut self.toolsheets_dock_tree)
+                            .show_leaf_close_all_buttons(false)
+                            .show_close_buttons(false)
+                            .show_inside(ui, tree);
+                    });
+            }
 
             egui::CentralPanel::default().show(state.egui_renderer.context(), |ui| {
                 match state.texture_id {
@@ -600,7 +605,7 @@ impl App {
             if let Some(path) = state.save_scene_to_3mf_dialog.take_picked() {
                 println!("File path to save to is {path:?}");
 
-                let ops_msg = OperationRequest::ModalOp(Box::new(save_3mf::Save3mfOps {
+                let ops_msg = OperationRequest::ModalOpWait(Box::new(save_3mf::Save3mfOps {
                     path,
                     save_mode: SaveMode::Scene,
                 }));

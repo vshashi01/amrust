@@ -34,6 +34,9 @@ pub enum OperationRequest {
     /// All subsequent Operations will only be run after the current ModalOperation is completed.
     ModalOp(Box<dyn Operation>),
 
+    /// Modal Operation that waits till all existing Operation is done processing till then its queued at the front.  
+    ModalOpWait(Box<dyn Operation>),
+
     /// A modal operation that is expected to run immediately.
     /// This is only possible if no existing Operations are runnings, usually if they are
     /// an error message should be shown. Useful for critical operations like Clearing the Db.
@@ -52,6 +55,7 @@ pub struct PendingOperation {
     operation_id: u64,
     operation: Box<dyn Operation>,
     is_modal: bool,
+    is_waiting: bool,
 }
 
 impl PendingOperation {
@@ -135,6 +139,7 @@ impl OperationManager {
                                 operation_id: self.next_operation_id,
                                 operation,
                                 is_modal: false,
+                                is_waiting: false,
                             })
                         }
                     }
@@ -144,7 +149,26 @@ impl OperationManager {
                             operation_id: self.next_operation_id,
                             operation,
                             is_modal: true,
+                            is_waiting: false,
                         });
+                    }
+                    OperationRequest::ModalOpWait(operation) => {
+                        let pending_op = PendingOperation {
+                            operation_id: self.next_operation_id,
+                            operation,
+                            is_modal: true,
+                            is_waiting: true,
+                        };
+                        if let Some(first) = self.pending_task_queue.front() {
+                            if !first.is_modal || !first.is_waiting {
+                                self.pending_task_queue.push_front(pending_op);
+                            } else {
+                                //ToDo:: Push to the end of waiting list instead of the end of the whole queue;
+                                self.pending_task_queue.push_back(pending_op);
+                            }
+                        } else {
+                            self.pending_task_queue.push_front(pending_op);
+                        }
                     }
                     OperationRequest::ModalOpImmediate(operation) => {
                         if !self.running_tasks.is_empty() {
@@ -160,6 +184,7 @@ impl OperationManager {
                                 operation_id: self.next_operation_id,
                                 operation,
                                 is_modal: true,
+                                is_waiting: false,
                             });
                         }
                     }
@@ -177,10 +202,16 @@ impl OperationManager {
             let mut position_of_next_operation: Option<usize> = None;
 
             // check if any existing modal operation is running
-            let can_run_new_operation = self.running_tasks.iter().all(|op| !op.is_modal);
-            if can_run_new_operation {
+            let no_modal_ops_running = self.running_tasks.iter().all(|op| !op.is_modal);
+            if let Some(first) = self.pending_task_queue.front() {
+                if !first.is_waiting && no_modal_ops_running {
+                    position_of_next_operation.insert(0);
+                } else if first.is_waiting && self.running_tasks.is_empty() {
+                    position_of_next_operation.insert(0);
+                }
+            } else if !self.pending_task_queue.is_empty() && no_modal_ops_running {
                 for (pos, pending_op) in &mut self.pending_task_queue.iter().enumerate() {
-                    let can_run_now = match &pending_op.operation.get_operation_requirements() {
+                    let can_get_context = match &pending_op.operation.get_operation_requirements() {
                         Some(nature) => match nature {
                             OperationNature::ModifyExistingFromBackground {
                                 identifiables,
@@ -195,7 +226,7 @@ impl OperationManager {
                         None => true,
                     };
 
-                    if can_run_now {
+                    if can_get_context {
                         position_of_next_operation.get_or_insert(pos);
                     }
 
@@ -252,86 +283,6 @@ impl OperationManager {
                 name,
             });
         }
-
-        // match self.operation_queue_rx.try_recv() {
-        //     Ok(op) => match op {
-        //         OperationMode::BackgroundOperation(ops) => {
-        //             let db = db.clone();
-        //             //let render_message_tx = render_message_tx.clone();
-        //             let operation_response_tx = self.operation_response_tx.clone();
-        //             let db_changes_tx = self.db_changes_msg_tx.clone();
-
-        //             let task = executor.spawn(async move {
-        //                 match get_new_operation_context(db, ops, db_changes_tx.clone()).await {
-        //                     Ok((ops_context, ops)) => {
-        //                         println!("running the Operation in separate thread");
-        //                         //let response = ops.execute(&mut ops_context).await;
-
-        //                         let response =
-        //                             process_operation(ops, ops_context, db_changes_tx).await;
-
-        //                         if let Err(err) = operation_response_tx.send(response).await {
-        //                             println!("{err:?}");
-        //                         }
-        //                     }
-        //                     Err(_) => {
-        //                         if let Err(err) = operation_response_tx
-        //                             .send(OperationResponse::Aborted {
-        //                                 name: "Unsuccessful to Run Operation",
-        //                                 is_restore_db_required: false,
-        //                             })
-        //                             .await
-        //                         {
-        //                             println!("{err:?}");
-        //                         }
-        //                     }
-        //                 }
-        //             });
-        //             self.task_queue.push(task);
-        //         }
-
-        //         OperationMode::ModalOperation(ops) => {
-        //             let db = db.clone();
-        //             //let render_message_tx = render_message_tx.clone();
-        //             let operation_response_tx = self.operation_response_tx.clone();
-        //             let db_changes_tx = self.db_changes_msg_tx.clone();
-
-        //             smol::block_on(async {
-        //                 match get_new_operation_context(db, ops, db_changes_tx.clone()).await {
-        //                     Ok((ops_context, ops)) => {
-        //                         println!(
-        //                             "running the Operation in same thread as Operation Manager"
-        //                         );
-
-        //                         let response =
-        //                             process_operation(ops, ops_context, db_changes_tx).await;
-
-        //                         if let Err(err) = operation_response_tx.send(response).await {
-        //                             println!("{err:?}");
-        //                         }
-        //                     }
-        //                     Err(_) => {
-        //                         if let Err(err) = operation_response_tx
-        //                             .send(OperationResponse::Aborted {
-        //                                 name: "Unsuccessful to Run Operation",
-        //                                 is_restore_db_required: false,
-        //                             })
-        //                             .await
-        //                         {
-        //                             println!("{err:?}");
-        //                         }
-        //                     }
-        //                 }
-        //             })
-        //         }
-        //     },
-        //     Err(err) => match err {
-        //         TryRecvError::Empty => {}
-        //         TryRecvError::Closed => {
-        //             panic!("Operations channel is disconnected for some reason")
-        //         }
-        //     },
-        // }
 
         match self.db_changes_msg_rx.try_recv() {
             Ok(msg) => match msg {
