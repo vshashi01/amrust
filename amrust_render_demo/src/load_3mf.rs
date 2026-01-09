@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use glam::Vec3;
+use smol::Timer;
 use thiserror::Error;
 use threemf2::io::query::{self};
 
@@ -9,11 +10,12 @@ use threemf2::core::transform::Transform;
 use threemf2::io::ThreemfPackage;
 
 use crate::amrust_db::{Db, DbError, Mesh, PartId, PartRep, Scene};
-use crate::operation::{DbContext, Operation, OperationResponse, OperationThreadReqs};
+use crate::operation::{DbContext, Operation, OperationNature, OperationResponse};
 
 use core::f32;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::Duration;
 
 #[derive(Debug, Error)]
 pub enum DbFrom3mfError {
@@ -33,8 +35,12 @@ pub struct Load3MFOps {
 
 #[async_trait]
 impl Operation for Load3MFOps {
-    fn get_operation_requirements(&self) -> Option<OperationThreadReqs> {
-        Some(OperationThreadReqs::AppendFromSeparateThread)
+    fn name(&self) -> &str {
+        "Load Parts from 3MF File"
+    }
+
+    fn get_operation_requirements(&self) -> Option<OperationNature> {
+        Some(OperationNature::AppendOnlyFromBackground)
     }
 
     async fn execute(&mut self, context: &mut DbContext) -> OperationResponse {
@@ -42,6 +48,8 @@ impl Operation for Load3MFOps {
         match file {
             Ok(threemf_file) => match load(threemf_file) {
                 Ok(db) => {
+                    Timer::after(Duration::from_secs(5)).await;
+
                     if let Err(err) = context.append_db(db).await {
                         return OperationResponse::Failed {
                             name: "Load 3MF",

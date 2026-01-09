@@ -8,7 +8,7 @@ use crate::app_mode::AppMode;
 use crate::clear_db::ClearDbOps;
 use crate::egui_tools::EguiRenderer;
 use crate::operation::OperationResponse;
-use crate::operation_manager::{OperationManager, OperationMode};
+use crate::operation_manager::{OperationManager, OperationRequest};
 use crate::part_list::PartList;
 use crate::render_db::RenderDb;
 use crate::render_worker::{RenderMessage, RenderResponse, RenderWorker, RendererSettings};
@@ -21,7 +21,7 @@ use amrust_render::bounding_box::BoundingBox;
 // use amrust_lib::widgets::dropped_files::DroppedFilesWidget;
 use amrust_render::camera::{self, CameraData, OrthographicCameraData};
 use amrust_render::normalized_box::{ORDERED_POSITIONS, ORDERED_POSITIONS_TRI_EDGE_INDICES};
-use egui::{Id, Layout, epaint};
+use egui::{Id, Layout, Modal, epaint};
 use egui_dock::{DockArea, DockState, NodeIndex};
 use egui_file_dialog::FileDialog;
 use egui_wgpu::wgpu::SurfaceError;
@@ -69,8 +69,9 @@ struct AppState {
     pub selected_identifiables: Vec<Identifiable>,
 
     pub operation_manager: OperationManager,
-    pub operation_queue_tx: Sender<OperationMode>,
+    pub operation_queue_tx: Sender<OperationRequest>,
     pub operation_response_rx: Receiver<OperationResponse>,
+    pub show_modal: bool,
 }
 
 impl AppState {
@@ -229,6 +230,8 @@ impl AppState {
             operation_manager,
             operation_queue_tx,
             operation_response_rx,
+
+            show_modal: false,
         }
     }
 
@@ -437,9 +440,10 @@ impl App {
 
                             if ui.button("Clear All").clicked() {
                                 let clear_ops = ClearDbOps;
-                                if let Err(err) = state.operation_queue_tx.send_blocking(
-                                    OperationMode::ModalOperation(Box::new(clear_ops)),
-                                ) {
+                                if let Err(err) = state
+                                    .operation_queue_tx
+                                    .send_blocking(OperationRequest::ModalOp(Box::new(clear_ops)))
+                                {
                                     println!("{err:?}");
                                 }
                             }
@@ -519,7 +523,7 @@ impl App {
                     let ops = load_3mf::Load3MFOps { path };
                     if let Err(err) = state
                         .operation_queue_tx
-                        .send_blocking(OperationMode::BackgroundOperation(Box::new(ops)))
+                        .send_blocking(OperationRequest::BackgroundOp(Box::new(ops)))
                     {
                         println!("{err:?}");
                     }
@@ -555,12 +559,12 @@ impl App {
                                 SaveMode::PartInstances(part_instances.collect())
                             }
                         };
-                        OperationMode::BackgroundOperation(Box::new(save_3mf::Save3mfOps {
+                        OperationRequest::BackgroundOp(Box::new(save_3mf::Save3mfOps {
                             path,
                             save_mode,
                         }))
                     } else {
-                        OperationMode::ModalOperation(Box::new(save_3mf::Save3mfOps {
+                        OperationRequest::ModalOp(Box::new(save_3mf::Save3mfOps {
                             path,
                             save_mode: SaveMode::Scene,
                         }))
@@ -674,6 +678,39 @@ impl App {
                 state.operation_manager.run(&state.db, &state.executor);
 
                 state.detached_identifiables = state.operation_manager.get_detached_identifiables();
+
+                if let Some(op) = state.operation_manager.get_modal_operation() {
+                    let _ = egui::Modal::new(egui::Id::new("app modal")).show(
+                        state.egui_renderer.context(),
+                        |ui| {
+                            ui.label(format!("{} operation is running!", op.name));
+                            ui.add(egui::ProgressBar::new(0.0).animate(true));
+                        },
+                    );
+                }
+
+                let background_ops = state
+                    .operation_manager
+                    .get_all_background_operation()
+                    .collect::<Vec<_>>();
+
+                egui::TopBottomPanel::bottom(Id::new("bottom panel")).show(
+                    state.egui_renderer.context(),
+                    |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label("Background operations: ");
+
+                            if background_ops.is_empty() {
+                                ui.label("No background operation running");
+                            } else {
+                                for ops in background_ops {
+                                    ui.label(format!("Operation: {}", ops.name));
+                                    ui.add(egui::ProgressBar::new(0.0).animate(true));
+                                }
+                            }
+                        });
+                    },
+                );
             }
 
             state.egui_renderer.end_frame_and_draw(

@@ -14,12 +14,12 @@ use std::{collections::HashSet, error::Error, sync::Arc};
 /// This specifies how the Operation expects itself to be run, this requirements directly affect
 /// the OperationContext given to the fn execute in the [Operation] trait.
 #[derive(Clone)]
-pub enum OperationThreadReqs {
+pub enum OperationNature {
     /// The full [Db] will only available with Read only access
     /// Note: The [Db] in this case will not have the Identifiables since its on a separate temporary Db.
     /// Only the specified [Identifiable] will be accessible to the operation with Read & Write access
-    /// The operation will run automatically in a separate Operation thread.
-    ReadWriteFromSeparateThread {
+    /// The operation is expected to run in a non-blocking way.
+    ModifyExistingFromBackground {
         /// The identifiables that should be accessible from the detached Database for Read & Write access
         identifiables: Vec<Identifiable>,
 
@@ -28,24 +28,26 @@ pub enum OperationThreadReqs {
     },
 
     /// The full Db will be available with Read only access
-    /// The operation will run on the same thread as the Ui thread.
-    ReadFullDbInUi,
+    /// The operation is expected to run in a blocking way.
+    ReadOnlyInModal,
 
     /// The full Db will be available with Read & Write access
-    /// The operation will run on the same thread as the Ui thread.
-    ReadWriteFullDbInUi,
+    /// The operation is expected to run in a blocking way.
+    ReadWriteInModal,
 
     /// The full Db will be available with Read only access
     /// An additional temporary Db is available with Read & Write access to append new data.
-    /// The operation will run automatically in a separate Operation thread.
-    AppendFromSeparateThread,
+    /// The operation is expected to run in a non-blocking way.
+    AppendOnlyFromBackground,
 }
 
 /// This is the trait that an Operation logic should implement to be run by the OperationManager
 #[async_trait]
 pub trait Operation: Send + Sync + 'static {
+    fn name(&self) -> &str;
+
     /// Defines the input and execution context required by the Operation logic.
-    fn get_operation_requirements(&self) -> Option<OperationThreadReqs>;
+    fn get_operation_requirements(&self) -> Option<OperationNature>;
 
     /// Executes the actual logic.
     async fn execute(&mut self, context: &mut DbContext) -> OperationResponse;
@@ -246,7 +248,7 @@ pub async fn get_new_operation_context(
 
     let context = if let Some(reqs) = operation.get_operation_requirements() {
         match reqs {
-            OperationThreadReqs::ReadWriteFromSeparateThread {
+            OperationNature::ModifyExistingFromBackground {
                 identifiables,
                 detach_parts_with_part_instances,
             } => {
@@ -344,7 +346,7 @@ pub async fn get_new_operation_context(
                     panic!("cannot detach parts!");
                 }
             }
-            OperationThreadReqs::ReadFullDbInUi => DbContext {
+            OperationNature::ReadOnlyInModal => DbContext {
                 r#type: DbContextType::ReadFull,
                 main_db,
                 detached_db: None,
@@ -352,7 +354,7 @@ pub async fn get_new_operation_context(
                 main_db_archive,
                 detached_db_archive: None,
             },
-            OperationThreadReqs::ReadWriteFullDbInUi => DbContext {
+            OperationNature::ReadWriteInModal => DbContext {
                 r#type: DbContextType::WriteFull,
                 main_db: main_db.clone(),
                 detached_db: None,
@@ -360,7 +362,7 @@ pub async fn get_new_operation_context(
                 main_db_archive,
                 detached_db_archive: None,
             },
-            OperationThreadReqs::AppendFromSeparateThread => DbContext {
+            OperationNature::AppendOnlyFromBackground => DbContext {
                 r#type: DbContextType::AppendOnly,
                 main_db: main_db.clone(),
                 detached_db: None,
@@ -549,18 +551,22 @@ mod tests {
     use std::sync::Arc;
 
     struct MockSuccessfulOperation {
-        requirements: Option<OperationThreadReqs>,
+        requirements: Option<OperationNature>,
     }
 
     impl MockSuccessfulOperation {
-        fn new(requirements: Option<OperationThreadReqs>) -> Self {
+        fn new(requirements: Option<OperationNature>) -> Self {
             Self { requirements }
         }
     }
 
     #[async_trait]
     impl Operation for MockSuccessfulOperation {
-        fn get_operation_requirements(&self) -> Option<OperationThreadReqs> {
+        fn name(&self) -> &str {
+            "Test Successful"
+        }
+
+        fn get_operation_requirements(&self) -> Option<OperationNature> {
             self.requirements.clone()
         }
 
@@ -624,7 +630,7 @@ mod tests {
     #[test]
     fn test_append_context_creation() {
         let db = Arc::new(RwLock::new(Db::new()));
-        let op = MockSuccessfulOperation::new(Some(OperationThreadReqs::AppendFromSeparateThread));
+        let op = MockSuccessfulOperation::new(Some(OperationNature::AppendOnlyFromBackground));
         let (db_changes_msg_tx, _) = smol::channel::bounded(1);
 
         let result = smol::block_on(async {
@@ -639,7 +645,7 @@ mod tests {
     #[test]
     fn test_append_execution() {
         let db = Arc::new(RwLock::new(Db::new()));
-        let op = MockSuccessfulOperation::new(Some(OperationThreadReqs::AppendFromSeparateThread));
+        let op = MockSuccessfulOperation::new(Some(OperationNature::AppendOnlyFromBackground));
         let (db_changes_msg_tx, _) = smol::channel::bounded(1);
 
         let result = smol::block_on(async {
@@ -677,7 +683,7 @@ mod tests {
 
         let db = Arc::new(RwLock::new(db));
         let op =
-            MockSuccessfulOperation::new(Some(OperationThreadReqs::ReadWriteFromSeparateThread {
+            MockSuccessfulOperation::new(Some(OperationNature::ModifyExistingFromBackground {
                 identifiables: vec![Identifiable::PartInstance(instance_id)],
                 detach_parts_with_part_instances: true,
             }));
@@ -725,7 +731,7 @@ mod tests {
 
         let db = Arc::new(RwLock::new(db));
         let op =
-            MockSuccessfulOperation::new(Some(OperationThreadReqs::ReadWriteFromSeparateThread {
+            MockSuccessfulOperation::new(Some(OperationNature::ModifyExistingFromBackground {
                 identifiables: vec![Identifiable::PartInstance(instance_id)],
                 detach_parts_with_part_instances: true,
             }));
@@ -766,7 +772,7 @@ mod tests {
     #[test]
     fn test_read_in_ui_context_creation() {
         let db = Arc::new(RwLock::new(Db::new()));
-        let op = MockSuccessfulOperation::new(Some(OperationThreadReqs::ReadFullDbInUi));
+        let op = MockSuccessfulOperation::new(Some(OperationNature::ReadOnlyInModal));
         let (db_changes_msg_tx, _) = smol::channel::bounded(1);
 
         let result = smol::block_on(async {
@@ -795,7 +801,7 @@ mod tests {
         let _ = db.make_new_part_instance_from_part(&mesh_id, None).unwrap();
 
         let db = Arc::new(RwLock::new(db));
-        let op = MockSuccessfulOperation::new(Some(OperationThreadReqs::ReadFullDbInUi));
+        let op = MockSuccessfulOperation::new(Some(OperationNature::ReadOnlyInModal));
         let (db_changes_msg_tx, _) = smol::channel::bounded(1);
 
         let result = smol::block_on(async {
@@ -816,7 +822,7 @@ mod tests {
     #[test]
     fn test_write_in_ui_context_creation() {
         let db = Arc::new(RwLock::new(Db::new()));
-        let op = MockSuccessfulOperation::new(Some(OperationThreadReqs::ReadWriteFullDbInUi));
+        let op = MockSuccessfulOperation::new(Some(OperationNature::ReadWriteInModal));
         let (db_changes_msg_tx, _) = smol::channel::bounded(1);
 
         let result = smol::block_on(async {
@@ -845,7 +851,7 @@ mod tests {
         let _ = db.make_new_part_instance_from_part(&mesh_id, None).unwrap();
 
         let db = Arc::new(RwLock::new(db));
-        let op = MockSuccessfulOperation::new(Some(OperationThreadReqs::ReadWriteFullDbInUi));
+        let op = MockSuccessfulOperation::new(Some(OperationNature::ReadWriteInModal));
         let (db_changes_msg_tx, _) = smol::channel::bounded(1);
 
         let result = smol::block_on(async {
@@ -869,7 +875,7 @@ mod tests {
     #[test]
     fn test_context_clear_db_read_only_denied() {
         let db = Arc::new(RwLock::new(Db::new()));
-        let op = MockSuccessfulOperation::new(Some(OperationThreadReqs::ReadFullDbInUi));
+        let op = MockSuccessfulOperation::new(Some(OperationNature::ReadOnlyInModal));
         let (db_changes_msg_tx, _) = smol::channel::bounded(1);
 
         let result = smol::block_on(async {
@@ -884,14 +890,14 @@ mod tests {
     }
 
     struct MockRestoreOperation {
-        requirements: Option<OperationThreadReqs>,
+        requirements: Option<OperationNature>,
         require_db_restore: bool,
         abort_operation: bool,
     }
 
     impl MockRestoreOperation {
         fn new(
-            requirements: Option<OperationThreadReqs>,
+            requirements: Option<OperationNature>,
             require_db_restore: bool,
             abort_operation: bool,
         ) -> Self {
@@ -905,7 +911,11 @@ mod tests {
 
     #[async_trait]
     impl Operation for MockRestoreOperation {
-        fn get_operation_requirements(&self) -> Option<OperationThreadReqs> {
+        fn name(&self) -> &str {
+            "Test Restore"
+        }
+
+        fn get_operation_requirements(&self) -> Option<OperationNature> {
             self.requirements.clone()
         }
 
@@ -944,7 +954,7 @@ mod tests {
 
         let db = Arc::new(RwLock::new(db));
         let op = MockRestoreOperation::new(
-            Some(OperationThreadReqs::ReadWriteFromSeparateThread {
+            Some(OperationNature::ModifyExistingFromBackground {
                 identifiables: vec![Identifiable::PartInstance(instance_id)],
                 detach_parts_with_part_instances: true,
             }),
@@ -1001,7 +1011,7 @@ mod tests {
 
         let db = Arc::new(RwLock::new(db));
         let op = MockRestoreOperation::new(
-            Some(OperationThreadReqs::ReadWriteFromSeparateThread {
+            Some(OperationNature::ModifyExistingFromBackground {
                 identifiables: vec![Identifiable::PartInstance(instance_id)],
                 detach_parts_with_part_instances: true,
             }),
@@ -1042,8 +1052,7 @@ mod tests {
     #[test]
     fn test_recover_write_in_ui_execution_on_failure() {
         let db = Arc::new(RwLock::new(Db::new()));
-        let op =
-            MockRestoreOperation::new(Some(OperationThreadReqs::ReadWriteFullDbInUi), false, false);
+        let op = MockRestoreOperation::new(Some(OperationNature::ReadWriteInModal), false, false);
         let (db_changes_msg_tx, db_changes_msg_rx) = smol::channel::bounded(1);
 
         let result = smol::block_on(async {
@@ -1063,8 +1072,7 @@ mod tests {
     #[test]
     fn test_recover_write_in_ui_execution_on_abort() {
         let db = Arc::new(RwLock::new(Db::new()));
-        let op =
-            MockRestoreOperation::new(Some(OperationThreadReqs::ReadWriteFullDbInUi), false, true);
+        let op = MockRestoreOperation::new(Some(OperationNature::ReadWriteInModal), false, true);
         let (db_changes_msg_tx, db_changes_msg_rx) = smol::channel::bounded(1);
 
         let result = smol::block_on(async {
@@ -1084,11 +1092,8 @@ mod tests {
     #[test]
     fn test_recover_append_execution_on_failure_request() {
         let db = Arc::new(RwLock::new(Db::new()));
-        let op = MockRestoreOperation::new(
-            Some(OperationThreadReqs::AppendFromSeparateThread),
-            true,
-            false,
-        );
+        let op =
+            MockRestoreOperation::new(Some(OperationNature::AppendOnlyFromBackground), true, false);
         let (db_changes_msg_tx, db_changes_msg_rx) = smol::channel::bounded(1);
 
         let result = smol::block_on(async {

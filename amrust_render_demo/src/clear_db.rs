@@ -1,16 +1,25 @@
-use async_trait::async_trait;
+use std::time::Duration;
 
-use crate::operation::{DbContext, Operation, OperationResponse, OperationThreadReqs};
+use async_trait::async_trait;
+use smol::Timer;
+
+use crate::operation::{DbContext, Operation, OperationNature, OperationResponse};
 
 pub struct ClearDbOps;
 
 #[async_trait]
 impl Operation for ClearDbOps {
-    fn get_operation_requirements(&self) -> Option<OperationThreadReqs> {
-        Some(OperationThreadReqs::ReadWriteFullDbInUi)
+    fn name(&self) -> &str {
+        "Clear Db"
+    }
+
+    fn get_operation_requirements(&self) -> Option<OperationNature> {
+        Some(OperationNature::ReadWriteInModal)
     }
 
     async fn execute(&mut self, context: &mut DbContext) -> OperationResponse {
+        Timer::after(Duration::from_secs(5)).await;
+
         match context.clear_db().await {
             Ok(_) => OperationResponse::Succeeded {
                 name: "Clear Database",

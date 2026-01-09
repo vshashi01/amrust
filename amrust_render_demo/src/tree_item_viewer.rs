@@ -53,6 +53,7 @@ where
                     };
                 } else {
                     ui.label(name);
+                    ui.add(egui::ProgressBar::new(0.0).animate(true));
                 }
             }
             TreeItem::Node {

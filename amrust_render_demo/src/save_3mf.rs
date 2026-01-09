@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use async_trait::async_trait;
+use smol::Timer;
 use thiserror::Error;
 use threemf2::core::model::Unit;
 use threemf2::core::transform::Transform;
@@ -17,11 +19,11 @@ use crate::amrust_db::PartInstance;
 use crate::amrust_db::PartInstanceId;
 use crate::amrust_db::PartRep;
 use crate::amrust_db::Transformation;
+use crate::operation::DbContext;
 use crate::operation::DbReader;
 use crate::operation::Operation;
-use crate::operation::DbContext;
+use crate::operation::OperationNature;
 use crate::operation::OperationResponse;
-use crate::operation::OperationThreadReqs;
 
 #[derive(Debug, Error)]
 pub enum DbTo3mfError {
@@ -66,15 +68,23 @@ pub struct Save3mfOps {
 
 #[async_trait]
 impl Operation for Save3mfOps {
-    fn get_operation_requirements(&self) -> Option<OperationThreadReqs> {
+    fn name(&self) -> &str {
+        match &self.save_mode {
+            SaveMode::Scene => "Saving whole Scene to 3MF",
+            SaveMode::PartsOnly(_) => "Saving Parts to 3MF",
+            SaveMode::PartInstances(_) => "Saving Part Instance to 3MF",
+        }
+    }
+
+    fn get_operation_requirements(&self) -> Option<OperationNature> {
         let req = match &self.save_mode {
-            SaveMode::Scene => OperationThreadReqs::ReadFullDbInUi,
-            SaveMode::PartsOnly(part_ids) => OperationThreadReqs::ReadWriteFromSeparateThread {
+            SaveMode::Scene => OperationNature::ReadOnlyInModal,
+            SaveMode::PartsOnly(part_ids) => OperationNature::ModifyExistingFromBackground {
                 identifiables: part_ids.iter().map(|id| Identifiable::Part(*id)).collect(),
                 detach_parts_with_part_instances: false,
             },
             SaveMode::PartInstances(part_instance_ids) => {
-                OperationThreadReqs::ReadWriteFromSeparateThread {
+                OperationNature::ModifyExistingFromBackground {
                     identifiables: part_instance_ids
                         .iter()
                         .map(|id| Identifiable::PartInstance(*id))
@@ -92,6 +102,8 @@ impl Operation for Save3mfOps {
         let file = std::fs::File::create_new(&self.path);
         match file {
             Ok(f) => {
+                Timer::after(Duration::from_secs(5)).await;
+
                 match context
                     .get_db(|db| match save(db, &self.save_mode, f) {
                         Ok(_) => OperationResponse::Succeeded { name: "Save 3MF" },
