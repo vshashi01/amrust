@@ -302,16 +302,7 @@ impl App {
     pub fn new() -> Self {
         let instance = egui_wgpu::wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
 
-        let mut toolsheets_dock_tree = DockState::new(vec![
-            "Objects List".to_owned(),
-            "Build Items List".to_owned(),
-        ]);
-
-        toolsheets_dock_tree.main_surface_mut().split_below(
-            NodeIndex::root(),
-            0.5,
-            vec!["Object Tree".to_owned()],
-        );
+        let toolsheets_dock_tree = DockState::new(vec![]);
 
         Self {
             instance,
@@ -414,7 +405,6 @@ impl App {
             state.egui_renderer.begin_frame(window);
 
             // take snapshot of previous frame data
-            let prev_app_mode = state.current_app_mode;
             let prev_camera_data = state.camera_data.clone();
 
             let default_bbox = BoundingBox::default();
@@ -473,19 +463,7 @@ impl App {
                     });
                 });
 
-            if prev_app_mode != state.current_app_mode {
-                let tab_name = match state.current_app_mode {
-                    AppMode::Objects => "Objects List",
-                    AppMode::Build => "Build Items List",
-                };
 
-                if let Some((surface, node, _)) =
-                    self.toolsheets_dock_tree.find_tab(&tab_name.to_owned())
-                {
-                    self.toolsheets_dock_tree
-                        .set_focused_node_and_surface((surface, node))
-                };
-            }
 
             if let Some(tree) = &mut state.toolsheets {
                 egui::SidePanel::left(Id::new("object list"))
@@ -583,6 +561,20 @@ impl App {
                 write_render_db.clear_all();
                 drop(write_render_db);
                 state.toolsheets = None;
+
+                self.toolsheets_dock_tree = {
+                    let primary_tab = match state.current_app_mode {
+                        AppMode::Objects => "Objects List".to_owned(),
+                        AppMode::Build => "Build Items List".to_owned(),
+                    };
+                    let mut dock_tree = DockState::new(vec![primary_tab]);
+                    dock_tree.main_surface_mut().split_below(
+                        NodeIndex::root(),
+                        0.5,
+                        vec!["Object Tree".to_owned()],
+                    );
+                    dock_tree
+                };
 
                 let read_db = state.db.read_blocking();
                 if !read_db.is_empty() {
