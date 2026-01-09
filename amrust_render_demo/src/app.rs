@@ -8,7 +8,7 @@ use crate::app_mode::AppMode;
 use crate::clear_db::ClearDbOps;
 use crate::egui_tools::EguiRenderer;
 use crate::operation::{DbReader, OperationResponse};
-use crate::operation_manager::{OperationManager, OperationRequest};
+use crate::operation_manager::{OperationError, OperationManager, OperationRequest};
 use crate::part_list::PartList;
 use crate::render_db::RenderDb;
 use crate::render_worker::{RenderMessage, RenderResponse, RenderWorker, RendererSettings};
@@ -71,6 +71,9 @@ struct AppState {
     pub operation_manager: OperationManager,
     pub operation_queue_tx: Sender<OperationRequest>,
     pub operation_response_rx: Receiver<OperationResponse>,
+    pub operation_error_rx: Receiver<OperationError>,
+    pub operation_error_message: Option<String>,
+    pub show_operation_error_modal: bool,
     pub show_modal: bool,
 }
 
@@ -198,7 +201,8 @@ impl AppState {
         //create operation manager and its channels
         let (operation_queue_tx, operation_queue_rx) = channel::unbounded();
         let (operation_response_tx, operation_response_rx) = channel::unbounded();
-        let operation_manager = OperationManager::new(operation_queue_rx, operation_response_tx);
+        let (operation_error_tx, operation_error_rx) = channel::unbounded();
+        let operation_manager = OperationManager::new(operation_queue_rx, operation_response_tx, operation_error_tx);
 
         Self {
             device: Arc::new(device),
@@ -227,11 +231,14 @@ impl AppState {
             detached_identifiables: vec![],
             selected_identifiables: vec![],
 
-            operation_manager,
-            operation_queue_tx,
-            operation_response_rx,
+             operation_manager,
+             operation_queue_tx,
+             operation_response_rx,
+             operation_error_rx,
+             operation_error_message: None,
+             show_operation_error_modal: false,
 
-            show_modal: false,
+             show_modal: false,
         }
     }
 
@@ -286,6 +293,21 @@ impl AppState {
             Err(err) => match err {
                 TryRecvError::Empty => {}
                 TryRecvError::Closed => panic!("Operation Manager is killed!!"),
+            },
+        }
+
+        match self.operation_error_rx.try_recv() {
+            Ok(error) => {
+                match error {
+                    OperationError::ModalOpImmediateFailed(message) => {
+                        self.operation_error_message = Some(message);
+                        self.show_operation_error_modal = true;
+                    }
+                }
+            }
+            Err(err) => match err {
+                TryRecvError::Empty => {}
+                TryRecvError::Closed => panic!("Operation error channel closed!!"),
             },
         }
     }
@@ -428,15 +450,15 @@ impl App {
                                 unzoom_bbox(&mut state.camera_data, bbox);
                             }
 
-                            if ui.button("Clear All").clicked() {
-                                let clear_ops = ClearDbOps;
-                                if let Err(err) = state
-                                    .operation_queue_tx
-                                    .send_blocking(OperationRequest::ModalOp(Box::new(clear_ops)))
-                                {
-                                    println!("{err:?}");
-                                }
-                            }
+                             if ui.button("Clear All").clicked() {
+                                 let clear_ops = ClearDbOps;
+                                 if let Err(err) = state
+                                     .operation_queue_tx
+                                     .send_blocking(OperationRequest::ModalOpImmediate(Box::new(clear_ops)))
+                                 {
+                                     println!("{err:?}");
+                                 }
+                             }
 
                             if ui.button("Save to 3mf").clicked() {
                                 state.save_file_dlg.save_file();
@@ -767,9 +789,24 @@ impl App {
                         });
                     },
                 );
-            }
+             }
 
-            state.egui_renderer.end_frame_and_draw(
+             if state.show_operation_error_modal {
+                 if let Some(message) = state.operation_error_message.clone() {
+                     let _ = egui::Modal::new(egui::Id::new("operation_error_modal")).show(
+                         state.egui_renderer.context(),
+                         |ui| {
+                             ui.label(&message);
+                             if ui.button("OK").clicked() {
+                                 state.show_operation_error_modal = false;
+                                 state.operation_error_message = None;
+                             }
+                         },
+                     );
+                 }
+             }
+
+             state.egui_renderer.end_frame_and_draw(
                 &state.device,
                 &state.queue,
                 &mut encoder,
