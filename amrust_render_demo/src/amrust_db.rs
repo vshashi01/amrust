@@ -22,7 +22,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 use crate::operation::DbReader;
-use crate::render_db::{RenderDb, RenderObject};
+use crate::render_db::{RenderDb, RenderMeshId, RenderObject, RenderObjectId};
 use crate::tree_item_viewer::TreeItem;
 
 #[derive(Debug, Clone, Archive, Serialize, Deserialize, CheckBytes)]
@@ -1496,7 +1496,7 @@ pub fn create_scene_tree_items_by_unique_parts(
 }
 
 struct InstanceData {
-    pub gpu_mesh_id: u32,
+    pub gpu_mesh_id: RenderMeshId,
     pub transforms: Vec<Transformation>,
 }
 
@@ -1691,7 +1691,7 @@ fn create_mesh_gpu_data(
     device: &wgpu::Device,
     render_db: Arc<RwLock<RenderDb>>,
     mesh: &Mesh,
-) -> u32 {
+) -> RenderMeshId {
     let positions = convert_vertices_to_position(&mesh.vertices);
     // println!("Number of vertices: {}", positions.len());
     let indices = mesh.triangles.clone();
@@ -1755,7 +1755,7 @@ fn add_bounding_box_wireframe(
     device: &wgpu::Device,
     render_db: Arc<RwLock<RenderDb>>,
     bbox: &BoundingBox,
-) -> u32 {
+) -> RenderObjectId {
     let mesh = MeshBuilder::new()
         .add_vertex_stream(convert_points_vec_to_position(&bbox.corners()).as_slice())
         .add_wireframe_index_stream(&BoundingBox::wireframe_indices())

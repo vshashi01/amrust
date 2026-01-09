@@ -1,16 +1,25 @@
 use amrust_render::{RenderData, RenderDatabase, Renderable, gpu_mesh::GpuMesh, instance};
+use slotmap::{SlotMap, new_key_type};
 
 pub struct RenderObject {
     pub renderable: Renderable,
     pub instance: instance::GpuInstance,
-    pub gpu_mesh_id: u32,
+    pub gpu_mesh_id: RenderMeshId,
     pub local_resources: Vec<(u32, u32)>, // (index to local_bind_group, slot_index)
+}
+
+new_key_type! {
+    pub struct RenderMeshId;
+}
+
+new_key_type! {
+    pub struct RenderObjectId;
 }
 
 pub struct RenderDb {
     // textures: Vec<texture::Texture>,
-    meshes: Vec<GpuMesh>,
-    objects: Vec<RenderObject>,
+    meshes: SlotMap<RenderMeshId, GpuMesh>,
+    objects: SlotMap<RenderObjectId, RenderObject>,
     // invisible_objects: HashSet<usize>,
     local_bind_groups: Vec<wgpu::BindGroup>,
 }
@@ -19,8 +28,8 @@ impl RenderDb {
     pub fn new() -> Self {
         Self {
             // textures: vec![],
-            meshes: vec![],
-            objects: vec![],
+            meshes: SlotMap::with_key(),
+            objects: SlotMap::with_key(),
             // invisible_objects: HashSet::new(),
             local_bind_groups: vec![],
         }
@@ -70,16 +79,20 @@ impl RenderDb {
     //     self.add_local_bind_group(bind_group)
     // }
 
-    pub fn add_mesh(&mut self, mesh: GpuMesh) -> u32 {
-        self.meshes.push(mesh);
-
-        (self.meshes.len() - 1) as u32
+    pub fn render_mesh_exist(&self, ids: &[RenderMeshId]) -> bool {
+        ids.iter().all(|id| self.meshes.contains_key(*id))
     }
 
-    pub fn add_object(&mut self, object: RenderObject) -> u32 {
-        self.objects.push(object);
+    pub fn render_object_exist(&self, ids: &[RenderObjectId]) -> bool {
+        ids.iter().all(|id| self.objects.contains_key(*id))
+    }
 
-        (self.objects.len() - 1) as u32
+    pub fn add_mesh(&mut self, mesh: GpuMesh) -> RenderMeshId {
+        self.meshes.insert(mesh)
+    }
+
+    pub fn add_object(&mut self, object: RenderObject) -> RenderObjectId {
+        self.objects.insert(object)
     }
 
     pub fn clear_all(&mut self) {
@@ -105,9 +118,9 @@ impl RenderDb {
 
 impl RenderDatabase for RenderDb {
     fn get_renderables<'a>(&'a self) -> impl Iterator<Item = RenderData<'a>> {
-        self.objects.iter().map(|r| {
-            let gpu_mesh = self.meshes.get(r.gpu_mesh_id as usize).unwrap();
-            let local_resources = r
+        self.objects.iter().map(|(id, render_object)| {
+            let gpu_mesh = self.meshes.get(render_object.gpu_mesh_id).unwrap();
+            let local_resources = render_object
                 .local_resources
                 .iter()
                 .map(|resource| {
@@ -116,7 +129,12 @@ impl RenderDatabase for RenderDb {
                 })
                 .collect::<Vec<_>>();
 
-            (r.renderable.clone(), gpu_mesh, &r.instance, local_resources)
+            (
+                render_object.renderable.clone(),
+                gpu_mesh,
+                &render_object.instance,
+                local_resources,
+            )
         })
     }
 }

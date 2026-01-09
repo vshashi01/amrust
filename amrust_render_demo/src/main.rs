@@ -2,6 +2,7 @@ mod amrust_db;
 mod app;
 mod app_mode;
 mod clear_db;
+mod db_cache;
 mod egui_tools;
 mod load_3mf;
 mod operation;
