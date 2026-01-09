@@ -51,7 +51,8 @@ struct AppState {
     pub texture_id: Option<epaint::TextureId>,
     // pub dropped_files: DroppedFilesWidget,
     pub load_file_dlg: FileDialog,
-    pub save_file_dlg: FileDialog,
+    pub save_selected_part_to_3mf_dlg: FileDialog,
+    pub save_scene_to_3mf_dialog: FileDialog,
     pub picked_file: Option<PathBuf>,
     pub scene_bbox: Option<BoundingBox>,
     pub db: Arc<RwLock<Db>>,
@@ -198,11 +199,19 @@ impl AppState {
             .add_save_extension("3MF file", "3mf")
             .default_save_extension("3MF file");
 
+        let save_scene_dlg = FileDialog::new()
+            .add_save_extension("3MF file", "3mf")
+            .default_save_extension("3MF file");
+
         //create operation manager and its channels
         let (operation_queue_tx, operation_queue_rx) = channel::unbounded();
         let (operation_response_tx, operation_response_rx) = channel::unbounded();
         let (operation_error_tx, operation_error_rx) = channel::unbounded();
-        let operation_manager = OperationManager::new(operation_queue_rx, operation_response_tx, operation_error_tx);
+        let operation_manager = OperationManager::new(
+            operation_queue_rx,
+            operation_response_tx,
+            operation_error_tx,
+        );
 
         Self {
             device: Arc::new(device),
@@ -215,7 +224,8 @@ impl AppState {
             texture_id: None,
             // dropped_files: dropped_files_widget,
             load_file_dlg,
-            save_file_dlg,
+            save_selected_part_to_3mf_dlg: save_file_dlg,
+            save_scene_to_3mf_dialog: save_scene_dlg,
             picked_file: None,
             scene_bbox: None,
             db: Arc::new(RwLock::new(Db::new())),
@@ -231,14 +241,14 @@ impl AppState {
             detached_identifiables: vec![],
             selected_identifiables: vec![],
 
-             operation_manager,
-             operation_queue_tx,
-             operation_response_rx,
-             operation_error_rx,
-             operation_error_message: None,
-             show_operation_error_modal: false,
+            operation_manager,
+            operation_queue_tx,
+            operation_response_rx,
+            operation_error_rx,
+            operation_error_message: None,
+            show_operation_error_modal: false,
 
-             show_modal: false,
+            show_modal: false,
         }
     }
 
@@ -297,14 +307,12 @@ impl AppState {
         }
 
         match self.operation_error_rx.try_recv() {
-            Ok(error) => {
-                match error {
-                    OperationError::ModalOpImmediateFailed(message) => {
-                        self.operation_error_message = Some(message);
-                        self.show_operation_error_modal = true;
-                    }
+            Ok(error) => match error {
+                OperationError::ModalOpImmediateFailed(message) => {
+                    self.operation_error_message = Some(message);
+                    self.show_operation_error_modal = true;
                 }
-            }
+            },
             Err(err) => match err {
                 TryRecvError::Empty => {}
                 TryRecvError::Closed => panic!("Operation error channel closed!!"),
@@ -450,18 +458,23 @@ impl App {
                                 unzoom_bbox(&mut state.camera_data, bbox);
                             }
 
-                             if ui.button("Clear All").clicked() {
-                                 let clear_ops = ClearDbOps;
-                                 if let Err(err) = state
-                                     .operation_queue_tx
-                                     .send_blocking(OperationRequest::ModalOpImmediate(Box::new(clear_ops)))
-                                 {
-                                     println!("{err:?}");
-                                 }
-                             }
+                            if ui.button("Clear All").clicked() {
+                                let clear_ops = ClearDbOps;
+                                if let Err(err) = state.operation_queue_tx.send_blocking(
+                                    OperationRequest::ModalOpImmediate(Box::new(clear_ops)),
+                                ) {
+                                    println!("{err:?}");
+                                }
+                            }
 
-                            if ui.button("Save to 3mf").clicked() {
-                                state.save_file_dlg.save_file();
+                            if ui.button("Save Scene to 3MF").clicked() {
+                                state.save_scene_to_3mf_dialog.save_file();
+                            }
+                        });
+
+                        ui.add_enabled_ui(!state.selected_identifiables.is_empty(), |ui| {
+                            if ui.button("Save Selected to 3mf").clicked() {
+                                state.save_selected_part_to_3mf_dlg.save_file();
                             }
                         });
 
@@ -484,8 +497,6 @@ impl App {
                         }
                     });
                 });
-
-
 
             if let Some(tree) = &mut state.toolsheets {
                 egui::SidePanel::left(Id::new("object list"))
@@ -530,8 +541,10 @@ impl App {
                 }
             }
 
-            state.save_file_dlg.update(state.egui_renderer.context());
-            if let Some(path) = state.save_file_dlg.take_picked() {
+            state
+                .save_selected_part_to_3mf_dlg
+                .update(state.egui_renderer.context());
+            if let Some(path) = state.save_selected_part_to_3mf_dlg.take_picked() {
                 println!("File path to save to is {path:?}");
 
                 let ops_msg = {
@@ -570,6 +583,22 @@ impl App {
                         }))
                     }
                 };
+
+                if let Err(err) = state.operation_queue_tx.send_blocking(ops_msg) {
+                    println!("{err:?}");
+                }
+            }
+
+            state
+                .save_scene_to_3mf_dialog
+                .update(state.egui_renderer.context());
+            if let Some(path) = state.save_scene_to_3mf_dialog.take_picked() {
+                println!("File path to save to is {path:?}");
+
+                let ops_msg = OperationRequest::ModalOp(Box::new(save_3mf::Save3mfOps {
+                    path,
+                    save_mode: SaveMode::Scene,
+                }));
 
                 if let Err(err) = state.operation_queue_tx.send_blocking(ops_msg) {
                     println!("{err:?}");
@@ -772,6 +801,11 @@ impl App {
                     .get_all_background_operation()
                     .collect::<Vec<_>>();
 
+                let queued_ops = state
+                    .operation_manager
+                    .get_queued_operations()
+                    .collect::<Vec<_>>();
+
                 egui::TopBottomPanel::bottom(Id::new("bottom panel")).show(
                     state.egui_renderer.context(),
                     |ui| {
@@ -787,26 +821,40 @@ impl App {
                                 }
                             }
                         });
+
+                        ui.separator();
+
+                        ui.horizontal(|ui| {
+                            ui.label("Queued Operations");
+
+                            if queued_ops.is_empty() {
+                                ui.label("No queued operations currently");
+                            } else {
+                                for ops in queued_ops {
+                                    ui.label(ops.name());
+                                }
+                            }
+                        })
                     },
                 );
-             }
+            }
 
-             if state.show_operation_error_modal {
-                 if let Some(message) = state.operation_error_message.clone() {
-                     let _ = egui::Modal::new(egui::Id::new("operation_error_modal")).show(
-                         state.egui_renderer.context(),
-                         |ui| {
-                             ui.label(&message);
-                             if ui.button("OK").clicked() {
-                                 state.show_operation_error_modal = false;
-                                 state.operation_error_message = None;
-                             }
-                         },
-                     );
-                 }
-             }
+            if state.show_operation_error_modal
+                && let Some(message) = state.operation_error_message.clone()
+            {
+                let _ = egui::Modal::new(egui::Id::new("operation_error_modal")).show(
+                    state.egui_renderer.context(),
+                    |ui| {
+                        ui.label(&message);
+                        if ui.button("OK").clicked() {
+                            state.show_operation_error_modal = false;
+                            state.operation_error_message = None;
+                        }
+                    },
+                );
+            }
 
-             state.egui_renderer.end_frame_and_draw(
+            state.egui_renderer.end_frame_and_draw(
                 &state.device,
                 &state.queue,
                 &mut encoder,

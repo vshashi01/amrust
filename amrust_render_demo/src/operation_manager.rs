@@ -8,8 +8,8 @@ use smol::{
 use crate::{
     amrust_db::{Db, Identifiable},
     operation::{
-        DbChangeMsg, Operation, OperationNature, OperationResponse, get_new_operation_context,
-        process_operation,
+        self, DbChangeMsg, Operation, OperationNature, OperationResponse,
+        get_new_operation_context, process_operation,
     },
 };
 
@@ -52,6 +52,13 @@ pub struct PendingOperation {
     operation_id: u64,
     operation: Box<dyn Operation>,
     is_modal: bool,
+}
+
+impl PendingOperation {
+    pub fn name(&self) -> String {
+        let is_modal = if self.is_modal { "Modal" } else { "Background" };
+        format!("{} Operation: {}", is_modal, self.operation.name())
+    }
 }
 
 pub struct OperationManager {
@@ -367,6 +374,10 @@ impl OperationManager {
 
     pub fn get_all_background_operation(&self) -> impl Iterator<Item = &RunningOperation> {
         self.running_tasks.iter().filter(|op| !op.is_modal)
+    }
+
+    pub fn get_queued_operations(&self) -> impl Iterator<Item = &PendingOperation> {
+        self.pending_task_queue.iter()
     }
 }
 
