@@ -52,8 +52,10 @@ where
                         selected_items.push(*id);
                     };
                 } else {
-                    ui.label(name);
-                    ui.add(egui::ProgressBar::new(0.0).animate(true));
+                    ui.horizontal(|ui| {
+                        ui.label(name);
+                        ui.add(egui::ProgressBar::new(0.0).animate(true));
+                    });
                 }
             }
             TreeItem::Node {

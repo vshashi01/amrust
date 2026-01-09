@@ -57,8 +57,16 @@ impl Toolsheets {
         self.selected_objects.iter()
     }
 
+    pub fn override_selected_object(&mut self, identifiables: &[Identifiable]) {
+        self.selected_objects = identifiables.to_vec();
+    }
+
     pub fn selected_build_items(&self) -> impl Iterator<Item = &Identifiable> {
         self.selected_build_items.iter()
+    }
+
+    pub fn override_selected_build_items(&mut self, identifiables: &[Identifiable]) {
+        self.selected_build_items = identifiables.to_vec();
     }
 
     pub fn has_selection_changed(&self) -> bool {

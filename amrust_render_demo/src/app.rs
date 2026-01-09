@@ -7,7 +7,7 @@ use crate::amrust_db::{
 use crate::app_mode::AppMode;
 use crate::clear_db::ClearDbOps;
 use crate::egui_tools::EguiRenderer;
-use crate::operation::OperationResponse;
+use crate::operation::{DbReader, OperationResponse};
 use crate::operation_manager::{OperationManager, OperationRequest};
 use crate::part_list::PartList;
 use crate::render_db::RenderDb;
@@ -616,12 +616,73 @@ impl App {
                         (Ok(part_list_items), Ok(object_items), Ok(build_items)) => match bbox {
                             Ok(bbox) => {
                                 let part_list = PartList::new(part_list_items);
-                                let _ = state.toolsheets.insert(Toolsheets::new(
+
+                                let mut toolsheets = Toolsheets::new(
                                     state.current_app_mode,
                                     part_list,
                                     TreeItemViewer::new(object_items, false),
                                     TreeItemViewer::new(build_items, false),
-                                ));
+                                );
+
+                                // Validate and filter selected_identifiables
+                                let mut valid_selected = vec![];
+                                for id in &state.selected_identifiables {
+                                    match id {
+                                        Identifiable::Part(part_id) => {
+                                            if read_db.get_part(part_id).is_some() {
+                                                valid_selected.push(*id);
+                                            }
+                                        }
+                                        Identifiable::PartInstance(instance_id) => {
+                                            if read_db.get_part_instance(instance_id).is_some() {
+                                                valid_selected.push(*id);
+                                            }
+                                        }
+                                    }
+                                }
+                                state.selected_identifiables = valid_selected;
+                                // Restore selections in toolsheets based on mode
+                                match state.current_app_mode {
+                                    AppMode::Objects => {
+                                        toolsheets.override_selected_object(
+                                            &state
+                                                .selected_identifiables
+                                                .iter()
+                                                .filter(|id| matches!(id, Identifiable::Part(_)))
+                                                .cloned()
+                                                .collect::<Vec<_>>(),
+                                        );
+                                    }
+                                    AppMode::Build => {
+                                        toolsheets.override_selected_build_items(
+                                            &state
+                                                .selected_identifiables
+                                                .iter()
+                                                .filter(|id| {
+                                                    matches!(id, Identifiable::PartInstance(_))
+                                                })
+                                                .cloned()
+                                                .collect::<Vec<_>>(),
+                                        );
+                                    }
+                                }
+                                // Update properties panel
+                                let mut tree_items = vec![];
+                                for id in &state.selected_identifiables {
+                                    if let Ok(item) =
+                                        create_object_tree_from_identifiable(state.db.clone(), *id)
+                                    {
+                                        tree_items.push(item);
+                                    }
+                                }
+                                toolsheets.set_selected_identifiable_properties(TreeItemViewer {
+                                    childs: tree_items,
+                                    skip_inert_node: false,
+                                });
+                                toolsheets.set_blocked_entities(&state.detached_identifiables);
+                                toolsheets.clear_selection_changed();
+
+                                let _ = state.toolsheets.insert(toolsheets);
 
                                 //unzoom_bbox(&mut state.camera_data, &bbox);
                                 let _ = state.scene_bbox.insert(bbox);
