@@ -21,6 +21,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::sync::Arc;
 
+use crate::db_cache::DbCache;
 use crate::operation::DbReader;
 use crate::render_db::{RenderDb, RenderMeshId, RenderObject, RenderObjectId};
 use crate::tree_item_viewer::TreeItem;
@@ -226,6 +227,12 @@ pub struct Db {
 
     /// The main scene
     scene: Option<Scene>,
+
+    /// Set of parts that may have changed
+    changed_parts: HashSet<PartId>,
+
+    /// Set of part instances that may have changed
+    changed_part_instances: HashSet<PartInstanceId>,
 }
 
 #[derive(Debug, Clone, Archive, Serialize, Deserialize, CheckBytes)]
@@ -260,6 +267,9 @@ pub struct ArchivedDb {
     detached_part_instances: Vec<PartInstanceId>,
 
     scene: Option<Scene>,
+
+    changed_parts: HashSet<PartId>,
+    changed_part_instances: HashSet<PartInstanceId>,
 }
 
 unsafe impl rkyv::Portable for ArchivedDb {}
@@ -279,6 +289,8 @@ impl rkyv::Archive for Db {
             detached_part_instances: self.detached_part_instances.clone(),
 
             scene: self.scene.clone(),
+            changed_parts: self.changed_parts.clone(),
+            changed_part_instances: self.changed_part_instances.clone(),
         });
     }
 }
@@ -299,6 +311,8 @@ impl<D: Fallible + ?Sized> rkyv::Deserialize<Db, D> for ArchivedDb {
             detached_part_instances: self.detached_part_instances.clone(),
 
             scene: self.scene.clone(),
+            changed_parts: HashSet::new(), // Reset on deserialization
+            changed_part_instances: HashSet::new(),
         })
     }
 }
@@ -332,6 +346,8 @@ impl Db {
             part_instances: SlotMap::with_key(),
             detached_part_instances: vec![],
             scene: None,
+            changed_parts: HashSet::new(),
+            changed_part_instances: HashSet::new(),
         }
     }
 
@@ -343,7 +359,9 @@ impl Db {
             return Err(DbError::InvalidPartRep);
         }
 
-        Ok(self.unique_parts.insert(Part { rep: part_rep }))
+        let part_id = self.unique_parts.insert(Part { rep: part_rep });
+        self.mark_part_changed(part_id);
+        Ok(part_id)
     }
 
     pub fn get_parts(&self) -> impl Iterator<Item = (PartId, &Part)> {
@@ -414,6 +432,7 @@ impl Db {
             Some(_) => {
                 let instance = PartInstance::new(*part, transform);
                 let id = self.part_instances.insert(instance);
+                self.mark_part_instance_changed(id);
                 Ok(id)
             }
             None => Err(DbError::PartIdNotFound(*part)),
@@ -457,6 +476,7 @@ impl Db {
         } else {
             Err(DbError::PartInstanceIdNotFound(*part_instance))
         }
+        // Note: Scene addition doesn't change the instance itself, so no marking
     }
 
     pub fn get_scene(&self) -> Result<&Scene, DbError> {
@@ -592,6 +612,36 @@ impl Db {
         self.scene = None;
         self.part_instances.clear();
         self.unique_parts.clear();
+        self.changed_parts.clear();
+        self.changed_part_instances.clear();
+    }
+
+    fn mark_part_changed(&mut self, part_id: PartId) {
+        self.changed_parts.insert(part_id);
+    }
+
+    fn mark_part_instance_changed(&mut self, instance_id: PartInstanceId) {
+        self.changed_part_instances.insert(instance_id);
+    }
+
+    pub fn get_changed_parts(&self) -> &HashSet<PartId> {
+        &self.changed_parts
+    }
+
+    pub fn get_changed_part_instances(&self) -> &HashSet<PartInstanceId> {
+        &self.changed_part_instances
+    }
+
+    pub fn clear_changed_parts(&mut self) {
+        self.changed_parts.clear();
+    }
+
+    pub fn clear_changed_part_instances(&mut self) {
+        self.changed_part_instances.clear();
+    }
+
+    pub fn has_any_changes(&self) -> bool {
+        !self.changed_parts.is_empty() || !self.changed_part_instances.is_empty()
     }
 
     pub fn get_archived_bytes(&self) -> Result<AlignedVec, rkyv::rancor::Error> {
@@ -746,6 +796,7 @@ impl Db {
     fn detach_part(&mut self, part_id: &PartId) -> Result<Part, DbError> {
         if let Some(part) = self.unique_parts.detach(*part_id) {
             self.detached_unique_parts.push(*part_id);
+            self.mark_part_changed(*part_id);
             Ok(part)
         } else {
             Err(DbError::PartIdNotFound(*part_id))
@@ -760,6 +811,7 @@ impl Db {
         {
             self.unique_parts.reattach(*part_id, part);
             self.detached_unique_parts.swap_remove(pos);
+            self.mark_part_changed(*part_id);
         } else {
             return Err(DbError::PartIdNotFound(*part_id));
         }
@@ -773,6 +825,7 @@ impl Db {
     ) -> Result<PartInstance, DbError> {
         if let Some(part) = self.part_instances.detach(*part_instance_id) {
             self.detached_part_instances.push(*part_instance_id);
+            self.mark_part_instance_changed(*part_instance_id);
             Ok(part)
         } else {
             Err(DbError::PartInstanceIdNotFound(*part_instance_id))
@@ -792,6 +845,7 @@ impl Db {
             self.part_instances
                 .reattach(*part_instance_id, part_instance);
             self.detached_part_instances.swap_remove(pos);
+            self.mark_part_instance_changed(*part_instance_id);
         } else {
             return Err(DbError::PartInstanceIdNotFound(*part_instance_id));
         }
@@ -1242,132 +1296,6 @@ pub fn create_object_tree_from_instance(
         selectable: false,
     })
 }
-
-// pub fn create_scene_tree_items_by_unique_parts(
-//     db: Arc<RwLock<Db>>,
-// ) -> Result<Vec<TreeItem<Identifiable>>, DbError> {
-//     let read_db = db.read_blocking();
-//     let scene = read_db.get_scene()?;
-
-//     let mut instance_id_to_tree_item_map: HashMap<PartInstanceId, TreeItem<Identifiable>> =
-//         HashMap::new();
-
-//     let mut unprocessed_instances = vec![];
-
-//     // process all the items one round first
-//     for (id, _, part) in read_db.get_part_instances() {
-//         match &part.rep {
-//             PartRep::Mesh(_) => {
-//                 instance_id_to_tree_item_map.insert(
-//                     id,
-//                     TreeItem::Leaf {
-//                         id: Identifiable::PartInstance(id),
-//                         name: format!("Mesh: {:?}", id),
-//                         selectable: true,
-//                     },
-//                 );
-//             }
-//             PartRep::ComposedPart(part_instance_ids) => {
-//                 let mut tree_items = vec![];
-//                 for id in part_instance_ids {
-//                     if let Some(item) = instance_id_to_tree_item_map.get(id) {
-//                         tree_items.push(item.clone());
-//                     }
-//                 }
-
-//                 if tree_items.len() != part_instance_ids.len() {
-//                     unprocessed_instances.push(id);
-//                     continue;
-//                 } else {
-//                     let node = TreeItem::Node {
-//                         id: Identifiable::PartInstance(id),
-//                         name: format!("Composed Part: {:?}", id),
-//                         childs: tree_items,
-//                         selectable: true,
-//                     };
-//                     instance_id_to_tree_item_map.insert(id, node);
-//                 }
-//             }
-//         }
-//     }
-
-//     //ToDo: Process unprocessed items
-//     // Second pass: process unprocessed until none left or can't resolve more
-//     let mut changed = true;
-//     while changed && !unprocessed_instances.is_empty() {
-//         changed = false;
-//         let mut still_unresolved = vec![];
-
-//         for id in unprocessed_instances.drain(..) {
-//             let part = read_db.get_part_data_from_part_instance(&id)?;
-//             if let PartRep::ComposedPart(part_instance_ids) = &part.rep {
-//                 let mut tree_items = vec![];
-//                 let mut all_children_ready = true;
-
-//                 for child_id in part_instance_ids {
-//                     if let Some(item) = instance_id_to_tree_item_map.get(child_id) {
-//                         tree_items.push(item.clone());
-//                     } else {
-//                         all_children_ready = false;
-//                         break;
-//                     }
-//                 }
-
-//                 if all_children_ready {
-//                     let node = TreeItem::Node {
-//                         id: Identifiable::PartInstance(id),
-//                         name: format!("Composed Part: {:?}", id),
-//                         childs: tree_items,
-//                         selectable: true,
-//                     };
-//                     instance_id_to_tree_item_map.insert(id, node);
-//                     changed = true;
-//                 } else {
-//                     still_unresolved.push(id);
-//                 }
-//             }
-//         }
-
-//         unprocessed_instances = still_unresolved;
-//     }
-
-//     let mut unique_part_id_to_instance_tree_item: HashMap<PartId, TreeItem<Identifiable>> =
-//         HashMap::new();
-//     for i in &scene.instances {
-//         let instance_data = read_db.get_part_instance_data(i)?;
-
-//         if let Some(item) = instance_id_to_tree_item_map.get(i) {
-//             if let Some(unique_item) =
-//                 unique_part_id_to_instance_tree_item.get_mut(&instance_data.part_id)
-//             {
-//                 //unique part entry should always be a node
-//                 // if let TreeItem::Node { childs, .. } = unique_item {
-//                 //     childs.push(item.clone());
-//                 // }
-//                 match unique_item {
-//                     TreeItem::Node { childs, .. } | TreeItem::InertNode { childs, .. } => {
-//                         childs.push(item.clone());
-//                     }
-//                     _ => {}
-//                 }
-//             } else {
-//                 let tree_item = TreeItem::InertNode {
-//                     id: Identifiable::Part(instance_data.part_id),
-//                     name: format!("Unique Part: {:?}", instance_data.part_id),
-//                     childs: vec![item.clone()],
-//                 };
-
-//                 unique_part_id_to_instance_tree_item.insert(instance_data.part_id, tree_item);
-//             }
-//         }
-//     }
-
-//     let items = unique_part_id_to_instance_tree_item
-//         .into_values()
-//         .collect::<Vec<_>>();
-
-//     Ok(items)
-// }
 
 pub fn create_scene_tree_items_by_unique_parts(
     db: Arc<RwLock<Db>>,
