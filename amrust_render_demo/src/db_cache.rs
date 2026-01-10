@@ -13,8 +13,37 @@ pub struct DbCache {
     scene_data: Vec<PartInstanceId>,
 }
 
+impl DbCache {
+    pub fn get_part_data(&self, id: &PartId) -> Option<&PartCache> {
+        self.parts_data.get(id)
+    }
+
+    pub fn get_part_instance_data(&self, id: &PartInstanceId) -> Option<&PartInstanceCache> {
+        self.instance_data.get(id)
+    }
+
+    pub fn get_part_data_mut(&mut self, id: &PartId) -> Option<&mut PartCache> {
+        self.parts_data.get_mut(id)
+    }
+
+    pub fn get_part_instance_data_mut(
+        &mut self,
+        id: &PartInstanceId,
+    ) -> Option<&mut PartInstanceCache> {
+        self.instance_data.get_mut(id)
+    }
+
+    pub fn get_parts_data(&self) -> &HashMap<PartId, PartCache> {
+        &self.parts_data
+    }
+
+    pub fn get_part_instances_data(&self) -> &HashMap<PartInstanceId, PartInstanceCache> {
+        &self.instance_data
+    }
+}
+
 pub struct PartCache {
-    rep: PartRepCache,
+    pub rep: PartRepCache,
 }
 
 pub enum PartRepCache {
@@ -23,20 +52,20 @@ pub enum PartRepCache {
 }
 
 pub struct MeshCache {
-    gpu_mesh_id: RenderMeshId,
-    bbox: BoundingBox,
-    vertices_count: usize,
-    triangles_count: usize,
+    pub gpu_mesh_id: RenderMeshId,
+    pub bbox: BoundingBox,
+    pub vertices_count: usize,
+    pub triangles_count: usize,
 }
 
 pub struct ComposedPartCache {
-    gpu_object_id: RenderObjectId,
-    bbox: BoundingBox,
-    components: Vec<PartInstanceId>,
+    pub gpu_object_id: RenderObjectId,
+    pub bbox: BoundingBox,
+    pub components: Vec<PartInstanceId>,
 }
 
 pub struct PartInstanceCache {
-    part_id: PartId,
-    gpu_object_id: u32,
-    transform: Transformation,
+    pub part_id: PartId,
+    pub gpu_object_id: u32,
+    pub transform: Transformation,
 }

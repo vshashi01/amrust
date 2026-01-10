@@ -21,7 +21,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use crate::db_cache::DbCache;
+use crate::db_cache::{DbCache, PartCache, PartInstanceCache};
 use crate::operation::DbReader;
 use crate::render_db::{RenderDb, RenderMeshId, RenderObject, RenderObjectId};
 use crate::tree_item_viewer::TreeItem;
@@ -1426,6 +1426,65 @@ pub fn create_scene_tree_items_by_unique_parts(
 struct InstanceData {
     pub gpu_mesh_id: RenderMeshId,
     pub transforms: Vec<Transformation>,
+}
+
+async fn update_data(
+    db: Arc<RwLock<Db>>,
+    render_db: Arc<RwLock<RenderDb>>,
+    mut cache: DbCache,
+    device: &wgpu::Device,
+) -> Result<DbCache, DbError> {
+    let mut new_part_caches = vec![];
+    let mut new_part_instance_caches = vec![];
+
+    {
+        let read_db = db.read().await;
+        for id in &read_db.changed_parts {
+            //create new part cache
+            if let Ok(part) = read_db.get_part_data(id) {
+                let part_cache = create_part_cache(part, device, render_db.clone());
+                new_part_caches.push((*id, part_cache));
+            }
+        }
+
+        for id in &read_db.changed_part_instances {
+            //create new part instance cache
+            if let Ok(instance) = read_db.get_part_instance_data(id) {
+                let part_cache = create_part_instance_cache(instance, device, render_db.clone());
+                new_part_instance_caches.push((*id, part_cache));
+            }
+        }
+    }
+
+    for (id, part_cache) in new_part_caches {
+        if let Some(existing) = cache.get_part_data_mut(&id) {
+            *existing = part_cache;
+        }
+    }
+
+    for (id, instance_cache) in new_part_instance_caches {
+        if let Some(existing) = cache.get_part_instance_data_mut(&id) {
+            *existing = instance_cache;
+        }
+    }
+
+    Ok(cache)
+}
+
+fn create_part_cache(
+    part: &Part,
+    device: &wgpu::Device,
+    render_db: Arc<RwLock<RenderDb>>,
+) -> PartCache {
+    todo!()
+}
+
+fn create_part_instance_cache(
+    part: &PartInstance,
+    device: &wgpu::Device,
+    render_db: Arc<RwLock<RenderDb>>,
+) -> PartInstanceCache {
+    todo!()
 }
 
 /// This creates a 3D scene based on the unique parts
