@@ -40,7 +40,9 @@ impl RenderDb {
 
     pub fn set_objects_to_render(&mut self, objects: &[RenderObjectId]) {
         self.objects_to_render.clear();
-        self.objects_to_render.append(&mut objects.to_vec());
+        for o in objects {
+            self.objects_to_render.push(*o);
+        }
     }
 
     // returns the texture id and the bind group id

@@ -5,10 +5,13 @@ use crate::{
     render_db::{RenderMeshId, RenderObjectId},
 };
 
+use crate::amrust_db::Identifiable;
+use crate::app_mode::AppMode;
 use crate::render_db::RenderDb;
+use crate::tree_item_viewer::TreeItem;
 use glam::Mat4;
 use smol::lock::RwLock;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -129,6 +132,16 @@ impl DbCache {
         }
     }
 
+    pub fn get_scene_based_render_object_ids(&self) -> impl Iterator<Item = &RenderObjectId> {
+        self.scene_based_render_objects.values()
+    }
+
+    pub fn get_unique_parts_based_render_object_ids(
+        &self,
+    ) -> impl Iterator<Item = &RenderObjectId> {
+        self.unique_parts_based_render_objects.values()
+    }
+
     pub fn update_unique_parts_based_render_objects(
         &mut self,
         device: &wgpu::Device,
@@ -206,6 +219,209 @@ impl DbCache {
             }
         }
     }
+}
+
+pub fn get_total_bbox_from_cache(db_cache: &DbCache, mode: AppMode) -> BoundingBox {
+    let mut total_bbox = BoundingBox::default();
+    match mode {
+        AppMode::Objects => {
+            // All parts visible: compute bbox for each part
+            for part_id in db_cache.parts_data.keys() {
+                let part_bbox = compute_part_bbox(db_cache, part_id);
+                total_bbox.unite(&part_bbox);
+            }
+        }
+        AppMode::Build => {
+            // Scene instances visible: compute bbox for each part in scene
+            for instance_id in &db_cache.scene_data {
+                if let Some(instance_cache) = db_cache.get_part_instance_data(instance_id) {
+                    let part_bbox = compute_part_bbox(db_cache, &instance_cache.part_id);
+                    total_bbox.unite(&part_bbox);
+                }
+            }
+        }
+    }
+    total_bbox
+}
+
+fn compute_part_bbox(db_cache: &DbCache, part_id: &PartId) -> BoundingBox {
+    if let Some(part_cache) = db_cache.get_part_data(part_id) {
+        match &part_cache.rep {
+            PartRepCache::Mesh(mesh_cache) => mesh_cache.bbox.clone(),
+            PartRepCache::ComposedPart(composed_cache) => {
+                let mut bbox = BoundingBox::default();
+                for component_id in &composed_cache.components {
+                    if let Some(instance_cache) = db_cache.get_part_instance_data(component_id) {
+                        let component_bbox = compute_part_bbox(db_cache, &instance_cache.part_id);
+                        bbox.unite(&component_bbox);
+                    }
+                }
+                bbox
+            }
+        }
+    } else {
+        BoundingBox::default()
+    }
+}
+
+pub fn create_objects_list_from_cache(db_cache: &DbCache) -> Vec<TreeItem<Identifiable>> {
+    db_cache
+        .parts_data
+        .iter()
+        .map(|(part_id, part_cache)| build_part_tree(db_cache, *part_id, part_cache))
+        .collect()
+}
+
+fn build_part_tree(
+    db_cache: &DbCache,
+    part_id: PartId,
+    part_cache: &PartCache,
+) -> TreeItem<Identifiable> {
+    match &part_cache.rep {
+        PartRepCache::Mesh(_) => TreeItem::Leaf {
+            id: Identifiable::Part(part_id),
+            name: format!("Mesh Object: {:?}", part_id),
+            selectable: true,
+        },
+        PartRepCache::ComposedPart(composed_cache) => {
+            let childs = composed_cache
+                .components
+                .iter()
+                .filter_map(|component_id| {
+                    db_cache
+                        .get_part_instance_data(component_id)
+                        .and_then(|instance_cache| {
+                            db_cache
+                                .get_part_data(&instance_cache.part_id)
+                                .map(|comp_part_cache| {
+                                    build_part_tree(
+                                        db_cache,
+                                        instance_cache.part_id,
+                                        comp_part_cache,
+                                    )
+                                })
+                        })
+                })
+                .collect();
+            TreeItem::Node {
+                id: Identifiable::Part(part_id),
+                name: format!("Components Object: {:?}", part_id),
+                childs,
+                selectable: true,
+            }
+        }
+    }
+}
+
+pub fn create_build_items_list_from_cache(db_cache: &DbCache) -> Vec<TreeItem<Identifiable>> {
+    db_cache
+        .scene_data
+        .iter()
+        .filter_map(|instance_id| {
+            db_cache
+                .get_part_instance_data(instance_id)
+                .map(|instance_cache| {
+                    let name = match instance_cache.rep_type {
+                        PartRepType::Mesh => format!("Instance: {:?} - Mesh", instance_id),
+                        PartRepType::ComposedPart => {
+                            format!("Instance: {:?} - Composed Part", instance_id)
+                        }
+                    };
+                    TreeItem::Leaf {
+                        id: Identifiable::PartInstance(*instance_id),
+                        name,
+                        selectable: true,
+                    }
+                })
+        })
+        .collect()
+}
+
+pub fn create_scene_tree_items_by_unique_parts_from_cache(
+    db_cache: &DbCache,
+) -> Vec<TreeItem<Identifiable>> {
+    let mut instance_id_to_tree_item_map: HashMap<PartInstanceId, TreeItem<Identifiable>> =
+        HashMap::new();
+    let mut unprocessed_instances = db_cache.scene_data.clone();
+
+    // Pass 1: process ALL Mesh parts first
+    for instance_id in &db_cache.scene_data {
+        if let Some(instance_cache) = db_cache.get_part_instance_data(instance_id) {
+            if matches!(instance_cache.rep_type, PartRepType::Mesh) {
+                instance_id_to_tree_item_map.insert(
+                    *instance_id,
+                    TreeItem::Leaf {
+                        id: Identifiable::PartInstance(*instance_id),
+                        name: format!("Mesh: {:?}", instance_id),
+                        selectable: true,
+                    },
+                );
+                unprocessed_instances.retain(|id| id != instance_id);
+            }
+        }
+    }
+
+    // Pass 2: process ComposedPart where children might already be ready
+    while !unprocessed_instances.is_empty() {
+        let mut processed = vec![];
+        for instance_id in &unprocessed_instances {
+            if let Some(instance_cache) = db_cache.get_part_instance_data(instance_id) {
+                if matches!(instance_cache.rep_type, PartRepType::ComposedPart) {
+                    if let Some(part_cache) = db_cache.get_part_data(&instance_cache.part_id) {
+                        if let PartRepCache::ComposedPart(composed_cache) = &part_cache.rep {
+                            let mut tree_items = vec![];
+                            let mut all_children_ready = true;
+                            for child_id in &composed_cache.components {
+                                if let Some(item) = instance_id_to_tree_item_map.get(child_id) {
+                                    tree_items.push(item.clone());
+                                } else {
+                                    all_children_ready = false;
+                                    break;
+                                }
+                            }
+                            if all_children_ready {
+                                instance_id_to_tree_item_map.insert(
+                                    *instance_id,
+                                    TreeItem::Node {
+                                        id: Identifiable::PartInstance(*instance_id),
+                                        name: format!("Composed: {:?}", instance_id),
+                                        childs: tree_items,
+                                        selectable: true,
+                                    },
+                                );
+                                processed.push(*instance_id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        unprocessed_instances.retain(|i| !processed.contains(i));
+        // Prevent infinite loop if dependencies are circular (though shouldn't happen)
+        if processed.is_empty() {
+            break;
+        }
+    }
+
+    // Collect top-level items (those not children of others)
+    let child_ids: HashSet<_> = db_cache
+        .parts_data
+        .values()
+        .filter_map(|pc| {
+            if let PartRepCache::ComposedPart(cc) = &pc.rep {
+                Some(&cc.components)
+            } else {
+                None
+            }
+        })
+        .flatten()
+        .collect();
+    db_cache
+        .scene_data
+        .iter()
+        .filter(|id| !child_ids.contains(id))
+        .filter_map(|id| instance_id_to_tree_item_map.get(id).cloned())
+        .collect()
 }
 
 #[derive(Debug, Clone)]

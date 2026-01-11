@@ -6,7 +6,10 @@ use crate::amrust_db::{
 };
 use crate::app_mode::AppMode;
 use crate::clear_db::ClearDbOps;
-use crate::db_cache::DbCache;
+use crate::db_cache::{
+    self, DbCache, create_build_items_list_from_cache, create_objects_list_from_cache,
+    create_scene_tree_items_by_unique_parts_from_cache, get_total_bbox_from_cache,
+};
 use crate::egui_tools::EguiRenderer;
 use crate::operation::{DbReader, OperationResponse};
 use crate::operation_manager::{OperationError, OperationManager, OperationRequest};
@@ -646,9 +649,9 @@ impl App {
             if state.current_app_mode != state.current_render_mode || state.need_viewport_update {
                 // ToDo: Figure out a better way to do clear
                 //state.renderer_3d.clear_all();
-                let mut write_render_db = state.render_db.write_blocking();
-                write_render_db.clear_all();
-                drop(write_render_db);
+                // let mut write_render_db = state.render_db.write_blocking();
+                // write_render_db.clear_all();
+                // drop(write_render_db);
                 state.toolsheets = None;
 
                 self.toolsheets_dock_tree = {
@@ -665,120 +668,142 @@ impl App {
                     dock_tree
                 };
 
-                let read_db = state.db.read_blocking();
-                if !read_db.is_empty() {
-                    let (bbox, part_list, object_list, build_list) = match &state.current_app_mode {
+                // let read_db = state.db.read_blocking();
+                // if !read_db.is_empty() {
+                let (render_objects, bbox, part_list_items, object_items, build_items) =
+                    match &state.current_app_mode {
                         AppMode::Objects => {
-                            let bbox = add_render_items_from_unique_parts(
-                                &state.device,
-                                state.render_db.clone(),
-                                state.db.clone(),
-                            );
+                            // let bbox = add_render_items_from_unique_parts(
+                            //     &state.device,
+                            //     state.render_db.clone(),
+                            //     state.db.clone(),
+                            // );
+                            let render_objects = state
+                                .db_cache
+                                .get_unique_parts_based_render_object_ids()
+                                .cloned()
+                                .collect::<Vec<_>>();
+
+                            let bbox = get_total_bbox_from_cache(&state.db_cache, AppMode::Objects);
                             let part_list =
-                                create_scene_tree_items_by_unique_parts(state.db.clone());
-                            let object_list = create_objects_list(state.db.clone());
-                            let build_list = create_build_items_list(state.db.clone());
-                            (bbox, part_list, object_list, build_list)
+                                create_scene_tree_items_by_unique_parts_from_cache(&state.db_cache);
+                            // let object_list = create_objects_list(state.db.clone());
+                            // let build_list = create_build_items_list(state.db.clone());
+                            let object_list = create_objects_list_from_cache(&state.db_cache);
+                            let build_list = create_build_items_list_from_cache(&state.db_cache);
+                            (render_objects, bbox, part_list, object_list, build_list)
                         }
                         AppMode::Build => {
-                            let bbox = add_render_items_from_scene(
-                                &state.device,
-                                state.render_db.clone(),
-                                state.db.clone(),
-                            );
-                            let part_list = create_build_items_list(state.db.clone());
-                            let object_list = create_objects_list(state.db.clone());
-                            let build_list = create_build_items_list(state.db.clone());
-                            (bbox, part_list, object_list, build_list)
+                            // let bbox = add_render_items_from_scene(
+                            //     &state.device,
+                            //     state.render_db.clone(),
+                            //     state.db.clone(),
+                            // );
+
+                            let render_objects = state
+                                .db_cache
+                                .get_scene_based_render_object_ids()
+                                .cloned()
+                                .collect::<Vec<_>>();
+                            let bbox = get_total_bbox_from_cache(&state.db_cache, AppMode::Build);
+                            let part_list = create_build_items_list_from_cache(&state.db_cache);
+                            let object_list = create_objects_list_from_cache(&state.db_cache);
+                            let build_list = create_build_items_list_from_cache(&state.db_cache);
+                            (render_objects, bbox, part_list, object_list, build_list)
                         }
                     };
 
-                    match (part_list, object_list, build_list) {
-                        (Ok(part_list_items), Ok(object_items), Ok(build_items)) => match bbox {
-                            Ok(bbox) => {
-                                let part_list = PartList::new(part_list_items);
+                // (part_list, object_list, build_list)
+                {
+                    // (part_list_items, object_items, build_items) => match bbox {
+                    //     Ok(bbox) => {
+                    let part_list = PartList::new(part_list_items);
 
-                                let mut toolsheets = Toolsheets::new(
-                                    state.current_app_mode,
-                                    part_list,
-                                    TreeItemViewer::new(object_items, false),
-                                    TreeItemViewer::new(build_items, false),
-                                );
+                    let mut toolsheets = Toolsheets::new(
+                        state.current_app_mode,
+                        part_list,
+                        TreeItemViewer::new(object_items, false),
+                        TreeItemViewer::new(build_items, false),
+                    );
 
-                                // Validate and filter selected_identifiables
-                                let mut valid_selected = vec![];
-                                for id in &state.selected_identifiables {
-                                    match id {
-                                        Identifiable::Part(part_id) => {
-                                            if read_db.get_part(part_id).is_some() {
-                                                valid_selected.push(*id);
-                                            }
-                                        }
-                                        Identifiable::PartInstance(instance_id) => {
-                                            if read_db.get_part_instance(instance_id).is_some() {
-                                                valid_selected.push(*id);
-                                            }
-                                        }
-                                    }
+                    // Validate and filter selected_identifiables
+                    let mut valid_selected = vec![];
+                    for id in &state.selected_identifiables {
+                        match id {
+                            Identifiable::Part(part_id) => {
+                                if state.db_cache.get_part_data(part_id).is_some() {
+                                    valid_selected.push(*id);
                                 }
-                                state.selected_identifiables = valid_selected;
-                                // Restore selections in toolsheets based on mode
-                                match state.current_app_mode {
-                                    AppMode::Objects => {
-                                        toolsheets.override_selected_object(
-                                            &state
-                                                .selected_identifiables
-                                                .iter()
-                                                .filter(|id| matches!(id, Identifiable::Part(_)))
-                                                .cloned()
-                                                .collect::<Vec<_>>(),
-                                        );
-                                    }
-                                    AppMode::Build => {
-                                        toolsheets.override_selected_build_items(
-                                            &state
-                                                .selected_identifiables
-                                                .iter()
-                                                .filter(|id| {
-                                                    matches!(id, Identifiable::PartInstance(_))
-                                                })
-                                                .cloned()
-                                                .collect::<Vec<_>>(),
-                                        );
-                                    }
-                                }
-                                // Update properties panel
-                                let mut tree_items = vec![];
-                                for id in &state.selected_identifiables {
-                                    if let Ok(item) =
-                                        create_object_tree_from_identifiable(state.db.clone(), *id)
-                                    {
-                                        tree_items.push(item);
-                                    }
-                                }
-                                toolsheets.set_selected_identifiable_properties(TreeItemViewer {
-                                    childs: tree_items,
-                                    skip_inert_node: false,
-                                });
-                                // toolsheets.set_blocked_entities(&state.detached_identifiables);
-                                toolsheets.clear_selection_changed();
-
-                                let _ = state.toolsheets.insert(toolsheets);
-
-                                //unzoom_bbox(&mut state.camera_data, &bbox);
-                                let _ = state.scene_bbox.insert(bbox);
-
-                                state.egui_renderer.context().request_repaint();
                             }
-                            Err(err) => println!("{err:?}"),
-                        },
-                        _ => panic!("Something wrong here!!"),
+                            Identifiable::PartInstance(instance_id) => {
+                                if state.db_cache.get_part_instance_data(instance_id).is_some() {
+                                    valid_selected.push(*id);
+                                }
+                            }
+                        }
                     }
-                }
+                    state.selected_identifiables = valid_selected;
+                    // Restore selections in toolsheets based on mode
+                    match state.current_app_mode {
+                        AppMode::Objects => {
+                            toolsheets.override_selected_object(
+                                &state
+                                    .selected_identifiables
+                                    .iter()
+                                    .filter(|id| matches!(id, Identifiable::Part(_)))
+                                    .cloned()
+                                    .collect::<Vec<_>>(),
+                            );
+                        }
+                        AppMode::Build => {
+                            toolsheets.override_selected_build_items(
+                                &state
+                                    .selected_identifiables
+                                    .iter()
+                                    .filter(|id| matches!(id, Identifiable::PartInstance(_)))
+                                    .cloned()
+                                    .collect::<Vec<_>>(),
+                            );
+                        }
+                    }
+                    // Update properties panel
+                    let mut tree_items = vec![];
+                    for id in &state.selected_identifiables {
+                        if let Ok(item) =
+                            create_object_tree_from_identifiable(state.db.clone(), *id)
+                        {
+                            tree_items.push(item);
+                        }
+                    }
+                    toolsheets.set_selected_identifiable_properties(TreeItemViewer {
+                        childs: tree_items,
+                        skip_inert_node: false,
+                    });
+                    // toolsheets.set_blocked_entities(&state.detached_identifiables);
+                    toolsheets.clear_selection_changed();
 
-                state.need_viewport_update = false;
-                state.current_render_mode = state.current_app_mode;
+                    let _ = state.toolsheets.insert(toolsheets);
+
+                    //update render objects
+                    {
+                        let mut write_render_db = state.render_db.write_blocking();
+                        write_render_db.set_objects_to_render(&render_objects);
+                    }
+
+                    //unzoom_bbox(&mut state.camera_data, &bbox);
+                    let _ = state.scene_bbox.insert(bbox);
+
+                    state.egui_renderer.context().request_repaint();
+                }
+                // Err(err) => println!("{err:?}"),
+                // },
+                // _ => panic!("Something wrong here!!"),
             }
+            // }
+
+            state.need_viewport_update = false;
+            state.current_render_mode = state.current_app_mode;
+            // }
 
             // updates from toolsheets
             if let Some(ref mut toolsheets) = state.toolsheets
