@@ -640,7 +640,7 @@ impl App {
                 match new_db_cache {
                     Ok(cache) => {
                         println!("Updated cache");
-                        state.db_cache = cache
+                        state.db_cache = cache;
                     }
                     Err(_) => println!("Updating data went wrong!"),
                 }

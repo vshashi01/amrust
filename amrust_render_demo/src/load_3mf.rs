@@ -48,7 +48,7 @@ impl Operation for Load3MFOps {
         match file {
             Ok(threemf_file) => match load(threemf_file) {
                 Ok(db) => {
-                    Timer::after(Duration::from_secs(5)).await;
+                    // Timer::after(Duration::from_secs(5)).await;
 
                     if let Err(err) = context.append_db(db).await {
                         return OperationResponse::Failed {

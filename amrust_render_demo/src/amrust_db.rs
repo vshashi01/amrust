@@ -506,6 +506,7 @@ impl Db {
             if let PartRep::Mesh(mesh) = &mesh_part.rep {
                 let new_unique_part_id = self.add_part_rep(PartRep::Mesh(mesh.clone()))?;
 
+                self.mark_part_changed(new_unique_part_id);
                 unique_part_other_to_unique_part_self.insert(unique_part_id, new_unique_part_id);
             }
         }
@@ -557,6 +558,7 @@ impl Db {
                                 Some(part_instance.transform),
                             )?;
 
+                            self.mark_part_instance_changed(new_instance);
                             new_instances.push(new_instance);
                         }
                     }
@@ -564,6 +566,7 @@ impl Db {
                     if new_instances.len() == instances.len() {
                         let new_unique_part_id =
                             self.add_part_rep(PartRep::ComposedPart(new_instances))?;
+                        self.mark_part_changed(new_unique_part_id);
 
                         unique_part_other_to_unique_part_self
                             .insert(*unique_part_id, new_unique_part_id);
@@ -594,6 +597,7 @@ impl Db {
                         Some(part_instance.transform),
                     )?;
 
+                    self.mark_part_instance_changed(new_instance);
                     self.add_part_instance_to_scene(&new_instance)?;
                 }
             }
@@ -798,7 +802,7 @@ impl Db {
     fn detach_part(&mut self, part_id: &PartId) -> Result<Part, DbError> {
         if let Some(part) = self.unique_parts.detach(*part_id) {
             self.detached_unique_parts.push(*part_id);
-            self.mark_part_changed(*part_id);
+            //self.mark_part_changed(*part_id);
             Ok(part)
         } else {
             Err(DbError::PartIdNotFound(*part_id))
@@ -827,7 +831,7 @@ impl Db {
     ) -> Result<PartInstance, DbError> {
         if let Some(part) = self.part_instances.detach(*part_instance_id) {
             self.detached_part_instances.push(*part_instance_id);
-            self.mark_part_instance_changed(*part_instance_id);
+            //self.mark_part_instance_changed(*part_instance_id);
             Ok(part)
         } else {
             Err(DbError::PartInstanceIdNotFound(*part_instance_id))
@@ -1464,9 +1468,7 @@ pub async fn update_data(
         }
 
         for (id, instance_cache) in new_part_instance_caches {
-            if let Some(existing) = cache.get_part_instance_data_mut(&id) {
-                *existing = instance_cache;
-            }
+            cache.insert_part_instance(id, instance_cache);
         }
 
         let mut parts_to_be_processed = read_db.changed_parts.clone();
@@ -1498,9 +1500,7 @@ pub async fn update_data(
         }
 
         for (id, part_cache) in new_part_caches {
-            if let Some(existing) = cache.get_part_data_mut(&id) {
-                *existing = part_cache;
-            }
+            cache.insert_part(id, part_cache);
         }
 
         // Update scene data if instances changed
