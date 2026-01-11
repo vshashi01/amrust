@@ -460,7 +460,7 @@ impl App {
                             state.need_viewport_update = true;
                         }
 
-                        ui.add_enabled_ui(!state.db.read_blocking().is_scene_empty(), |ui| {
+                        ui.add_enabled_ui(!state.db_cache.is_empty(), |ui| {
                             if ui.button("Unzoom Scene").clicked() {
                                 unzoom_bbox(&mut state.camera_data, bbox);
                             }
@@ -486,7 +486,7 @@ impl App {
                         });
 
                         //onyl show modes if there is a scene
-                        if state.db.read_blocking().get_scene().is_ok() {
+                        if !state.db_cache.is_empty() {
                             ui.with_layout(Layout::right_to_left(egui::Align::RIGHT), |ui| {
                                 // ToDo: Add a tooltip here to explain the difference in modes
                                 ui.radio_value(
@@ -647,11 +647,11 @@ impl App {
             }
 
             if state.current_app_mode != state.current_render_mode || state.need_viewport_update {
-                // ToDo: Figure out a better way to do clear
-                //state.renderer_3d.clear_all();
-                // let mut write_render_db = state.render_db.write_blocking();
-                // write_render_db.clear_all();
-                // drop(write_render_db);
+                if state.db_cache.is_empty() {
+                    let mut write_render_db = state.render_db.write_blocking();
+                    write_render_db.clear_all();
+                }
+
                 state.toolsheets = None;
 
                 self.toolsheets_dock_tree = {
@@ -668,16 +668,9 @@ impl App {
                     dock_tree
                 };
 
-                // let read_db = state.db.read_blocking();
-                // if !read_db.is_empty() {
                 let (render_objects, bbox, part_list_items, object_items, build_items) =
                     match &state.current_app_mode {
                         AppMode::Objects => {
-                            // let bbox = add_render_items_from_unique_parts(
-                            //     &state.device,
-                            //     state.render_db.clone(),
-                            //     state.db.clone(),
-                            // );
                             let render_objects = state
                                 .db_cache
                                 .get_unique_parts_based_render_object_ids()
@@ -687,19 +680,11 @@ impl App {
                             let bbox = get_total_bbox_from_cache(&state.db_cache, AppMode::Objects);
                             let part_list =
                                 create_scene_tree_items_by_unique_parts_from_cache(&state.db_cache);
-                            // let object_list = create_objects_list(state.db.clone());
-                            // let build_list = create_build_items_list(state.db.clone());
                             let object_list = create_objects_list_from_cache(&state.db_cache);
                             let build_list = create_build_items_list_from_cache(&state.db_cache);
                             (render_objects, bbox, part_list, object_list, build_list)
                         }
                         AppMode::Build => {
-                            // let bbox = add_render_items_from_scene(
-                            //     &state.device,
-                            //     state.render_db.clone(),
-                            //     state.db.clone(),
-                            // );
-
                             let render_objects = state
                                 .db_cache
                                 .get_scene_based_render_object_ids()
@@ -713,10 +698,7 @@ impl App {
                         }
                     };
 
-                // (part_list, object_list, build_list)
                 {
-                    // (part_list_items, object_items, build_items) => match bbox {
-                    //     Ok(bbox) => {
                     let part_list = PartList::new(part_list_items);
 
                     let mut toolsheets = Toolsheets::new(
@@ -779,7 +761,6 @@ impl App {
                         childs: tree_items,
                         skip_inert_node: false,
                     });
-                    // toolsheets.set_blocked_entities(&state.detached_identifiables);
                     toolsheets.clear_selection_changed();
 
                     let _ = state.toolsheets.insert(toolsheets);
@@ -793,17 +774,12 @@ impl App {
                     //unzoom_bbox(&mut state.camera_data, &bbox);
                     let _ = state.scene_bbox.insert(bbox);
 
-                    state.egui_renderer.context().request_repaint();
+                    // entities(&state.detached_identifiables);
                 }
-                // Err(err) => println!("{err:?}"),
-                // },
-                // _ => panic!("Something wrong here!!"),
-            }
-            // }
 
-            state.need_viewport_update = false;
-            state.current_render_mode = state.current_app_mode;
-            // }
+                state.need_viewport_update = false;
+                state.current_render_mode = state.current_app_mode;
+            }
 
             // updates from toolsheets
             if let Some(ref mut toolsheets) = state.toolsheets

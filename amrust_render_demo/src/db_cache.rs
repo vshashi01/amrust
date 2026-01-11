@@ -20,8 +20,8 @@ pub struct DbCache {
     instance_data: HashMap<PartInstanceId, PartInstanceCache>,
     scene_data: Vec<PartInstanceId>,
 
-    scene_based_render_objects: HashMap<PartId, RenderObjectId>,
-    unique_parts_based_render_objects: HashMap<PartId, RenderObjectId>,
+    scene_based_render_objects: HashMap<PartId, (RenderObjectId, RenderObjectId)>,
+    unique_parts_based_render_objects: HashMap<PartId, (RenderObjectId, RenderObjectId)>,
 }
 
 impl DbCache {
@@ -33,6 +33,18 @@ impl DbCache {
             scene_based_render_objects: HashMap::new(),
             unique_parts_based_render_objects: HashMap::new(),
         }
+    }
+
+    pub fn clear_cache(&mut self) {
+        self.parts_data.clear();
+        self.instance_data.clear();
+        self.scene_data.clear();
+        self.scene_based_render_objects.clear();
+        self.unique_parts_based_render_objects.clear();
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.parts_data.is_empty()
     }
 
     pub fn get_part_data(&self, id: &PartId) -> Option<&PartCache> {
@@ -133,13 +145,17 @@ impl DbCache {
     }
 
     pub fn get_scene_based_render_object_ids(&self) -> impl Iterator<Item = &RenderObjectId> {
-        self.scene_based_render_objects.values()
+        self.scene_based_render_objects
+            .values()
+            .flat_map(|(mesh, wireframe)| [mesh, wireframe])
     }
 
     pub fn get_unique_parts_based_render_object_ids(
         &self,
     ) -> impl Iterator<Item = &RenderObjectId> {
-        self.unique_parts_based_render_objects.values()
+        self.unique_parts_based_render_objects
+            .values()
+            .flat_map(|(mesh, wireframe)| [mesh, wireframe])
     }
 
     pub fn update_unique_parts_based_render_objects(

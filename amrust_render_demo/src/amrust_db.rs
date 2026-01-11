@@ -1445,69 +1445,74 @@ pub async fn update_data(
 
     {
         let read_db = db.read().await;
-        let mut parts_that_require_new_render_objects = HashSet::new();
-        for id in &read_db.changed_part_instances {
-            //create new part instance cache
-            if let Ok(instance) = read_db.get_part_instance_data(id)
-                && let Ok(part) = read_db.get_part_data(&instance.part_id)
-            {
-                let rep_type = match &part.rep {
-                    PartRep::Mesh(_) => PartRepType::Mesh,
-                    PartRep::ComposedPart(_) => PartRepType::ComposedPart,
-                };
-                parts_that_require_new_render_objects.insert(instance.part_id);
-                new_part_instance_caches.push((
-                    *id,
-                    PartInstanceCache {
-                        part_id: instance.part_id,
-                        transform: instance.transform,
-                        rep_type,
-                    },
-                ));
-            }
-        }
 
-        for (id, instance_cache) in new_part_instance_caches {
-            cache.insert_part_instance(id, instance_cache);
-        }
-
-        let mut parts_to_be_processed = read_db.changed_parts.clone();
-        loop {
-            if parts_to_be_processed.is_empty() {
-                break;
+        if read_db.is_empty() {
+            cache.clear_cache();
+        } else {
+            let mut parts_that_require_new_render_objects = HashSet::new();
+            for id in &read_db.changed_part_instances {
+                //create new part instance cache
+                if let Ok(instance) = read_db.get_part_instance_data(id)
+                    && let Ok(part) = read_db.get_part_data(&instance.part_id)
+                {
+                    let rep_type = match &part.rep {
+                        PartRep::Mesh(_) => PartRepType::Mesh,
+                        PartRep::ComposedPart(_) => PartRepType::ComposedPart,
+                    };
+                    parts_that_require_new_render_objects.insert(instance.part_id);
+                    new_part_instance_caches.push((
+                        *id,
+                        PartInstanceCache {
+                            part_id: instance.part_id,
+                            transform: instance.transform,
+                            rep_type,
+                        },
+                    ));
+                }
             }
 
-            for id in &read_db.changed_parts {
-                if parts_to_be_processed.contains(id) {
-                    parts_that_require_new_render_objects.insert(*id);
+            for (id, instance_cache) in new_part_instance_caches {
+                cache.insert_part_instance(id, instance_cache);
+            }
 
-                    //create new part cache
-                    if let Ok(part) = read_db.get_part_data(id)
-                        && let Some(part_cache) = create_part_cache(
-                            *id,
-                            part,
-                            cache.get_part_instances_data(),
-                            &device,
-                            render_db.clone(),
-                            db.clone(),
-                        )
-                    {
-                        parts_to_be_processed.remove(id);
-                        new_part_caches.push((*id, part_cache));
+            let mut parts_to_be_processed = read_db.changed_parts.clone();
+            loop {
+                if parts_to_be_processed.is_empty() {
+                    break;
+                }
+
+                for id in &read_db.changed_parts {
+                    if parts_to_be_processed.contains(id) {
+                        parts_that_require_new_render_objects.insert(*id);
+
+                        //create new part cache
+                        if let Ok(part) = read_db.get_part_data(id)
+                            && let Some(part_cache) = create_part_cache(
+                                *id,
+                                part,
+                                cache.get_part_instances_data(),
+                                &device,
+                                render_db.clone(),
+                                db.clone(),
+                            )
+                        {
+                            parts_to_be_processed.remove(id);
+                            new_part_caches.push((*id, part_cache));
+                        }
                     }
                 }
             }
-        }
 
-        for (id, part_cache) in new_part_caches {
-            cache.insert_part(id, part_cache);
-        }
+            for (id, part_cache) in new_part_caches {
+                cache.insert_part(id, part_cache);
+            }
 
-        // Update scene data if instances changed
-        if !read_db.changed_part_instances.is_empty()
-            && let Ok(scene) = read_db.get_scene()
-        {
-            cache.set_scene_data(scene.instances.clone());
+            // Update scene data if instances changed
+            if !read_db.changed_part_instances.is_empty()
+                && let Ok(scene) = read_db.get_scene()
+            {
+                cache.set_scene_data(scene.instances.clone());
+            }
         }
     }
 
@@ -1782,7 +1787,8 @@ pub fn add_render_object(
     device: &wgpu::Device,
     render_db: Arc<RwLock<RenderDb>>,
     data: &InstanceData,
-) -> RenderObjectId {
+    //mesh and wireframe
+) -> (RenderObjectId, RenderObjectId) {
     let transformation_data = data
         .transforms
         .iter()
@@ -1813,12 +1819,12 @@ pub fn add_render_object(
         local_resources: vec![],
     };
 
-    {
+    let wireframe_object = {
         let mut render_db = render_db.write_blocking();
-        let _ = render_db.add_object(wireframe_object);
-    }
+        render_db.add_object(wireframe_object)
+    };
 
-    colored_object_id
+    (colored_object_id, wireframe_object)
 }
 
 fn add_bounding_box_wireframe(
