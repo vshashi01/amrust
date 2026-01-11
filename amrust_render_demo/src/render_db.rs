@@ -22,6 +22,8 @@ pub struct RenderDb {
     objects: SlotMap<RenderObjectId, RenderObject>,
     // invisible_objects: HashSet<usize>,
     local_bind_groups: Vec<wgpu::BindGroup>,
+
+    objects_to_render: Vec<RenderObjectId>,
 }
 
 impl RenderDb {
@@ -32,7 +34,13 @@ impl RenderDb {
             objects: SlotMap::with_key(),
             // invisible_objects: HashSet::new(),
             local_bind_groups: vec![],
+            objects_to_render: vec![],
         }
+    }
+
+    pub fn set_objects_to_render(&mut self, objects: &[RenderObjectId]) {
+        self.objects_to_render.clear();
+        self.objects_to_render.append(&mut objects.to_vec());
     }
 
     // returns the texture id and the bind group id
@@ -95,10 +103,15 @@ impl RenderDb {
         self.objects.insert(object)
     }
 
+    pub fn clear_objects_to_render(&mut self) {
+        self.objects_to_render.clear();
+    }
+
     pub fn clear_all(&mut self) {
         self.objects.clear();
         self.meshes.clear();
         self.local_bind_groups.clear();
+        self.objects_to_render.clear();
     }
 
     // fn make_object_invisible(&mut self, object_id: usize) {
@@ -118,23 +131,27 @@ impl RenderDb {
 
 impl RenderDatabase for RenderDb {
     fn get_renderables<'a>(&'a self) -> impl Iterator<Item = RenderData<'a>> {
-        self.objects.iter().map(|(id, render_object)| {
-            let gpu_mesh = self.meshes.get(render_object.gpu_mesh_id).unwrap();
-            let local_resources = render_object
-                .local_resources
-                .iter()
-                .map(|resource| {
-                    let bind_group = self.local_bind_groups.get(resource.0 as usize).unwrap();
-                    (bind_group, resource.1)
-                })
-                .collect::<Vec<_>>();
+        self.objects.iter().filter_map(|(id, render_object)| {
+            if self.objects_to_render.contains(&id) {
+                let gpu_mesh = self.meshes.get(render_object.gpu_mesh_id).unwrap();
+                let local_resources = render_object
+                    .local_resources
+                    .iter()
+                    .map(|resource| {
+                        let bind_group = self.local_bind_groups.get(resource.0 as usize).unwrap();
+                        (bind_group, resource.1)
+                    })
+                    .collect::<Vec<_>>();
 
-            (
-                render_object.renderable.clone(),
-                gpu_mesh,
-                &render_object.instance,
-                local_resources,
-            )
+                Some((
+                    render_object.renderable.clone(),
+                    gpu_mesh,
+                    &render_object.instance,
+                    local_resources,
+                ))
+            } else {
+                None
+            }
         })
     }
 }

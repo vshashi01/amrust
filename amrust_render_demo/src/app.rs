@@ -1,11 +1,12 @@
 use crate::amrust_db::{
-    Db, Identifiable, Mesh, Transformation, add_render_items_from_scene,
+    self, Db, Identifiable, Mesh, Transformation, add_render_items_from_scene,
     add_render_items_from_unique_parts, create_build_items_list,
     create_object_tree_from_identifiable, create_objects_list,
     create_scene_tree_items_by_unique_parts,
 };
 use crate::app_mode::AppMode;
 use crate::clear_db::ClearDbOps;
+use crate::db_cache::DbCache;
 use crate::egui_tools::EguiRenderer;
 use crate::operation::{DbReader, OperationResponse};
 use crate::operation_manager::{OperationError, OperationManager, OperationRequest};
@@ -76,6 +77,8 @@ struct AppState {
     pub operation_error_message: Option<String>,
     pub show_operation_error_modal: bool,
     pub show_modal: bool,
+
+    pub db_cache: DbCache,
 }
 
 impl AppState {
@@ -249,6 +252,7 @@ impl AppState {
             show_operation_error_modal: false,
 
             show_modal: false,
+            db_cache: DbCache::new(),
         }
     }
 
@@ -612,6 +616,30 @@ impl App {
 
                 if let Err(err) = state.operation_queue_tx.send_blocking(ops_msg) {
                     println!("{err:?}");
+                }
+            }
+
+            let has_changes = {
+                let read_db = state.db.read_blocking();
+                read_db.has_any_changes()
+            };
+
+            if has_changes {
+                let temp_db = state.db.clone();
+                let temp_render_db = state.render_db.clone();
+                let moved_cache = state.db_cache.clone();
+                let device = state.device.clone();
+
+                let new_db_cache = smol::block_on(async {
+                    amrust_db::update_data(temp_db, temp_render_db, moved_cache, device).await
+                });
+
+                match new_db_cache {
+                    Ok(cache) => {
+                        println!("Updated cache");
+                        state.db_cache = cache
+                    }
+                    Err(_) => println!("Updating data went wrong!"),
                 }
             }
 

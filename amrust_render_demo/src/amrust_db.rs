@@ -1425,16 +1425,16 @@ pub fn create_scene_tree_items_by_unique_parts(
     Ok(unique_part_id_to_instance_tree_item.into_values().collect())
 }
 
-struct InstanceData {
+pub struct InstanceData {
     pub gpu_mesh_id: RenderMeshId,
     pub transforms: Vec<Transformation>,
 }
 
-async fn update_data(
+pub async fn update_data(
     db: Arc<RwLock<Db>>,
     render_db: Arc<RwLock<RenderDb>>,
     mut cache: DbCache,
-    device: &wgpu::Device,
+    device: Arc<wgpu::Device>,
 ) -> Result<DbCache, DbError> {
     let mut new_part_caches = vec![];
     let mut new_part_instance_caches = vec![];
@@ -1485,11 +1485,10 @@ async fn update_data(
                             *id,
                             part,
                             cache.get_part_instances_data(),
-                            device,
+                            &device,
                             render_db.clone(),
                             db.clone(),
                         )
-                        .await
                     {
                         parts_to_be_processed.remove(id);
                         new_part_caches.push((*id, part_cache));
@@ -1518,12 +1517,13 @@ async fn update_data(
         write_db.clear_changed_parts();
     }
 
-    // update the render objects now based on the cache
+    cache.update_scene_based_render_objects(&device, render_db.clone());
+    cache.update_unique_parts_based_render_objects(&device, render_db.clone());
 
     Ok(cache)
 }
 
-async fn create_part_cache(
+fn create_part_cache(
     part_id: PartId,
     part: &Part,
     instance_cache: &HashMap<PartInstanceId, PartInstanceCache>,
@@ -1531,6 +1531,17 @@ async fn create_part_cache(
     render_db: Arc<RwLock<RenderDb>>,
     db: Arc<RwLock<Db>>,
 ) -> Option<PartCache> {
+    let all_instances = instance_cache
+        .iter()
+        .filter_map(|(id, cache)| {
+            if cache.part_id == part_id {
+                Some(*id)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
     match &part.rep {
         PartRep::Mesh(mesh) => {
             let gpu_mesh_id = create_mesh_gpu_data(device, render_db.clone(), mesh);
@@ -1538,16 +1549,6 @@ async fn create_part_cache(
                 compute_transformed_bounding_box_from_mesh(mesh, &Transformation(Mat4::IDENTITY));
             let vertices_count = mesh.vertices.len();
             let triangles_count = mesh.triangles.len() / 3;
-            let all_instances = instance_cache
-                .iter()
-                .filter_map(|(id, cache)| {
-                    if cache.part_id == part_id {
-                        Some(*id)
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>();
             Some(PartCache {
                 rep: PartRepCache::Mesh(MeshCache {
                     gpu_mesh_id,
@@ -1558,30 +1559,14 @@ async fn create_part_cache(
                 }),
             })
         }
-        PartRep::ComposedPart(instances) => {
-            //create composed part cache
-            None
-        }
+        PartRep::ComposedPart(components) => Some(PartCache {
+            rep: PartRepCache::ComposedPart(ComposedPartCache {
+                components: components.clone(),
+                instances: all_instances,
+            }),
+        }),
     }
 }
-
-// async fn create_part_instance_cache(
-//     instance: &PartInstance,
-//     device: &wgpu::Device,
-//     render_db: Arc<RwLock<RenderDb>>,
-//     part_gpu_mesh_id: RenderMeshId,
-// ) -> PartInstanceCache {
-//     let instance_data = InstanceData {
-//         gpu_mesh_id: part_gpu_mesh_id,
-//         transforms: vec![instance.transform],
-//     };
-//     let gpu_object_id = add_render_object(device, render_db, &instance_data);
-//     PartInstanceCache {
-//         part_id: instance.part_id,
-//         gpu_object_id,
-//         transform: instance.transform,
-//     }
-// }
 
 /// This creates a 3D scene based on the unique parts
 pub fn add_render_items_from_unique_parts(
@@ -1793,7 +1778,7 @@ fn create_mesh_gpu_data(
     render_db.add_mesh(gpu_mesh)
 }
 
-fn add_render_object(
+pub fn add_render_object(
     device: &wgpu::Device,
     render_db: Arc<RwLock<RenderDb>>,
     data: &InstanceData,
