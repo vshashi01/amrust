@@ -11,6 +11,8 @@ pub struct DbCache {
     parts_data: HashMap<PartId, PartCache>,
     instance_data: HashMap<PartInstanceId, PartInstanceCache>,
     scene_data: Vec<PartInstanceId>,
+
+    render_objects: HashMap<PartId, RenderObjectId>,
 }
 
 impl DbCache {
@@ -40,6 +42,18 @@ impl DbCache {
     pub fn get_part_instances_data(&self) -> &HashMap<PartInstanceId, PartInstanceCache> {
         &self.instance_data
     }
+
+    pub fn insert_part(&mut self, id: PartId, cache: PartCache) {
+        self.parts_data.insert(id, cache);
+    }
+
+    pub fn insert_part_instance(&mut self, id: PartInstanceId, cache: PartInstanceCache) {
+        self.instance_data.insert(id, cache);
+    }
+
+    pub fn set_scene_data(&mut self, instances: Vec<PartInstanceId>) {
+        self.scene_data = instances;
+    }
 }
 
 pub struct PartCache {
@@ -56,16 +70,26 @@ pub struct MeshCache {
     pub bbox: BoundingBox,
     pub vertices_count: usize,
     pub triangles_count: usize,
+
+    //all instances of this Mesh
+    pub instances: Vec<PartInstanceId>,
 }
 
 pub struct ComposedPartCache {
-    pub gpu_object_id: RenderObjectId,
     pub bbox: BoundingBox,
     pub components: Vec<PartInstanceId>,
+
+    //all instances of this composed part
+    pub instances: Vec<PartInstanceId>,
+}
+
+pub enum PartRepType {
+    Mesh,
+    ComposedPart,
 }
 
 pub struct PartInstanceCache {
     pub part_id: PartId,
-    pub gpu_object_id: u32,
     pub transform: Transformation,
+    pub rep_type: PartRepType,
 }

@@ -21,7 +21,9 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use crate::db_cache::{DbCache, PartCache, PartInstanceCache};
+use crate::db_cache::{
+    ComposedPartCache, DbCache, MeshCache, PartCache, PartInstanceCache, PartRepCache, PartRepType,
+};
 use crate::operation::DbReader;
 use crate::render_db::{RenderDb, RenderMeshId, RenderObject, RenderObjectId};
 use crate::tree_item_viewer::TreeItem;
@@ -1439,53 +1441,147 @@ async fn update_data(
 
     {
         let read_db = db.read().await;
-        for id in &read_db.changed_parts {
-            //create new part cache
-            if let Ok(part) = read_db.get_part_data(id) {
-                let part_cache = create_part_cache(part, device, render_db.clone());
-                new_part_caches.push((*id, part_cache));
-            }
-        }
-
+        let mut parts_that_require_new_render_objects = HashSet::new();
         for id in &read_db.changed_part_instances {
             //create new part instance cache
-            if let Ok(instance) = read_db.get_part_instance_data(id) {
-                let part_cache = create_part_instance_cache(instance, device, render_db.clone());
-                new_part_instance_caches.push((*id, part_cache));
+            if let Ok(instance) = read_db.get_part_instance_data(id)
+                && let Ok(part) = read_db.get_part_data(&instance.part_id)
+            {
+                let rep_type = match &part.rep {
+                    PartRep::Mesh(_) => PartRepType::Mesh,
+                    PartRep::ComposedPart(_) => PartRepType::ComposedPart,
+                };
+                parts_that_require_new_render_objects.insert(instance.part_id);
+                new_part_instance_caches.push((
+                    *id,
+                    PartInstanceCache {
+                        part_id: instance.part_id,
+                        transform: instance.transform,
+                        rep_type,
+                    },
+                ));
             }
         }
-    }
 
-    for (id, part_cache) in new_part_caches {
-        if let Some(existing) = cache.get_part_data_mut(&id) {
-            *existing = part_cache;
+        for (id, instance_cache) in new_part_instance_caches {
+            if let Some(existing) = cache.get_part_instance_data_mut(&id) {
+                *existing = instance_cache;
+            }
+        }
+
+        let mut parts_to_be_processed = read_db.changed_parts.clone();
+        loop {
+            if parts_to_be_processed.is_empty() {
+                break;
+            }
+
+            for id in &read_db.changed_parts {
+                if parts_to_be_processed.contains(id) {
+                    parts_that_require_new_render_objects.insert(*id);
+
+                    //create new part cache
+                    if let Ok(part) = read_db.get_part_data(id)
+                        && let Some(part_cache) = create_part_cache(
+                            *id,
+                            part,
+                            cache.get_part_instances_data(),
+                            device,
+                            render_db.clone(),
+                            db.clone(),
+                        )
+                        .await
+                    {
+                        parts_to_be_processed.remove(id);
+                        new_part_caches.push((*id, part_cache));
+                    }
+                }
+            }
+        }
+
+        for (id, part_cache) in new_part_caches {
+            if let Some(existing) = cache.get_part_data_mut(&id) {
+                *existing = part_cache;
+            }
+        }
+
+        // Update scene data if instances changed
+        if !read_db.changed_part_instances.is_empty()
+            && let Ok(scene) = read_db.get_scene()
+        {
+            cache.set_scene_data(scene.instances.clone());
         }
     }
 
-    for (id, instance_cache) in new_part_instance_caches {
-        if let Some(existing) = cache.get_part_instance_data_mut(&id) {
-            *existing = instance_cache;
-        }
+    {
+        let mut write_db = db.write().await;
+        write_db.clear_changed_part_instances();
+        write_db.clear_changed_parts();
     }
+
+    // update the render objects now based on the cache
 
     Ok(cache)
 }
 
-fn create_part_cache(
+async fn create_part_cache(
+    part_id: PartId,
     part: &Part,
+    instance_cache: &HashMap<PartInstanceId, PartInstanceCache>,
     device: &wgpu::Device,
     render_db: Arc<RwLock<RenderDb>>,
-) -> PartCache {
-    todo!()
+    db: Arc<RwLock<Db>>,
+) -> Option<PartCache> {
+    match &part.rep {
+        PartRep::Mesh(mesh) => {
+            let gpu_mesh_id = create_mesh_gpu_data(device, render_db.clone(), mesh);
+            let bbox =
+                compute_transformed_bounding_box_from_mesh(mesh, &Transformation(Mat4::IDENTITY));
+            let vertices_count = mesh.vertices.len();
+            let triangles_count = mesh.triangles.len() / 3;
+            let all_instances = instance_cache
+                .iter()
+                .filter_map(|(id, cache)| {
+                    if cache.part_id == part_id {
+                        Some(*id)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            Some(PartCache {
+                rep: PartRepCache::Mesh(MeshCache {
+                    gpu_mesh_id,
+                    bbox,
+                    vertices_count,
+                    triangles_count,
+                    instances: all_instances,
+                }),
+            })
+        }
+        PartRep::ComposedPart(instances) => {
+            //create composed part cache
+            None
+        }
+    }
 }
 
-fn create_part_instance_cache(
-    part: &PartInstance,
-    device: &wgpu::Device,
-    render_db: Arc<RwLock<RenderDb>>,
-) -> PartInstanceCache {
-    todo!()
-}
+// async fn create_part_instance_cache(
+//     instance: &PartInstance,
+//     device: &wgpu::Device,
+//     render_db: Arc<RwLock<RenderDb>>,
+//     part_gpu_mesh_id: RenderMeshId,
+// ) -> PartInstanceCache {
+//     let instance_data = InstanceData {
+//         gpu_mesh_id: part_gpu_mesh_id,
+//         transforms: vec![instance.transform],
+//     };
+//     let gpu_object_id = add_render_object(device, render_db, &instance_data);
+//     PartInstanceCache {
+//         part_id: instance.part_id,
+//         gpu_object_id,
+//         transform: instance.transform,
+//     }
+// }
 
 /// This creates a 3D scene based on the unique parts
 pub fn add_render_items_from_unique_parts(
@@ -1551,7 +1647,7 @@ pub fn add_render_items_from_unique_parts(
         .into_iter()
         .for_each(|(_, instance_data)| {
             let render_db = render_db.clone();
-            add_render_object(device, render_db, &instance_data);
+            let _ = add_render_object(device, render_db, &instance_data);
         });
 
     let mut total_bbox = BoundingBox::default();
@@ -1607,7 +1703,7 @@ pub fn add_render_items_from_scene(
         .into_iter()
         .for_each(|(_, instance_data)| {
             let render_db = render_db.clone();
-            add_render_object(device, render_db, &instance_data);
+            let _ = add_render_object(device, render_db, &instance_data);
         });
 
     bboxes.iter().for_each(|bbox| {
@@ -1697,7 +1793,11 @@ fn create_mesh_gpu_data(
     render_db.add_mesh(gpu_mesh)
 }
 
-fn add_render_object(device: &wgpu::Device, render_db: Arc<RwLock<RenderDb>>, data: &InstanceData) {
+fn add_render_object(
+    device: &wgpu::Device,
+    render_db: Arc<RwLock<RenderDb>>,
+    data: &InstanceData,
+) -> RenderObjectId {
     let transformation_data = data
         .transforms
         .iter()
@@ -1713,12 +1813,10 @@ fn add_render_object(device: &wgpu::Device, render_db: Arc<RwLock<RenderDb>>, da
             .build(device),
         local_resources: vec![],
     };
-    {
+    let colored_object_id = {
         let mut render_db = render_db.write_blocking();
-        let _ = render_db.add_object(object);
-    }
-
-    // println!("Colored Object id {}", object_id);
+        render_db.add_object(object)
+    };
 
     let wireframe_object = RenderObject {
         renderable: amrust_render::Renderable::WireframeMesh,
@@ -1735,7 +1833,7 @@ fn add_render_object(device: &wgpu::Device, render_db: Arc<RwLock<RenderDb>>, da
         let _ = render_db.add_object(wireframe_object);
     }
 
-    // println!("Wireframe Object id {}", wireframe_object_id);
+    colored_object_id
 }
 
 fn add_bounding_box_wireframe(
