@@ -1447,7 +1447,7 @@ pub async fn update_data(
         let read_db = db.read().await;
 
         if read_db.is_empty() {
-            cache.clear_cache();
+            cache.clear();
         } else {
             let mut parts_that_require_new_render_objects = HashSet::new();
             for id in &read_db.changed_part_instances {
@@ -1516,6 +1516,7 @@ pub async fn update_data(
         }
     }
 
+    // this is dangerous because the moment we release the read lock before changes could have happened?
     {
         let mut write_db = db.write().await;
         write_db.clear_changed_part_instances();

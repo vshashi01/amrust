@@ -35,7 +35,7 @@ impl DbCache {
         }
     }
 
-    pub fn clear_cache(&mut self) {
+    pub fn clear(&mut self) {
         self.parts_data.clear();
         self.instance_data.clear();
         self.scene_data.clear();
