@@ -624,7 +624,12 @@ impl App {
 
             let has_changes = {
                 let read_db = state.db.read_blocking();
-                read_db.has_any_changes()
+                if read_db.has_any_changes() {
+                    true
+                } else {
+                    // hack to refresh Ui when either one it is not matching the other on empty
+                    state.db_cache.is_empty() != read_db.is_empty()
+                }
             };
 
             if has_changes {
@@ -641,6 +646,7 @@ impl App {
                     Ok(cache) => {
                         println!("Updated cache");
                         state.db_cache = cache;
+                        state.need_viewport_update = true;
                     }
                     Err(_) => println!("Updating data went wrong!"),
                 }
@@ -698,84 +704,80 @@ impl App {
                         }
                     };
 
+                //update render objects
                 {
-                    let part_list = PartList::new(part_list_items);
-
-                    let mut toolsheets = Toolsheets::new(
-                        state.current_app_mode,
-                        part_list,
-                        TreeItemViewer::new(object_items, false),
-                        TreeItemViewer::new(build_items, false),
-                    );
-
-                    // Validate and filter selected_identifiables
-                    let mut valid_selected = vec![];
-                    for id in &state.selected_identifiables {
-                        match id {
-                            Identifiable::Part(part_id) => {
-                                if state.db_cache.get_part_data(part_id).is_some() {
-                                    valid_selected.push(*id);
-                                }
-                            }
-                            Identifiable::PartInstance(instance_id) => {
-                                if state.db_cache.get_part_instance_data(instance_id).is_some() {
-                                    valid_selected.push(*id);
-                                }
-                            }
-                        }
-                    }
-                    state.selected_identifiables = valid_selected;
-                    // Restore selections in toolsheets based on mode
-                    match state.current_app_mode {
-                        AppMode::Objects => {
-                            toolsheets.override_selected_object(
-                                &state
-                                    .selected_identifiables
-                                    .iter()
-                                    .filter(|id| matches!(id, Identifiable::Part(_)))
-                                    .cloned()
-                                    .collect::<Vec<_>>(),
-                            );
-                        }
-                        AppMode::Build => {
-                            toolsheets.override_selected_build_items(
-                                &state
-                                    .selected_identifiables
-                                    .iter()
-                                    .filter(|id| matches!(id, Identifiable::PartInstance(_)))
-                                    .cloned()
-                                    .collect::<Vec<_>>(),
-                            );
-                        }
-                    }
-                    // Update properties panel
-                    let mut tree_items = vec![];
-                    for id in &state.selected_identifiables {
-                        if let Ok(item) =
-                            create_object_tree_from_identifiable(state.db.clone(), *id)
-                        {
-                            tree_items.push(item);
-                        }
-                    }
-                    toolsheets.set_selected_identifiable_properties(TreeItemViewer {
-                        childs: tree_items,
-                        skip_inert_node: false,
-                    });
-                    toolsheets.clear_selection_changed();
-
-                    let _ = state.toolsheets.insert(toolsheets);
-
-                    //update render objects
-                    {
-                        let mut write_render_db = state.render_db.write_blocking();
-                        write_render_db.set_objects_to_render(&render_objects);
-                    }
-
-                    //unzoom_bbox(&mut state.camera_data, &bbox);
-                    let _ = state.scene_bbox.insert(bbox);
-
-                    // entities(&state.detached_identifiables);
+                    let mut write_render_db = state.render_db.write_blocking();
+                    write_render_db.set_objects_to_render(&render_objects);
                 }
+
+                let part_list = PartList::new(part_list_items);
+
+                let mut toolsheets = Toolsheets::new(
+                    state.current_app_mode,
+                    part_list,
+                    TreeItemViewer::new(object_items, false),
+                    TreeItemViewer::new(build_items, false),
+                );
+
+                // Validate and filter selected_identifiables
+                let mut valid_selected = vec![];
+                for id in &state.selected_identifiables {
+                    match id {
+                        Identifiable::Part(part_id) => {
+                            if state.db_cache.get_part_data(part_id).is_some() {
+                                valid_selected.push(*id);
+                            }
+                        }
+                        Identifiable::PartInstance(instance_id) => {
+                            if state.db_cache.get_part_instance_data(instance_id).is_some() {
+                                valid_selected.push(*id);
+                            }
+                        }
+                    }
+                }
+                state.selected_identifiables = valid_selected;
+                // Restore selections in toolsheets based on mode
+                match state.current_app_mode {
+                    AppMode::Objects => {
+                        toolsheets.override_selected_object(
+                            &state
+                                .selected_identifiables
+                                .iter()
+                                .filter(|id| matches!(id, Identifiable::Part(_)))
+                                .cloned()
+                                .collect::<Vec<_>>(),
+                        );
+                    }
+                    AppMode::Build => {
+                        toolsheets.override_selected_build_items(
+                            &state
+                                .selected_identifiables
+                                .iter()
+                                .filter(|id| matches!(id, Identifiable::PartInstance(_)))
+                                .cloned()
+                                .collect::<Vec<_>>(),
+                        );
+                    }
+                }
+                // Update properties panel
+                let mut tree_items = vec![];
+                for id in &state.selected_identifiables {
+                    if let Ok(item) = create_object_tree_from_identifiable(state.db.clone(), *id) {
+                        tree_items.push(item);
+                    }
+                }
+                toolsheets.set_selected_identifiable_properties(TreeItemViewer {
+                    childs: tree_items,
+                    skip_inert_node: false,
+                });
+                toolsheets.clear_selection_changed();
+
+                let _ = state.toolsheets.insert(toolsheets);
+
+                //unzoom_bbox(&mut state.camera_data, &bbox);
+                let _ = state.scene_bbox.insert(bbox);
+
+                // entities(&state.detached_identifiables);
 
                 state.need_viewport_update = false;
                 state.current_render_mode = state.current_app_mode;
