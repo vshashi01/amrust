@@ -102,7 +102,14 @@ impl Operation for Save3mfOps {
         let file = std::fs::File::create_new(&self.path);
         match file {
             Ok(f) => {
-                Timer::after(Duration::from_secs(5)).await;
+                match &self.save_mode {
+                    SaveMode::PartInstances(_) | SaveMode::PartsOnly(_) => {
+                        Timer::after(Duration::from_secs(15)).await;
+                    }
+                    SaveMode::Scene => {
+                        Timer::after(Duration::from_secs(10));
+                    }
+                }
 
                 match context
                     .get_db(|db| match save(db, &self.save_mode, f) {
