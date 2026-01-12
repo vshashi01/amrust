@@ -21,8 +21,9 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use crate::db_cache::{
-    ComposedPartCache, DbCache, MeshCache, PartCache, PartInstanceCache, PartRepCache, PartRepType,
+use crate::db_view_model::{
+    ComposedPartCache, DbViewModel, MeshCache, PartCache, PartInstanceCache, PartRepCache,
+    PartRepType,
 };
 use crate::operation::DbReader;
 use crate::render_db::{RenderDb, RenderMeshId, RenderObject, RenderObjectId};
@@ -1437,9 +1438,9 @@ pub struct InstanceData {
 pub async fn update_data(
     db: Arc<RwLock<Db>>,
     render_db: Arc<RwLock<RenderDb>>,
-    mut cache: DbCache,
+    mut cache: DbViewModel,
     device: Arc<wgpu::Device>,
-) -> Result<DbCache, DbError> {
+) -> Result<DbViewModel, DbError> {
     let mut new_part_caches = vec![];
     let mut new_part_instance_caches = vec![];
 

@@ -1,17 +1,14 @@
 use crate::amrust_db::{
-    self, Db, Identifiable, Mesh, Transformation, add_render_items_from_scene,
-    add_render_items_from_unique_parts, create_build_items_list,
-    create_object_tree_from_identifiable, create_objects_list,
-    create_scene_tree_items_by_unique_parts,
+    self, Db, Identifiable, Mesh, Transformation, create_object_tree_from_identifiable,
 };
 use crate::app_mode::AppMode;
 use crate::clear_db::ClearDbOps;
-use crate::db_cache::{
-    self, DbCache, create_build_items_list_from_cache, create_objects_list_from_cache,
+use crate::db_view_model::{
+    self, DbViewModel, create_build_items_list_from_cache, create_objects_list_from_cache,
     create_scene_tree_items_by_unique_parts_from_cache, get_total_bbox_from_cache,
 };
 use crate::egui_tools::EguiRenderer;
-use crate::operation::{DbReader, OperationResponse};
+use crate::operation::OperationResponse;
 use crate::operation_manager::{OperationError, OperationManager, OperationRequest};
 use crate::part_list::PartList;
 use crate::render_db::RenderDb;
@@ -25,7 +22,7 @@ use amrust_render::bounding_box::BoundingBox;
 // use amrust_lib::widgets::dropped_files::DroppedFilesWidget;
 use amrust_render::camera::{self, CameraData, OrthographicCameraData};
 use amrust_render::normalized_box::{ORDERED_POSITIONS, ORDERED_POSITIONS_TRI_EDGE_INDICES};
-use egui::{Id, Layout, Modal, epaint};
+use egui::{Id, Layout, epaint};
 use egui_dock::{DockArea, DockState, NodeIndex};
 use egui_file_dialog::FileDialog;
 use egui_wgpu::wgpu::SurfaceError;
@@ -79,9 +76,8 @@ struct AppState {
     pub operation_error_rx: Receiver<OperationError>,
     pub operation_error_message: Option<String>,
     pub show_operation_error_modal: bool,
-    pub show_modal: bool,
 
-    pub db_cache: DbCache,
+    pub db_view_model: DbViewModel,
 }
 
 impl AppState {
@@ -254,8 +250,7 @@ impl AppState {
             operation_error_message: None,
             show_operation_error_modal: false,
 
-            show_modal: false,
-            db_cache: DbCache::new(),
+            db_view_model: DbViewModel::new(),
         }
     }
 
@@ -460,7 +455,7 @@ impl App {
                             state.need_viewport_update = true;
                         }
 
-                        ui.add_enabled_ui(!state.db_cache.is_empty(), |ui| {
+                        ui.add_enabled_ui(!state.db_view_model.is_empty(), |ui| {
                             if ui.button("Unzoom Scene").clicked() {
                                 unzoom_bbox(&mut state.camera_data, bbox);
                             }
@@ -486,7 +481,7 @@ impl App {
                         });
 
                         //onyl show modes if there is a scene
-                        if !state.db_cache.is_empty() {
+                        if !state.db_view_model.is_empty() {
                             ui.with_layout(Layout::right_to_left(egui::Align::RIGHT), |ui| {
                                 // ToDo: Add a tooltip here to explain the difference in modes
                                 ui.radio_value(
@@ -628,14 +623,14 @@ impl App {
                     true
                 } else {
                     // hack to refresh Ui when either one it is not matching the other on empty
-                    state.db_cache.is_empty() != read_db.is_empty()
+                    state.db_view_model.is_empty() != read_db.is_empty()
                 }
             };
 
             if has_changes {
                 let temp_db = state.db.clone();
                 let temp_render_db = state.render_db.clone();
-                let moved_cache = state.db_cache.clone();
+                let moved_cache = state.db_view_model.clone();
                 let device = state.device.clone();
 
                 let new_db_cache = smol::block_on(async {
@@ -645,7 +640,7 @@ impl App {
                 match new_db_cache {
                     Ok(cache) => {
                         println!("Updated cache");
-                        state.db_cache = cache;
+                        state.db_view_model = cache;
                         state.need_viewport_update = true;
                     }
                     Err(_) => println!("Updating data went wrong!"),
@@ -653,7 +648,7 @@ impl App {
             }
 
             if state.current_app_mode != state.current_render_mode || state.need_viewport_update {
-                if state.db_cache.is_empty() {
+                if state.db_view_model.is_empty() {
                     let mut write_render_db = state.render_db.write_blocking();
                     write_render_db.clear_all();
                 }
@@ -678,28 +673,34 @@ impl App {
                     match &state.current_app_mode {
                         AppMode::Objects => {
                             let render_objects = state
-                                .db_cache
+                                .db_view_model
                                 .get_unique_parts_based_render_object_ids()
                                 .cloned()
                                 .collect::<Vec<_>>();
 
-                            let bbox = get_total_bbox_from_cache(&state.db_cache, AppMode::Objects);
-                            let part_list =
-                                create_scene_tree_items_by_unique_parts_from_cache(&state.db_cache);
-                            let object_list = create_objects_list_from_cache(&state.db_cache);
-                            let build_list = create_build_items_list_from_cache(&state.db_cache);
+                            let bbox =
+                                get_total_bbox_from_cache(&state.db_view_model, AppMode::Objects);
+                            let part_list = create_scene_tree_items_by_unique_parts_from_cache(
+                                &state.db_view_model,
+                            );
+                            let object_list = create_objects_list_from_cache(&state.db_view_model);
+                            let build_list =
+                                create_build_items_list_from_cache(&state.db_view_model);
                             (render_objects, bbox, part_list, object_list, build_list)
                         }
                         AppMode::Build => {
                             let render_objects = state
-                                .db_cache
+                                .db_view_model
                                 .get_scene_based_render_object_ids()
                                 .cloned()
                                 .collect::<Vec<_>>();
-                            let bbox = get_total_bbox_from_cache(&state.db_cache, AppMode::Build);
-                            let part_list = create_build_items_list_from_cache(&state.db_cache);
-                            let object_list = create_objects_list_from_cache(&state.db_cache);
-                            let build_list = create_build_items_list_from_cache(&state.db_cache);
+                            let bbox =
+                                get_total_bbox_from_cache(&state.db_view_model, AppMode::Build);
+                            let part_list =
+                                create_build_items_list_from_cache(&state.db_view_model);
+                            let object_list = create_objects_list_from_cache(&state.db_view_model);
+                            let build_list =
+                                create_build_items_list_from_cache(&state.db_view_model);
                             (render_objects, bbox, part_list, object_list, build_list)
                         }
                     };
@@ -724,12 +725,16 @@ impl App {
                 for id in &state.selected_identifiables {
                     match id {
                         Identifiable::Part(part_id) => {
-                            if state.db_cache.get_part_data(part_id).is_some() {
+                            if state.db_view_model.get_part_data(part_id).is_some() {
                                 valid_selected.push(*id);
                             }
                         }
                         Identifiable::PartInstance(instance_id) => {
-                            if state.db_cache.get_part_instance_data(instance_id).is_some() {
+                            if state
+                                .db_view_model
+                                .get_part_instance_data(instance_id)
+                                .is_some()
+                            {
                                 valid_selected.push(*id);
                             }
                         }

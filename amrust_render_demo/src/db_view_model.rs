@@ -1,7 +1,7 @@
 use amrust_render::bounding_box::BoundingBox;
 
 use crate::{
-    amrust_db::{add_render_object, InstanceData, PartId, PartInstanceId, Transformation},
+    amrust_db::{InstanceData, PartId, PartInstanceId, Transformation, add_render_object},
     render_db::{RenderMeshId, RenderObjectId},
 };
 
@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
-pub struct DbCache {
+pub struct DbViewModel {
     parts_data: HashMap<PartId, PartCache>,
     instance_data: HashMap<PartInstanceId, PartInstanceCache>,
     scene_data: Vec<PartInstanceId>,
@@ -25,7 +25,7 @@ pub struct DbCache {
     unique_parts_based_render_objects: HashMap<PartId, (RenderObjectId, RenderObjectId)>,
 }
 
-impl DbCache {
+impl DbViewModel {
     pub fn new() -> Self {
         Self {
             parts_data: HashMap::new(),
@@ -238,7 +238,7 @@ impl DbCache {
     }
 }
 
-pub fn get_total_bbox_from_cache(db_cache: &DbCache, mode: AppMode) -> BoundingBox {
+pub fn get_total_bbox_from_cache(db_cache: &DbViewModel, mode: AppMode) -> BoundingBox {
     let mut total_bbox = BoundingBox::default();
     match mode {
         AppMode::Objects => {
@@ -262,7 +262,7 @@ pub fn get_total_bbox_from_cache(db_cache: &DbCache, mode: AppMode) -> BoundingB
     total_bbox
 }
 
-fn compute_part_bbox(db_cache: &DbCache, part_id: &PartId) -> BoundingBox {
+fn compute_part_bbox(db_cache: &DbViewModel, part_id: &PartId) -> BoundingBox {
     if let Some(part_cache) = db_cache.get_part_data(part_id) {
         match &part_cache.rep {
             PartRepCache::Mesh(mesh_cache) => mesh_cache.bbox.clone(),
@@ -284,7 +284,7 @@ fn compute_part_bbox(db_cache: &DbCache, part_id: &PartId) -> BoundingBox {
     }
 }
 
-pub fn create_objects_list_from_cache(db_cache: &DbCache) -> Vec<TreeItem<Identifiable>> {
+pub fn create_objects_list_from_cache(db_cache: &DbViewModel) -> Vec<TreeItem<Identifiable>> {
     db_cache
         .parts_data
         .iter()
@@ -293,7 +293,7 @@ pub fn create_objects_list_from_cache(db_cache: &DbCache) -> Vec<TreeItem<Identi
 }
 
 fn build_part_tree(
-    db_cache: &DbCache,
+    db_cache: &DbViewModel,
     part_id: PartId,
     part_cache: &PartCache,
 ) -> TreeItem<Identifiable> {
@@ -333,7 +333,7 @@ fn build_part_tree(
     }
 }
 
-pub fn create_build_items_list_from_cache(db_cache: &DbCache) -> Vec<TreeItem<Identifiable>> {
+pub fn create_build_items_list_from_cache(db_cache: &DbViewModel) -> Vec<TreeItem<Identifiable>> {
     db_cache
         .scene_data
         .iter()
@@ -358,7 +358,7 @@ pub fn create_build_items_list_from_cache(db_cache: &DbCache) -> Vec<TreeItem<Id
 }
 
 pub fn create_scene_tree_items_by_unique_parts_from_cache(
-    db_cache: &DbCache,
+    db_cache: &DbViewModel,
 ) -> Vec<TreeItem<Identifiable>> {
     let mut instance_id_to_tree_item_map: HashMap<PartInstanceId, TreeItem<Identifiable>> =
         HashMap::new();
