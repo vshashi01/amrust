@@ -1,7 +1,7 @@
 use amrust_render::bounding_box::BoundingBox;
 
 use crate::{
-    amrust_db::{InstanceData, PartId, PartInstanceId, Transformation, add_render_object},
+    amrust_db::{add_render_object, InstanceData, PartId, PartInstanceId, Transformation},
     render_db::{RenderMeshId, RenderObjectId},
 };
 
@@ -9,6 +9,7 @@ use crate::amrust_db::Identifiable;
 use crate::app_mode::AppMode;
 use crate::render_db::RenderDb;
 use crate::tree_item_viewer::TreeItem;
+use amrust_render::transformation::Transformation as RenderTransformation;
 use glam::Mat4;
 use smol::lock::RwLock;
 use std::collections::{HashMap, HashSet};
@@ -248,10 +249,11 @@ pub fn get_total_bbox_from_cache(db_cache: &DbCache, mode: AppMode) -> BoundingB
             }
         }
         AppMode::Build => {
-            // Scene instances visible: compute bbox for each part in scene
+            // Scene instances visible: compute bbox for each part in scene, transformed
             for instance_id in &db_cache.scene_data {
                 if let Some(instance_cache) = db_cache.get_part_instance_data(instance_id) {
-                    let part_bbox = compute_part_bbox(db_cache, &instance_cache.part_id);
+                    let mut part_bbox = compute_part_bbox(db_cache, &instance_cache.part_id);
+                    part_bbox.transform(&RenderTransformation(instance_cache.transform.0));
                     total_bbox.unite(&part_bbox);
                 }
             }
@@ -268,7 +270,9 @@ fn compute_part_bbox(db_cache: &DbCache, part_id: &PartId) -> BoundingBox {
                 let mut bbox = BoundingBox::default();
                 for component_id in &composed_cache.components {
                     if let Some(instance_cache) = db_cache.get_part_instance_data(component_id) {
-                        let component_bbox = compute_part_bbox(db_cache, &instance_cache.part_id);
+                        let mut component_bbox =
+                            compute_part_bbox(db_cache, &instance_cache.part_id);
+                        component_bbox.transform(&RenderTransformation(instance_cache.transform.0));
                         bbox.unite(&component_bbox);
                     }
                 }
