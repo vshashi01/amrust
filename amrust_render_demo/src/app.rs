@@ -67,7 +67,6 @@ struct AppState {
     pub render_message_tx: Sender<RenderMessage>,
     pub render_response_rx: Receiver<RenderResponse>,
     pub render_db: Arc<RwLock<RenderDb>>,
-    pub detached_identifiables: Vec<Identifiable>,
     pub selected_identifiables: Vec<Identifiable>,
 
     pub operation_manager: OperationManager,
@@ -240,7 +239,6 @@ impl AppState {
             render_message_tx,
             render_response_rx,
             render_db,
-            detached_identifiables: vec![],
             selected_identifiables: vec![],
 
             operation_manager,
@@ -814,7 +812,12 @@ impl App {
             }
 
             if let Some(ref mut toolsheets) = state.toolsheets {
-                toolsheets.set_blocked_entities(&state.detached_identifiables);
+                toolsheets.set_blocked_entities(
+                    &state
+                        .db_view_model
+                        .get_detached_identifiables()
+                        .collect::<Vec<_>>(),
+                );
             }
 
             //update the camera if the camera data is changed
@@ -830,7 +833,7 @@ impl App {
             {
                 state.operation_manager.run(&state.db, &state.executor);
 
-                state.detached_identifiables = state.operation_manager.get_detached_identifiables();
+                //state.detached_identifiables = state.operation_manager.get_detached_identifiables();
 
                 if let Some(op) = state.operation_manager.get_modal_operation() {
                     let _ = egui::Modal::new(egui::Id::new("app modal")).show(

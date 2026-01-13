@@ -803,7 +803,7 @@ impl Db {
     fn detach_part(&mut self, part_id: &PartId) -> Result<Part, DbError> {
         if let Some(part) = self.unique_parts.detach(*part_id) {
             self.detached_unique_parts.push(*part_id);
-            //self.mark_part_changed(*part_id);
+            self.mark_part_changed(*part_id);
             Ok(part)
         } else {
             Err(DbError::PartIdNotFound(*part_id))
@@ -832,7 +832,7 @@ impl Db {
     ) -> Result<PartInstance, DbError> {
         if let Some(part) = self.part_instances.detach(*part_instance_id) {
             self.detached_part_instances.push(*part_instance_id);
-            //self.mark_part_instance_changed(*part_instance_id);
+            self.mark_part_instance_changed(*part_instance_id);
             Ok(part)
         } else {
             Err(DbError::PartInstanceIdNotFound(*part_instance_id))
@@ -1452,23 +1452,44 @@ pub async fn update_data(
         } else {
             let mut parts_that_require_new_render_objects = HashSet::new();
             for id in &read_db.changed_part_instances {
-                //create new part instance cache
-                if let Ok(instance) = read_db.get_part_instance_data(id)
-                    && let Ok(part) = read_db.get_part_data(&instance.part_id)
-                {
-                    let rep_type = match &part.rep {
-                        PartRep::Mesh(_) => PartRepType::Mesh,
-                        PartRep::ComposedPart(_) => PartRepType::ComposedPart,
-                    };
-                    parts_that_require_new_render_objects.insert(instance.part_id);
-                    new_part_instance_caches.push((
-                        *id,
-                        PartInstanceCache {
-                            part_id: instance.part_id,
-                            transform: instance.transform,
-                            rep_type,
-                        },
-                    ));
+                //check if part instance is detached if yes push in detached and dont update cache
+                if read_db.detached_part_instances.contains(id) {
+                    cache.add_detached_part_instance(*id);
+
+                    if let Some(instance_data) = cache.get_part_instance_data(id)
+                        && read_db
+                            .detached_unique_parts
+                            .contains(&instance_data.part_id)
+                    {
+                        cache.add_detached_part(instance_data.part_id);
+                    }
+                } else {
+                    //create new part instance cache
+                    if let Ok(instance) = read_db.get_part_instance_data(id) {
+                        // remove from detached (if existed) since it now back in the main db
+                        cache.remove_detached_part_instance(id);
+
+                        if read_db.detached_unique_parts.contains(&instance.part_id) {
+                            cache.add_detached_part(instance.part_id);
+                        } else if let Ok(part) = read_db.get_part_data(&instance.part_id) {
+                            // remove from detached (if existed) since it now back in the main db
+                            cache.remove_detached_part(&instance.part_id);
+
+                            let rep_type = match &part.rep {
+                                PartRep::Mesh(_) => PartRepType::Mesh,
+                                PartRep::ComposedPart(_) => PartRepType::ComposedPart,
+                            };
+                            parts_that_require_new_render_objects.insert(instance.part_id);
+                            new_part_instance_caches.push((
+                                *id,
+                                PartInstanceCache {
+                                    part_id: instance.part_id,
+                                    transform: instance.transform,
+                                    rep_type,
+                                },
+                            ));
+                        }
+                    }
                 }
             }
 
@@ -1484,21 +1505,26 @@ pub async fn update_data(
 
                 for id in &read_db.changed_parts {
                     if parts_to_be_processed.contains(id) {
-                        parts_that_require_new_render_objects.insert(*id);
-
-                        //create new part cache
-                        if let Ok(part) = read_db.get_part_data(id)
-                            && let Some(part_cache) = create_part_cache(
-                                *id,
-                                part,
-                                cache.get_part_instances_data(),
-                                &device,
-                                render_db.clone(),
-                                db.clone(),
-                            )
-                        {
+                        if read_db.detached_unique_parts.contains(id) {
+                            cache.add_detached_part(*id);
                             parts_to_be_processed.remove(id);
-                            new_part_caches.push((*id, part_cache));
+                        } else {
+                            parts_that_require_new_render_objects.insert(*id);
+
+                            //create new part cache
+                            if let Ok(part) = read_db.get_part_data(id)
+                                && let Some(part_cache) = create_part_cache(
+                                    *id,
+                                    part,
+                                    cache.get_part_instances_data(),
+                                    &device,
+                                    render_db.clone(),
+                                    db.clone(),
+                                )
+                            {
+                                parts_to_be_processed.remove(id);
+                                new_part_caches.push((*id, part_cache));
+                            }
                         }
                     }
                 }

@@ -23,6 +23,9 @@ pub struct DbViewModel {
 
     scene_based_render_objects: HashMap<PartId, (RenderObjectId, RenderObjectId)>,
     unique_parts_based_render_objects: HashMap<PartId, (RenderObjectId, RenderObjectId)>,
+
+    detached_parts: HashSet<PartId>,
+    detached_part_instances: HashSet<PartInstanceId>,
 }
 
 impl DbViewModel {
@@ -33,6 +36,8 @@ impl DbViewModel {
             scene_data: Vec::new(),
             scene_based_render_objects: HashMap::new(),
             unique_parts_based_render_objects: HashMap::new(),
+            detached_parts: HashSet::new(),
+            detached_part_instances: HashSet::new(),
         }
     }
 
@@ -42,6 +47,8 @@ impl DbViewModel {
         self.scene_data.clear();
         self.scene_based_render_objects.clear();
         self.unique_parts_based_render_objects.clear();
+        self.detached_parts.clear();
+        self.detached_part_instances.clear();
     }
 
     pub fn is_empty(&self) -> bool {
@@ -56,20 +63,20 @@ impl DbViewModel {
         self.instance_data.get(id)
     }
 
-    pub fn get_part_data_mut(&mut self, id: &PartId) -> Option<&mut PartCache> {
-        self.parts_data.get_mut(id)
-    }
+    // pub fn get_part_data_mut(&mut self, id: &PartId) -> Option<&mut PartCache> {
+    //     self.parts_data.get_mut(id)
+    // }
 
-    pub fn get_part_instance_data_mut(
-        &mut self,
-        id: &PartInstanceId,
-    ) -> Option<&mut PartInstanceCache> {
-        self.instance_data.get_mut(id)
-    }
+    // pub fn get_part_instance_data_mut(
+    //     &mut self,
+    //     id: &PartInstanceId,
+    // ) -> Option<&mut PartInstanceCache> {
+    //     self.instance_data.get_mut(id)
+    // }
 
-    pub fn get_parts_data(&self) -> &HashMap<PartId, PartCache> {
-        &self.parts_data
-    }
+    // pub fn get_parts_data(&self) -> &HashMap<PartId, PartCache> {
+    //     &self.parts_data
+    // }
 
     pub fn get_part_instances_data(&self) -> &HashMap<PartInstanceId, PartInstanceCache> {
         &self.instance_data
@@ -79,12 +86,39 @@ impl DbViewModel {
         self.parts_data.insert(id, cache);
     }
 
+    pub fn add_detached_part(&mut self, id: PartId) {
+        self.detached_parts.insert(id);
+    }
+
+    pub fn remove_detached_part(&mut self, id: &PartId) {
+        self.detached_parts.remove(id);
+    }
+
     pub fn insert_part_instance(&mut self, id: PartInstanceId, cache: PartInstanceCache) {
         self.instance_data.insert(id, cache);
     }
 
+    pub fn remove_detached_part_instance(&mut self, id: &PartInstanceId) {
+        self.detached_part_instances.remove(id);
+    }
+
+    pub fn add_detached_part_instance(&mut self, id: PartInstanceId) {
+        self.detached_part_instances.insert(id);
+    }
+
     pub fn set_scene_data(&mut self, instances: Vec<PartInstanceId>) {
         self.scene_data = instances;
+    }
+
+    pub fn get_detached_identifiables(&self) -> impl Iterator<Item = Identifiable> {
+        self.detached_parts
+            .iter()
+            .map(|id| Identifiable::Part(*id))
+            .chain(
+                self.detached_part_instances
+                    .iter()
+                    .map(|id| Identifiable::PartInstance(*id)),
+            )
     }
 
     pub fn update_scene_based_render_objects(
@@ -179,19 +213,16 @@ impl DbViewModel {
             if !self
                 .unique_parts_based_render_objects
                 .contains_key(&mesh_part_id)
+                && let Some(part_cache) = self.get_part_data(&mesh_part_id)
+                && let PartRepCache::Mesh(mesh_cache) = &part_cache.rep
             {
-                if let Some(part_cache) = self.get_part_data(&mesh_part_id) {
-                    if let PartRepCache::Mesh(mesh_cache) = &part_cache.rep {
-                        let instance_data = InstanceData {
-                            gpu_mesh_id: mesh_cache.gpu_mesh_id,
-                            transforms,
-                        };
-                        let render_object_id =
-                            add_render_object(device, render_db.clone(), &instance_data);
-                        self.unique_parts_based_render_objects
-                            .insert(mesh_part_id, render_object_id);
-                    }
-                }
+                let instance_data = InstanceData {
+                    gpu_mesh_id: mesh_cache.gpu_mesh_id,
+                    transforms,
+                };
+                let render_object_id = add_render_object(device, render_db.clone(), &instance_data);
+                self.unique_parts_based_render_objects
+                    .insert(mesh_part_id, render_object_id);
             }
         }
     }
@@ -265,7 +296,7 @@ pub fn get_total_bbox_from_cache(db_cache: &DbViewModel, mode: AppMode) -> Bound
 fn compute_part_bbox(db_cache: &DbViewModel, part_id: &PartId) -> BoundingBox {
     if let Some(part_cache) = db_cache.get_part_data(part_id) {
         match &part_cache.rep {
-            PartRepCache::Mesh(mesh_cache) => mesh_cache.bbox.clone(),
+            PartRepCache::Mesh(mesh_cache) => mesh_cache.bbox,
             PartRepCache::ComposedPart(composed_cache) => {
                 let mut bbox = BoundingBox::default();
                 for component_id in &composed_cache.components {
@@ -366,18 +397,18 @@ pub fn create_scene_tree_items_by_unique_parts_from_cache(
 
     // Pass 1: process ALL Mesh parts first
     for instance_id in &db_cache.scene_data {
-        if let Some(instance_cache) = db_cache.get_part_instance_data(instance_id) {
-            if matches!(instance_cache.rep_type, PartRepType::Mesh) {
-                instance_id_to_tree_item_map.insert(
-                    *instance_id,
-                    TreeItem::Leaf {
-                        id: Identifiable::PartInstance(*instance_id),
-                        name: format!("Mesh: {:?}", instance_id),
-                        selectable: true,
-                    },
-                );
-                unprocessed_instances.retain(|id| id != instance_id);
-            }
+        if let Some(instance_cache) = db_cache.get_part_instance_data(instance_id)
+            && matches!(instance_cache.rep_type, PartRepType::Mesh)
+        {
+            instance_id_to_tree_item_map.insert(
+                *instance_id,
+                TreeItem::Leaf {
+                    id: Identifiable::PartInstance(*instance_id),
+                    name: format!("Mesh: {:?}", instance_id),
+                    selectable: true,
+                },
+            );
+            unprocessed_instances.retain(|id| id != instance_id);
         }
     }
 
@@ -385,34 +416,32 @@ pub fn create_scene_tree_items_by_unique_parts_from_cache(
     while !unprocessed_instances.is_empty() {
         let mut processed = vec![];
         for instance_id in &unprocessed_instances {
-            if let Some(instance_cache) = db_cache.get_part_instance_data(instance_id) {
-                if matches!(instance_cache.rep_type, PartRepType::ComposedPart) {
-                    if let Some(part_cache) = db_cache.get_part_data(&instance_cache.part_id) {
-                        if let PartRepCache::ComposedPart(composed_cache) = &part_cache.rep {
-                            let mut tree_items = vec![];
-                            let mut all_children_ready = true;
-                            for child_id in &composed_cache.components {
-                                if let Some(item) = instance_id_to_tree_item_map.get(child_id) {
-                                    tree_items.push(item.clone());
-                                } else {
-                                    all_children_ready = false;
-                                    break;
-                                }
-                            }
-                            if all_children_ready {
-                                instance_id_to_tree_item_map.insert(
-                                    *instance_id,
-                                    TreeItem::Node {
-                                        id: Identifiable::PartInstance(*instance_id),
-                                        name: format!("Composed: {:?}", instance_id),
-                                        childs: tree_items,
-                                        selectable: true,
-                                    },
-                                );
-                                processed.push(*instance_id);
-                            }
-                        }
+            if let Some(instance_cache) = db_cache.get_part_instance_data(instance_id)
+                && matches!(instance_cache.rep_type, PartRepType::ComposedPart)
+                && let Some(part_cache) = db_cache.get_part_data(&instance_cache.part_id)
+                && let PartRepCache::ComposedPart(composed_cache) = &part_cache.rep
+            {
+                let mut tree_items = vec![];
+                let mut all_children_ready = true;
+                for child_id in &composed_cache.components {
+                    if let Some(item) = instance_id_to_tree_item_map.get(child_id) {
+                        tree_items.push(item.clone());
+                    } else {
+                        all_children_ready = false;
+                        break;
                     }
+                }
+                if all_children_ready {
+                    instance_id_to_tree_item_map.insert(
+                        *instance_id,
+                        TreeItem::Node {
+                            id: Identifiable::PartInstance(*instance_id),
+                            name: format!("Composed: {:?}", instance_id),
+                            childs: tree_items,
+                            selectable: true,
+                        },
+                    );
+                    processed.push(*instance_id);
                 }
             }
         }
