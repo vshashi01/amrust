@@ -26,6 +26,8 @@ pub struct DbViewModel {
 
     detached_parts: HashSet<PartId>,
     detached_part_instances: HashSet<PartInstanceId>,
+
+    selected_identifiables: HashSet<Identifiable>,
 }
 
 impl DbViewModel {
@@ -38,6 +40,7 @@ impl DbViewModel {
             unique_parts_based_render_objects: HashMap::new(),
             detached_parts: HashSet::new(),
             detached_part_instances: HashSet::new(),
+            selected_identifiables: HashSet::new(),
         }
     }
 
@@ -108,6 +111,58 @@ impl DbViewModel {
 
     pub fn set_scene_data(&mut self, instances: Vec<PartInstanceId>) {
         self.scene_data = instances;
+    }
+
+    pub fn add_selected_identifiable(&mut self, identifiable: Identifiable) {
+        self.selected_identifiables.insert(identifiable);
+    }
+
+    pub fn remove_selected_identifiable(&mut self, identifiable: &Identifiable) {
+        self.selected_identifiables.remove(identifiable);
+    }
+
+    pub fn clear_selected_identifiables(&mut self) {
+        self.selected_identifiables.clear();
+    }
+
+    pub fn get_all_identifiables(&self) -> impl Iterator<Item = Identifiable> {
+        self.parts_data
+            .iter()
+            .map(|(id, _)| Identifiable::Part(*id))
+            .chain(
+                self.instance_data
+                    .iter()
+                    .map(|(id, _)| Identifiable::PartInstance(*id)),
+            )
+    }
+
+    pub fn get_operable_selected_identifiables(&self) -> impl Iterator<Item = Identifiable> {
+        self.get_all_operable_identifiables()
+            .filter(|identifiable| match identifiable {
+                Identifiable::Part(part_id) => !self.detached_parts.contains(part_id),
+                Identifiable::PartInstance(part_instance_id) => {
+                    !self.detached_part_instances.contains(part_instance_id)
+                }
+            })
+    }
+
+    pub fn get_all_operable_identifiables(&self) -> impl Iterator<Item = Identifiable> {
+        self.parts_data
+            .iter()
+            .filter_map(|(id, _)| {
+                if self.detached_parts.contains(id) {
+                    None
+                } else {
+                    Some(Identifiable::Part(*id))
+                }
+            })
+            .chain(self.instance_data.iter().filter_map(|(id, _)| {
+                if self.detached_part_instances.contains(id) {
+                    None
+                } else {
+                    Some(Identifiable::PartInstance(*id))
+                }
+            }))
     }
 
     pub fn get_detached_identifiables(&self) -> impl Iterator<Item = Identifiable> {

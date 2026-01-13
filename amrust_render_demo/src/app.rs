@@ -67,8 +67,7 @@ struct AppState {
     pub render_message_tx: Sender<RenderMessage>,
     pub render_response_rx: Receiver<RenderResponse>,
     pub render_db: Arc<RwLock<RenderDb>>,
-    pub selected_identifiables: Vec<Identifiable>,
-
+    //pub selected_identifiables: Vec<Identifiable>,
     pub operation_manager: OperationManager,
     pub operation_queue_tx: Sender<OperationRequest>,
     pub operation_response_rx: Receiver<OperationResponse>,
@@ -239,8 +238,7 @@ impl AppState {
             render_message_tx,
             render_response_rx,
             render_db,
-            selected_identifiables: vec![],
-
+            //selected_identifiables: vec![],
             operation_manager,
             operation_queue_tx,
             operation_response_rx,
@@ -439,6 +437,10 @@ impl App {
 
             let default_bbox = BoundingBox::default();
             let bbox = state.scene_bbox.as_ref().unwrap_or(&default_bbox);
+            let operable_selected_identifiables = state
+                .db_view_model
+                .get_operable_selected_identifiables()
+                .collect::<Vec<_>>();
             egui::TopBottomPanel::top("top panel")
                 .resizable(false)
                 .show(state.egui_renderer.context(), |ui| {
@@ -472,7 +474,7 @@ impl App {
                             }
                         });
 
-                        ui.add_enabled_ui(!state.selected_identifiables.is_empty(), |ui| {
+                        ui.add_enabled_ui(!operable_selected_identifiables.is_empty(), |ui| {
                             if ui.button("Save Selected to 3mf").clicked() {
                                 state.save_selected_part_to_3mf_dlg.save_file();
                             }
@@ -509,7 +511,8 @@ impl App {
                             egui::Sense::click(),
                         );
                         if bg_response.clicked() {
-                            state.selected_identifiables.clear();
+                            //state.selected_identifiables.clear();
+                            state.db_view_model.clear_selected_identifiables();
                             state.need_viewport_update = true;
                         }
                         DockArea::new(&mut self.toolsheets_dock_tree)
@@ -558,20 +561,22 @@ impl App {
                 println!("File path to save to is {path:?}");
 
                 let ops_msg = {
-                    if !state.selected_identifiables.is_empty() {
+                    if !operable_selected_identifiables.is_empty() {
                         let save_mode = match state.current_app_mode {
                             AppMode::Objects => {
-                                let parts =
-                                    state.selected_identifiables.iter().filter_map(|i| match i {
+                                let parts = operable_selected_identifiables.iter().filter_map(
+                                    |i| match i {
                                         Identifiable::Part(part_id) => Some(*part_id),
                                         Identifiable::PartInstance(_) => None,
-                                    });
+                                    },
+                                );
 
                                 SaveMode::PartsOnly(parts.collect())
                             }
                             AppMode::Build => {
-                                let part_instances =
-                                    state.selected_identifiables.iter().filter_map(|i| match i {
+                                let part_instances = operable_selected_identifiables
+                                    .iter()
+                                    .filter_map(|i| match i {
                                         Identifiable::Part(_) => None,
 
                                         Identifiable::PartInstance(part_instance_id) => {
@@ -719,32 +724,31 @@ impl App {
                 );
 
                 // Validate and filter selected_identifiables
-                let mut valid_selected = vec![];
-                for id in &state.selected_identifiables {
-                    match id {
-                        Identifiable::Part(part_id) => {
-                            if state.db_view_model.get_part_data(part_id).is_some() {
-                                valid_selected.push(*id);
-                            }
-                        }
-                        Identifiable::PartInstance(instance_id) => {
-                            if state
-                                .db_view_model
-                                .get_part_instance_data(instance_id)
-                                .is_some()
-                            {
-                                valid_selected.push(*id);
-                            }
-                        }
-                    }
-                }
-                state.selected_identifiables = valid_selected;
+                // let mut valid_selected = vec![];
+                // for id in &state.selected_identifiables {
+                //     match id {
+                //         Identifiable::Part(part_id) => {
+                //             if state.db_view_model.get_part_data(part_id).is_some() {
+                //                 valid_selected.push(*id);
+                //             }
+                //         }
+                //         Identifiable::PartInstance(instance_id) => {
+                //             if state
+                //                 .db_view_model
+                //                 .get_part_instance_data(instance_id)
+                //                 .is_some()
+                //             {
+                //                 valid_selected.push(*id);
+                //             }
+                //         }
+                //     }
+                // }
+                // state.selected_identifiables = valid_selected;
                 // Restore selections in toolsheets based on mode
                 match state.current_app_mode {
                     AppMode::Objects => {
                         toolsheets.override_selected_object(
-                            &state
-                                .selected_identifiables
+                            &operable_selected_identifiables
                                 .iter()
                                 .filter(|id| matches!(id, Identifiable::Part(_)))
                                 .cloned()
@@ -753,8 +757,7 @@ impl App {
                     }
                     AppMode::Build => {
                         toolsheets.override_selected_build_items(
-                            &state
-                                .selected_identifiables
+                            &operable_selected_identifiables
                                 .iter()
                                 .filter(|id| matches!(id, Identifiable::PartInstance(_)))
                                 .cloned()
@@ -764,7 +767,7 @@ impl App {
                 }
                 // Update properties panel
                 let mut tree_items = vec![];
-                for id in &state.selected_identifiables {
+                for id in &operable_selected_identifiables {
                     if let Ok(item) = create_object_tree_from_identifiable(state.db.clone(), *id) {
                         tree_items.push(item);
                     }
@@ -780,8 +783,6 @@ impl App {
                 //unzoom_bbox(&mut state.camera_data, &bbox);
                 let _ = state.scene_bbox.insert(bbox);
 
-                // entities(&state.detached_identifiables);
-
                 state.need_viewport_update = false;
                 state.current_render_mode = state.current_app_mode;
             }
@@ -790,10 +791,15 @@ impl App {
             if let Some(ref mut toolsheets) = state.toolsheets
                 && toolsheets.has_selection_changed()
             {
-                state.selected_identifiables = match state.current_app_mode {
+                let selected_identifiables = match state.current_app_mode {
                     AppMode::Objects => toolsheets.selected_objects().copied().collect(),
                     AppMode::Build => toolsheets.selected_build_items().copied().collect(),
                 };
+
+                state.db_view_model.clear_selected_identifiables();
+                for identifiable in selected_identifiables {
+                    state.db_view_model.add_selected_identifiable(identifiable);
+                }
 
                 let mut tree_items = vec![];
                 for id in &state.selected_identifiables {
@@ -805,8 +811,6 @@ impl App {
                     childs: tree_items,
                     skip_inert_node: false,
                 });
-
-                // toolsheets.set_blocked_entities(&state.detached_identifiables);
 
                 toolsheets.clear_selection_changed();
             }
@@ -832,8 +836,6 @@ impl App {
             //run the operation manager
             {
                 state.operation_manager.run(&state.db, &state.executor);
-
-                //state.detached_identifiables = state.operation_manager.get_detached_identifiables();
 
                 if let Some(op) = state.operation_manager.get_modal_operation() {
                     let _ = egui::Modal::new(egui::Id::new("app modal")).show(
