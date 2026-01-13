@@ -858,15 +858,16 @@ impl App {
                 egui::TopBottomPanel::bottom(Id::new("bottom panel")).show(
                     state.egui_renderer.context(),
                     |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label("Background operations: ");
-
+                        ui.vertical(|ui| {
                             if background_ops.is_empty() {
-                                ui.label("No background operation running");
+                                ui.label("No background operations running");
                             } else {
+                                ui.label(format!("BG Operations Count: {} ", background_ops.len()));
                                 for ops in background_ops {
-                                    ui.label(format!("Operation: {}", ops.name));
-                                    ui.add(egui::ProgressBar::new(0.0).animate(true));
+                                    ui.horizontal(|ui| {
+                                        ui.label(format!("Operation: {}", ops.name));
+                                        ui.add(egui::ProgressBar::new(0.0).animate(true));
+                                    });
                                 }
                             }
                         });
@@ -874,10 +875,10 @@ impl App {
                         ui.separator();
 
                         ui.horizontal(|ui| {
-                            ui.label("Queued Operations");
+                            ui.label("Queued Operations: ");
 
                             if queued_ops.is_empty() {
-                                ui.label("No queued operations currently");
+                                ui.label("No operations are currently queued!");
                             } else {
                                 for ops in queued_ops {
                                     ui.label(ops.name());

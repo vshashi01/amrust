@@ -107,7 +107,7 @@ impl Operation for Save3mfOps {
                         Timer::after(Duration::from_secs(15)).await;
                     }
                     SaveMode::Scene => {
-                        Timer::after(Duration::from_secs(10));
+                        Timer::after(Duration::from_secs(10)).await;
                     }
                 }
 
