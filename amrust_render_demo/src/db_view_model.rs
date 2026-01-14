@@ -528,6 +528,90 @@ pub fn create_scene_tree_items_by_unique_parts_from_cache(
         .collect()
 }
 
+pub fn create_object_tree_from_identifiable(
+    db: &DbViewModel,
+    identifiable: &Identifiable,
+) -> Option<TreeItem<String>> {
+    match identifiable {
+        Identifiable::Part(part_id) => create_object_tree_from_part(db, part_id),
+        Identifiable::PartInstance(part_instance_id) => {
+            create_object_tree_from_instance(db, part_instance_id)
+        }
+    }
+}
+
+pub fn create_object_tree_from_part(db: &DbViewModel, id: &PartId) -> Option<TreeItem<String>> {
+    if let Some(data) = db.get_part_data(id) {
+        let item = match &data.rep {
+            PartRepCache::Mesh(mesh) => {
+                let vertices_item = TreeItem::Leaf {
+                    id: format!("{}_VerticesCount", id),
+                    name: format!("Vertices Count: {:?}", mesh.vertices_count),
+                    selectable: false,
+                };
+                let triangles_item = TreeItem::Leaf {
+                    id: format!("{}_TrianglesCount", id),
+                    name: format!("Triangles Count: {:?}", mesh.triangles_count),
+                    selectable: false,
+                };
+
+                TreeItem::InertNode {
+                    id: format!("{}", id),
+                    name: "Mesh".to_owned(),
+                    childs: vec![vertices_item, triangles_item],
+                }
+            }
+            PartRepCache::ComposedPart(cache) => {
+                let mut map: HashMap<&PartInstanceId, TreeItem<String>> = HashMap::new();
+                let mut childs = vec![];
+                for id in &cache.components {
+                    if let Some(item) = map.get(id) {
+                        childs.push(item.clone());
+                    } else if let Some(item) = create_object_tree_from_instance(&db, id) {
+                        map.insert(id, item.clone());
+                        childs.push(item);
+                    }
+                }
+
+                TreeItem::Node {
+                    id: format!("{}", id),
+                    name: format!("Composed Part - {:?}", id),
+                    childs,
+                    selectable: false,
+                }
+            }
+        };
+
+        return Some(item);
+    }
+
+    None
+}
+
+pub fn create_object_tree_from_instance(
+    db: &DbViewModel,
+    instance_id: &PartInstanceId,
+) -> Option<TreeItem<String>> {
+    if let Some(data) = db.get_part_instance_data(instance_id)
+        && let Some(object_tree) = create_object_tree_from_part(&db, &data.part_id)
+    {
+        let transform_item = TreeItem::Leaf {
+            id: format!("{}_Transform", instance_id),
+            name: format!("Transform - {:?}", data.transform),
+            selectable: false,
+        };
+
+        return Some(TreeItem::Node {
+            id: format!("{}", instance_id),
+            name: format!("Instance - {:?}", instance_id),
+            childs: vec![object_tree, transform_item],
+            selectable: false,
+        });
+    }
+
+    None
+}
+
 #[derive(Debug, Clone)]
 pub struct PartCache {
     pub rep: PartRepCache,

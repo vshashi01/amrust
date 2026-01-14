@@ -1219,90 +1219,90 @@ pub fn create_objects_list(db: Arc<RwLock<Db>>) -> Result<Vec<TreeItem<Identifia
     Ok(tree_items)
 }
 
-pub fn create_object_tree_from_identifiable(
-    db: Arc<RwLock<Db>>,
-    identifiable: Identifiable,
-) -> Result<TreeItem<usize>, DbError> {
-    match identifiable {
-        Identifiable::Part(part_id) => create_object_tree_from_part(db, &part_id),
-        Identifiable::PartInstance(part_instance_id) => {
-            create_object_tree_from_instance(db, &part_instance_id)
-        }
-    }
-}
+// pub fn create_object_tree_from_identifiable(
+//     db: Arc<RwLock<Db>>,
+//     identifiable: Identifiable,
+// ) -> Result<TreeItem<usize>, DbError> {
+//     match identifiable {
+//         Identifiable::Part(part_id) => create_object_tree_from_part(db, &part_id),
+//         Identifiable::PartInstance(part_instance_id) => {
+//             create_object_tree_from_instance(db, &part_instance_id)
+//         }
+//     }
+// }
 
-pub fn create_object_tree_from_part(
-    db: Arc<RwLock<Db>>,
-    id: &PartId,
-) -> Result<TreeItem<usize>, DbError> {
-    let read_db = db.read_blocking();
-    let part = read_db.get_part_data(id)?;
+// pub fn create_object_tree_from_part(
+//     db: Arc<RwLock<Db>>,
+//     id: &PartId,
+// ) -> Result<TreeItem<usize>, DbError> {
+//     let read_db = db.read_blocking();
+//     let part = read_db.get_part_data(id)?;
 
-    let item = match &part.rep {
-        PartRep::Mesh(mesh) => {
-            let vertices_item = TreeItem::Leaf {
-                id: 0_usize,
-                name: format!("Vertices Count: {:?}", mesh.vertices.len()),
-                selectable: false,
-            };
-            let triangles_item = TreeItem::Leaf {
-                id: 1_usize,
-                name: format!("Triangles Count: {:?}", mesh.triangles.len()),
-                selectable: false,
-            };
+//     let item = match &part.rep {
+//         PartRep::Mesh(mesh) => {
+//             let vertices_item = TreeItem::Leaf {
+//                 id: 0_usize,
+//                 name: format!("Vertices Count: {:?}", mesh.vertices.len()),
+//                 selectable: false,
+//             };
+//             let triangles_item = TreeItem::Leaf {
+//                 id: 1_usize,
+//                 name: format!("Triangles Count: {:?}", mesh.triangles.len()),
+//                 selectable: false,
+//             };
 
-            TreeItem::InertNode {
-                id: 2_usize,
-                name: "Mesh".to_owned(),
-                childs: vec![vertices_item, triangles_item],
-            }
-        }
-        PartRep::ComposedPart(part_instance_ids) => {
-            let mut map: HashMap<&PartInstanceId, TreeItem<usize>> = HashMap::new();
-            let mut childs = vec![];
-            for id in part_instance_ids {
-                if let Some(item) = map.get(id) {
-                    childs.push(item.clone());
-                } else {
-                    let item = create_object_tree_from_instance(db.clone(), id)?;
-                    map.insert(id, item.clone());
-                    childs.push(item);
-                }
-            }
+//             TreeItem::InertNode {
+//                 id: 2_usize,
+//                 name: "Mesh".to_owned(),
+//                 childs: vec![vertices_item, triangles_item],
+//             }
+//         }
+//         PartRep::ComposedPart(part_instance_ids) => {
+//             let mut map: HashMap<&PartInstanceId, TreeItem<usize>> = HashMap::new();
+//             let mut childs = vec![];
+//             for id in part_instance_ids {
+//                 if let Some(item) = map.get(id) {
+//                     childs.push(item.clone());
+//                 } else {
+//                     let item = create_object_tree_from_instance(db.clone(), id)?;
+//                     map.insert(id, item.clone());
+//                     childs.push(item);
+//                 }
+//             }
 
-            TreeItem::Node {
-                id: 4_usize,
-                name: format!("Composed Part - {:?}", id),
-                childs,
-                selectable: false,
-            }
-        }
-    };
+//             TreeItem::Node {
+//                 id: 4_usize,
+//                 name: format!("Composed Part - {:?}", id),
+//                 childs,
+//                 selectable: false,
+//             }
+//         }
+//     };
 
-    Ok(item)
-}
+//     Ok(item)
+// }
 
-pub fn create_object_tree_from_instance(
-    db: Arc<RwLock<Db>>,
-    instance_id: &PartInstanceId,
-) -> Result<TreeItem<usize>, DbError> {
-    let read_db = db.read_blocking();
-    let instance_data = read_db.get_part_instance_data(instance_id)?;
-    let object_tree = create_object_tree_from_part(db.clone(), &instance_data.part_id)?;
+// pub fn create_object_tree_from_instance(
+//     db: Arc<RwLock<Db>>,
+//     instance_id: &PartInstanceId,
+// ) -> Result<TreeItem<usize>, DbError> {
+//     let read_db = db.read_blocking();
+//     let instance_data = read_db.get_part_instance_data(instance_id)?;
+//     let object_tree = create_object_tree_from_part(db.clone(), &instance_data.part_id)?;
 
-    let transform_item = TreeItem::Leaf {
-        id: 105_usize,
-        name: format!("Transform - {:?}", instance_data.transform),
-        selectable: false,
-    };
+//     let transform_item = TreeItem::Leaf {
+//         id: 105_usize,
+//         name: format!("Transform - {:?}", instance_data.transform),
+//         selectable: false,
+//     };
 
-    Ok(TreeItem::Node {
-        id: 5_usize,
-        name: format!("Instance - {:?}", instance_id),
-        childs: vec![object_tree, transform_item],
-        selectable: false,
-    })
-}
+//     Ok(TreeItem::Node {
+//         id: 5_usize,
+//         name: format!("Instance - {:?}", instance_id),
+//         childs: vec![object_tree, transform_item],
+//         selectable: false,
+//     })
+// }
 
 pub fn create_scene_tree_items_by_unique_parts(
     db: Arc<RwLock<Db>>,
@@ -2566,55 +2566,55 @@ mod tests {
         assert!(names.iter().any(|n| n.contains("Components Object")));
     }
 
-    #[test]
-    fn test_create_object_tree_from_part_mesh() {
-        let mut db = Db::new();
+    // #[test]
+    // fn test_create_object_tree_from_part_mesh() {
+    //     let mut db = Db::new();
 
-        let mesh_id = db
-            .add_part_rep(PartRep::Mesh(Box::new(Mesh {
-                vertices: vec![Vec3::new(0.0, 0.0, 0.0)],
-                triangles: vec![0, 0, 0],
-            })))
-            .unwrap();
+    //     let mesh_id = db
+    //         .add_part_rep(PartRep::Mesh(Box::new(Mesh {
+    //             vertices: vec![Vec3::new(0.0, 0.0, 0.0)],
+    //             triangles: vec![0, 0, 0],
+    //         })))
+    //         .unwrap();
 
-        let db_arc = Arc::new(RwLock::new(db));
-        let tree = create_object_tree_from_part(db_arc, &mesh_id).unwrap();
+    //     let db_arc = Arc::new(RwLock::new(db));
+    //     let tree = create_object_tree_from_part(db_arc, &mesh_id).unwrap();
 
-        match tree {
-            TreeItem::InertNode { name, childs, .. } => {
-                assert_eq!(name, "Mesh");
-                assert!(childs.iter().any(|c| match c {
-                    TreeItem::Leaf { name, .. } => name.contains("Vertices Count"),
-                    _ => false,
-                }));
-            }
-            _ => panic!("Expected InertNode"),
-        }
-    }
+    //     match tree {
+    //         TreeItem::InertNode { name, childs, .. } => {
+    //             assert_eq!(name, "Mesh");
+    //             assert!(childs.iter().any(|c| match c {
+    //                 TreeItem::Leaf { name, .. } => name.contains("Vertices Count"),
+    //                 _ => false,
+    //             }));
+    //         }
+    //         _ => panic!("Expected InertNode"),
+    //     }
+    // }
 
-    #[test]
-    fn test_create_object_tree_from_instance() {
-        let mut db = Db::new();
-        let mesh_id = db
-            .add_part_rep(PartRep::Mesh(Box::new(Mesh {
-                vertices: vec![],
-                triangles: vec![],
-            })))
-            .unwrap();
+    // #[test]
+    // fn test_create_object_tree_from_instance() {
+    //     let mut db = Db::new();
+    //     let mesh_id = db
+    //         .add_part_rep(PartRep::Mesh(Box::new(Mesh {
+    //             vertices: vec![],
+    //             triangles: vec![],
+    //         })))
+    //         .unwrap();
 
-        let instance_id = db.make_new_part_instance_from_part(&mesh_id, None).unwrap();
+    //     let instance_id = db.make_new_part_instance_from_part(&mesh_id, None).unwrap();
 
-        let db_arc = Arc::new(RwLock::new(db));
-        let tree = create_object_tree_from_instance(db_arc.clone(), &instance_id).unwrap();
+    //     let db_arc = Arc::new(RwLock::new(db));
+    //     let tree = create_object_tree_from_instance(db_arc.clone(), &instance_id).unwrap();
 
-        match tree {
-            TreeItem::Node { name, childs, .. } => {
-                assert!(name.contains("Instance"));
-                assert!(!childs.is_empty());
-            }
-            _ => panic!("Expected Node"),
-        }
-    }
+    //     match tree {
+    //         TreeItem::Node { name, childs, .. } => {
+    //             assert!(name.contains("Instance"));
+    //             assert!(!childs.is_empty());
+    //         }
+    //         _ => panic!("Expected Node"),
+    //     }
+    // }
 
     #[test]
     fn test_create_scene_tree_items_by_unique_parts_with_multiple_instances() {

@@ -1,11 +1,10 @@
-use crate::amrust_db::{
-    self, Db, Identifiable, Mesh, Transformation, create_object_tree_from_identifiable,
-};
+use crate::amrust_db::{self, Db, Identifiable, Mesh, Transformation};
 use crate::app_mode::AppMode;
 use crate::clear_db::ClearDbOps;
 use crate::db_view_model::{
-    self, DbViewModel, create_build_items_list_from_cache, create_objects_list_from_cache,
-    create_scene_tree_items_by_unique_parts_from_cache, get_total_bbox_from_cache,
+    self, DbViewModel, create_build_items_list_from_cache, create_object_tree_from_identifiable,
+    create_objects_list_from_cache, create_scene_tree_items_by_unique_parts_from_cache,
+    get_total_bbox_from_cache,
 };
 use crate::egui_tools::EguiRenderer;
 use crate::operation::OperationResponse;
@@ -22,6 +21,7 @@ use amrust_render::bounding_box::BoundingBox;
 // use amrust_lib::widgets::dropped_files::DroppedFilesWidget;
 use amrust_render::camera::{self, CameraData, OrthographicCameraData};
 use amrust_render::normalized_box::{ORDERED_POSITIONS, ORDERED_POSITIONS_TRI_EDGE_INDICES};
+use egui::debug_text::print;
 use egui::{Id, Layout, epaint};
 use egui_dock::{DockArea, DockState, NodeIndex};
 use egui_file_dialog::FileDialog;
@@ -505,16 +505,16 @@ impl App {
                     .min_width(400.0)
                     .show(state.egui_renderer.context(), |ui| {
                         // Allocate a response for the entire panel to detect clicks on empty space
-                        let bg_response = ui.interact(
-                            ui.available_rect_before_wrap(),
-                            ui.id().with("dock_bg"),
-                            egui::Sense::click(),
-                        );
-                        if bg_response.clicked() {
-                            //state.selected_identifiables.clear();
-                            state.db_view_model.clear_selected_identifiables();
-                            state.need_viewport_update = true;
-                        }
+                        // let bg_response = ui.interact(
+                        //     ui.available_rect_before_wrap(),
+                        //     ui.id().with("dock_bg"),
+                        //     egui::Sense::click(),
+                        // );
+                        // if bg_response.clicked() {
+                        //     //state.selected_identifiables.clear();
+                        //     state.db_view_model.clear_selected_identifiables();
+                        //     state.need_viewport_update = true;
+                        // }
                         DockArea::new(&mut self.toolsheets_dock_tree)
                             .show_leaf_close_all_buttons(false)
                             .show_close_buttons(false)
@@ -719,8 +719,8 @@ impl App {
                 let mut toolsheets = Toolsheets::new(
                     state.current_app_mode,
                     part_list,
-                    TreeItemViewer::new(object_items, false),
-                    TreeItemViewer::new(build_items, false),
+                    TreeItemViewer::new(object_items, false, true),
+                    TreeItemViewer::new(build_items, false, true),
                 );
 
                 // Validate and filter selected_identifiables
@@ -768,15 +768,18 @@ impl App {
                 // Update properties panel
                 let mut tree_items = vec![];
                 for id in &operable_selected_identifiables {
-                    if let Ok(item) = create_object_tree_from_identifiable(state.db.clone(), *id) {
+                    if let Some(item) =
+                        create_object_tree_from_identifiable(&state.db_view_model, &id)
+                    {
                         tree_items.push(item);
                     }
                 }
                 toolsheets.set_selected_identifiable_properties(TreeItemViewer {
                     childs: tree_items,
                     skip_inert_node: false,
+                    clear_selections_on_empty_area_click: false,
                 });
-                toolsheets.clear_selection_changed();
+                //toolsheets.clear_selection_changed();
 
                 let _ = state.toolsheets.insert(toolsheets);
 
@@ -791,25 +794,31 @@ impl App {
             if let Some(ref mut toolsheets) = state.toolsheets
                 && toolsheets.has_selection_changed()
             {
-                let selected_identifiables = match state.current_app_mode {
+                let selected_identifiables: Vec<_> = match state.current_app_mode {
                     AppMode::Objects => toolsheets.selected_objects().copied().collect(),
                     AppMode::Build => toolsheets.selected_build_items().copied().collect(),
                 };
+
+                println!("Selected identifiables are: {selected_identifiables:?}");
+
+                let mut tree_items = vec![];
+                for id in &selected_identifiables {
+                    if let Some(item) =
+                        create_object_tree_from_identifiable(&state.db_view_model, id)
+                    {
+                        tree_items.push(item);
+                    }
+                }
 
                 state.db_view_model.clear_selected_identifiables();
                 for identifiable in selected_identifiables {
                     state.db_view_model.add_selected_identifiable(identifiable);
                 }
 
-                let mut tree_items = vec![];
-                for id in &state.selected_identifiables {
-                    let item = create_object_tree_from_identifiable(state.db.clone(), *id).unwrap();
-                    tree_items.push(item);
-                }
-
                 toolsheets.set_selected_identifiable_properties(TreeItemViewer {
                     childs: tree_items,
                     skip_inert_node: false,
+                    clear_selections_on_empty_area_click: false,
                 });
 
                 toolsheets.clear_selection_changed();

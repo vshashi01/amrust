@@ -21,6 +21,7 @@ impl PartList {
             object_tree: TreeItemViewer {
                 childs: tree_items,
                 skip_inert_node: false,
+                clear_selections_on_empty_area_click: true,
             },
             current_view_mode: ViewMode::ByUniqueParts,
         }

@@ -17,7 +17,7 @@ pub struct Toolsheets {
     selected_objects: Vec<Identifiable>,
     selected_build_items: Vec<Identifiable>,
 
-    selected_identifiable_properties: Option<TreeItemViewer<usize>>,
+    selected_identifiable_properties: Option<TreeItemViewer<String>>,
 }
 
 impl Toolsheets {
@@ -41,7 +41,7 @@ impl Toolsheets {
         }
     }
 
-    pub fn set_selected_identifiable_properties(&mut self, props: TreeItemViewer<usize>) {
+    pub fn set_selected_identifiable_properties(&mut self, props: TreeItemViewer<String>) {
         let _ = self.selected_identifiable_properties.insert(props);
     }
 
