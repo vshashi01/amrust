@@ -10,7 +10,9 @@ use threemf2::core::transform::Transform;
 use threemf2::io::ThreemfPackage;
 
 use crate::amrust_db::{Db, DbError, Mesh, PartId, PartRep, Scene};
+use crate::commands::{Command, CommandCategory, CommandContext, CommandsService};
 use crate::operation::{DbContext, Operation, OperationNature, OperationResponse};
+use crate::operation_manager::OperationRequest;
 
 use core::f32;
 use std::collections::HashMap;
@@ -273,4 +275,49 @@ fn convert_transform_to_glam_matrix(transform: &Transform) -> glam::Mat4 {
             1.0,
         ],
     ])
+}
+
+/// Command for importing 3MF files
+pub struct ImportPartCommand;
+
+impl Command for ImportPartCommand {
+    fn id(&self) -> &str {
+        "import_part"
+    }
+
+    fn label(&self) -> &str {
+        "Import Part"
+    }
+
+    fn shortcut(&self) -> Option<&str> {
+        Some("Ctrl+O")
+    }
+
+    fn category(&self) -> CommandCategory {
+        CommandCategory::File
+    }
+
+    fn execute(&self, context: &mut CommandContext) {
+        // Show file dialog with handler for importing 3MF files
+        context.file_dialog_service.show_load_dialog(|path, ctx| {
+            println!("File picked is: {:?}", path);
+
+            if let Some(ext) = path.extension()
+                && ext == "3mf"
+            {
+                let ops = Load3MFOps { path };
+                if let Err(err) = ctx
+                    .operation_queue_tx
+                    .send_blocking(OperationRequest::BackgroundOp(Box::new(ops)))
+                {
+                    println!("Failed to queue import operation: {:?}", err);
+                }
+            }
+        });
+    }
+}
+
+/// Register all commands provided by the load_3mf module
+pub fn register_commands(commands_service: &mut CommandsService) {
+    commands_service.register_command(Box::new(ImportPartCommand));
 }
