@@ -19,11 +19,16 @@ use crate::amrust_db::PartInstance;
 use crate::amrust_db::PartInstanceId;
 use crate::amrust_db::PartRep;
 use crate::amrust_db::Transformation;
+use crate::commands::Command;
+use crate::commands::CommandCategory;
+use crate::commands::CommandContext;
+use crate::commands::CommandsService;
 use crate::operation::DbContext;
 use crate::operation::DbReader;
 use crate::operation::Operation;
 use crate::operation::OperationNature;
 use crate::operation::OperationResponse;
+use crate::operation_manager::OperationRequest;
 
 #[derive(Debug, Error)]
 pub enum DbTo3mfError {
@@ -593,6 +598,104 @@ fn convert_transformation_to_3mf_transform(transform: &Transformation) -> Transf
         cols[3][1] as f64,
         cols[3][2] as f64,
     ])
+}
+
+pub struct SaveSceneCommand;
+
+impl Command for SaveSceneCommand {
+    fn id(&self) -> &str {
+        "save_scene"
+    }
+
+    fn label(&self) -> &str {
+        "Save Scene to 3mf"
+    }
+
+    fn shortcut(&self) -> Option<&str> {
+        Some("Ctrl+1")
+    }
+
+    fn category(&self) -> CommandCategory {
+        CommandCategory::File
+    }
+
+    fn execute(&self, context: &mut CommandContext) {
+        // Show file dialog with handler for importing 3MF files
+        context.file_dialog_service.show_save_dialog(
+            "3D Manufacturing Format",
+            "3mf",
+            |path: PathBuf, ctx: &mut CommandContext| {
+                println!("File picked is: {:?}", path);
+
+                if let Some(ext) = path.extension()
+                    && ext == "3mf"
+                {
+                    let ops = Save3mfOps {
+                        path,
+                        save_mode: SaveMode::Scene,
+                    };
+                    if let Err(err) = ctx
+                        .operation_queue_tx
+                        .send_blocking(OperationRequest::BackgroundOp(Box::new(ops)))
+                    {
+                        println!("Failed to queue import operation: {:?}", err);
+                    }
+                }
+            },
+        );
+    }
+}
+
+pub struct SavePartCommand;
+
+impl Command for SavePartCommand {
+    fn id(&self) -> &str {
+        "save_parts_to_3mf"
+    }
+
+    fn label(&self) -> &str {
+        "Save Selected Parts to 3mf"
+    }
+
+    fn shortcut(&self) -> Option<&str> {
+        Some("Ctrl+1")
+    }
+
+    fn category(&self) -> CommandCategory {
+        CommandCategory::File
+    }
+
+    fn execute(&self, context: &mut CommandContext) {
+        // Show file dialog with handler for importing 3MF files
+        context.file_dialog_service.show_save_dialog(
+            "3D Manufacturing Format",
+            "3mf",
+            |path: PathBuf, ctx: &mut CommandContext| {
+                println!("File picked is: {:?}", path);
+
+                if let Some(ext) = path.extension()
+                    && ext == "3mf"
+                {
+                    let ops = Save3mfOps {
+                        path,
+                        save_mode: SaveMode::Scene,
+                    };
+                    if let Err(err) = ctx
+                        .operation_queue_tx
+                        .send_blocking(OperationRequest::BackgroundOp(Box::new(ops)))
+                    {
+                        println!("Failed to queue import operation: {:?}", err);
+                    }
+                }
+            },
+        );
+    }
+}
+
+/// Register all commands provided by the load_3mf module
+pub fn register_commands(commands_service: &mut CommandsService) {
+    commands_service.register_command(Box::new(SaveSceneCommand));
+    commands_service.register_command(Box::new(SavePartCommand));
 }
 
 #[cfg(test)]

@@ -299,21 +299,25 @@ impl Command for ImportPartCommand {
 
     fn execute(&self, context: &mut CommandContext) {
         // Show file dialog with handler for importing 3MF files
-        context.file_dialog_service.show_load_dialog(|path, ctx| {
-            println!("File picked is: {:?}", path);
+        context.file_dialog_service.show_load_dialog(
+            "3D Manufacturing Format",
+            vec!["3mf"],
+            |path: PathBuf, ctx: &mut CommandContext| {
+                println!("File picked is: {:?}", path);
 
-            if let Some(ext) = path.extension()
-                && ext == "3mf"
-            {
-                let ops = Load3MFOps { path };
-                if let Err(err) = ctx
-                    .operation_queue_tx
-                    .send_blocking(OperationRequest::BackgroundOp(Box::new(ops)))
+                if let Some(ext) = path.extension()
+                    && ext == "3mf"
                 {
-                    println!("Failed to queue import operation: {:?}", err);
+                    let ops = Load3MFOps { path };
+                    if let Err(err) = ctx
+                        .operation_queue_tx
+                        .send_blocking(OperationRequest::BackgroundOp(Box::new(ops)))
+                    {
+                        println!("Failed to queue import operation: {:?}", err);
+                    }
                 }
-            }
-        });
+            },
+        );
     }
 }
 

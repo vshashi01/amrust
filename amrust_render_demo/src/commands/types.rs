@@ -46,26 +46,19 @@ pub struct CommandContext<'a> {
     /// Current application mode (Objects vs Build)
     pub current_app_mode: AppMode,
 
-    /// Currently selected identifiables
-    pub selected_identifiables: &'a [Identifiable],
-
-    /// Identifiables that are currently detached (blocked for operations)
-    pub detached_identifiables: &'a [Identifiable],
-
     /// Channel for queuing operations
-    pub operation_queue_tx: &'a Sender<OperationRequest>,
+    pub operation_queue_tx: Sender<OperationRequest>,
 
     /// File dialog service for showing dialogs
     pub file_dialog_service: &'a mut FileDialogService,
+    // /// Camera data for scene manipulation
+    // pub camera_data: &'a mut OrthographicCameraData,
 
-    /// Camera data for scene manipulation
-    pub camera_data: &'a mut OrthographicCameraData,
+    // /// Current scene bounding box
+    // pub scene_bbox: Option<&'a BoundingBox>,
 
-    /// Current scene bounding box
-    pub scene_bbox: Option<&'a BoundingBox>,
-
-    /// Flag to indicate viewport needs update
-    pub need_viewport_update: &'a mut bool,
+    // /// Flag to indicate viewport needs update
+    // pub need_viewport_update: &'a mut bool,
 }
 
 /// Categories for organizing commands

@@ -1,6 +1,7 @@
 use crate::amrust_db::{self, Db, Identifiable, Mesh, Transformation};
 use crate::app_mode::AppMode;
 use crate::clear_db::ClearDbOps;
+use crate::commands::CommandContext;
 use crate::db_view_model::{
     self, DbViewModel, create_build_items_list_from_cache, create_object_tree_from_identifiable,
     create_objects_list_from_cache, create_scene_tree_items_by_unique_parts_from_cache,
@@ -13,6 +14,7 @@ use crate::part_list::PartList;
 use crate::render_db::RenderDb;
 use crate::render_worker::{RenderMessage, RenderResponse, RenderWorker, RendererSettings};
 use crate::save_3mf::SaveMode;
+use crate::services::FileDialogService;
 use crate::toolsheets::Toolsheets;
 use crate::tree_item_viewer::TreeItemViewer;
 use crate::viewport::Viewport3D;
@@ -21,10 +23,8 @@ use amrust_render::bounding_box::BoundingBox;
 // use amrust_lib::widgets::dropped_files::DroppedFilesWidget;
 use amrust_render::camera::{self, CameraData, OrthographicCameraData};
 use amrust_render::normalized_box::{ORDERED_POSITIONS, ORDERED_POSITIONS_TRI_EDGE_INDICES};
-use egui::debug_text::print;
 use egui::{Id, Layout, epaint};
 use egui_dock::{DockArea, DockState, NodeIndex};
-use egui_file_dialog::FileDialog;
 use egui_wgpu::wgpu::SurfaceError;
 use egui_wgpu::{ScreenDescriptor, wgpu};
 use glam::{Mat4, Vec3};
@@ -51,9 +51,6 @@ struct AppState {
     pub camera_data: OrthographicCameraData,
     pub texture_id: Option<epaint::TextureId>,
     // pub dropped_files: DroppedFilesWidget,
-    pub load_file_dlg: FileDialog,
-    pub save_selected_part_to_3mf_dlg: FileDialog,
-    pub save_scene_to_3mf_dialog: FileDialog,
     pub picked_file: Option<PathBuf>,
     pub scene_bbox: Option<BoundingBox>,
     pub db: Arc<RwLock<Db>>,
@@ -191,18 +188,6 @@ impl AppState {
                 .detach();
         }
 
-        let load_file_dlg = FileDialog::new()
-            .add_file_filter_extensions("3MF", vec!["3mf"])
-            .default_file_filter("3MF");
-
-        let save_file_dlg = FileDialog::new()
-            .add_save_extension("3MF file", "3mf")
-            .default_save_extension("3MF file");
-
-        let save_scene_dlg = FileDialog::new()
-            .add_save_extension("3MF file", "3mf")
-            .default_save_extension("3MF file");
-
         //create operation manager and its channels
         let (operation_queue_tx, operation_queue_rx) = channel::unbounded();
         let (operation_response_tx, operation_response_rx) = channel::unbounded();
@@ -223,9 +208,6 @@ impl AppState {
             camera_data,
             texture_id: None,
             // dropped_files: dropped_files_widget,
-            load_file_dlg,
-            save_selected_part_to_3mf_dlg: save_file_dlg,
-            save_scene_to_3mf_dialog: save_scene_dlg,
             picked_file: None,
             scene_bbox: None,
             db: Arc::new(RwLock::new(Db::new())),
@@ -324,6 +306,7 @@ pub struct App {
     state: Option<AppState>,
     window: Option<Arc<Window>>,
     toolsheets_dock_tree: DockState<String>,
+    file_dialog_service: FileDialogService,
 }
 
 impl App {
@@ -337,6 +320,7 @@ impl App {
             state: None,
             window: None,
             toolsheets_dock_tree,
+            file_dialog_service: FileDialogService::new(),
         }
     }
 
@@ -432,6 +416,18 @@ impl App {
         {
             state.egui_renderer.begin_frame(window);
 
+            if let Some(handler) = self
+                .file_dialog_service
+                .update_and_return_first_picked(state.egui_renderer.context())
+            {
+                handler.handle_and_close_dialog(&mut CommandContext {
+                    db_view_model: &state.db_view_model,
+                    current_app_mode: state.current_app_mode,
+                    operation_queue_tx: state.operation_queue_tx.clone(),
+                    file_dialog_service: &mut self.file_dialog_service,
+                });
+            }
+
             // take snapshot of previous frame data
             let prev_camera_data = state.camera_data.clone();
 
@@ -446,7 +442,24 @@ impl App {
                 .show(state.egui_renderer.context(), |ui| {
                     egui::MenuBar::new().ui(ui, |ui| {
                         if ui.button("Import Part").clicked() {
-                            state.load_file_dlg.pick_file();
+                            //state.load_file_dlg.pick_file();
+
+                            self.file_dialog_service.show_load_dialog(
+                                "3MF manufacturing format",
+                                vec!["3mf"],
+                                |path, context| {
+                                    if let Some(ext) = path.extension()
+                                        && let Some("3mf") = ext.to_str()
+                                    {
+                                        let ops = load_3mf::Load3MFOps { path };
+                                        if let Err(err) = context.operation_queue_tx.send_blocking(
+                                            OperationRequest::BackgroundOp(Box::new(ops)),
+                                        ) {
+                                            println!("{err:?}");
+                                        }
+                                    }
+                                },
+                            );
                         }
 
                         #[cfg(debug_assertions)]
@@ -470,13 +483,93 @@ impl App {
                             }
 
                             if ui.button("Save Scene to 3MF").clicked() {
-                                state.save_scene_to_3mf_dialog.save_file();
+                                self.file_dialog_service.show_save_dialog(
+                                    "3MF Manufacturing Format",
+                                    "3mf",
+                                    |path, context| {
+                                        let ops_msg = OperationRequest::ModalOpWait(Box::new(
+                                            save_3mf::Save3mfOps {
+                                                path,
+                                                save_mode: SaveMode::Scene,
+                                            },
+                                        ));
+
+                                        if let Err(err) =
+                                            context.operation_queue_tx.send_blocking(ops_msg)
+                                        {
+                                            println!("{err:?}");
+                                        }
+                                    },
+                                );
                             }
                         });
 
                         ui.add_enabled_ui(!operable_selected_identifiables.is_empty(), |ui| {
                             if ui.button("Save Selected to 3mf").clicked() {
-                                state.save_selected_part_to_3mf_dlg.save_file();
+                                // state.save_selected_part_to_3mf_dlg.save_file();
+
+                                self.file_dialog_service.show_save_dialog(
+                                    "3MF Manufacturing Format",
+                                    "3mf",
+                                    |path, context| {
+                                        let operable_selected_identifiables = context
+                                            .db_view_model
+                                            .get_operable_selected_identifiables()
+                                            .collect::<Vec<_>>();
+                                        let ops_msg = {
+                                            if !operable_selected_identifiables.is_empty() {
+                                                let save_mode = match context.current_app_mode {
+                                                    AppMode::Objects => {
+                                                        let parts = operable_selected_identifiables
+                                                            .iter()
+                                                            .filter_map(|i| match i {
+                                                                Identifiable::Part(part_id) => {
+                                                                    Some(*part_id)
+                                                                }
+                                                                Identifiable::PartInstance(_) => {
+                                                                    None
+                                                                }
+                                                            });
+
+                                                        SaveMode::PartsOnly(parts.collect())
+                                                    }
+                                                    AppMode::Build => {
+                                                        let part_instances =
+                                                            operable_selected_identifiables
+                                                                .iter()
+                                                                .filter_map(|i| match i {
+                                                                    Identifiable::Part(_) => None,
+
+                                                                    Identifiable::PartInstance(
+                                                                        part_instance_id,
+                                                                    ) => Some(*part_instance_id),
+                                                                });
+
+                                                        SaveMode::PartInstances(
+                                                            part_instances.collect(),
+                                                        )
+                                                    }
+                                                };
+                                                OperationRequest::BackgroundOp(Box::new(
+                                                    save_3mf::Save3mfOps { path, save_mode },
+                                                ))
+                                            } else {
+                                                OperationRequest::ModalOp(Box::new(
+                                                    save_3mf::Save3mfOps {
+                                                        path,
+                                                        save_mode: SaveMode::Scene,
+                                                    },
+                                                ))
+                                            }
+                                        };
+
+                                        if let Err(err) =
+                                            context.operation_queue_tx.send_blocking(ops_msg)
+                                        {
+                                            println!("{err:?}");
+                                        }
+                                    },
+                                );
                             }
                         });
 
@@ -504,17 +597,6 @@ impl App {
                 egui::SidePanel::left(Id::new("object list"))
                     .min_width(400.0)
                     .show(state.egui_renderer.context(), |ui| {
-                        // Allocate a response for the entire panel to detect clicks on empty space
-                        // let bg_response = ui.interact(
-                        //     ui.available_rect_before_wrap(),
-                        //     ui.id().with("dock_bg"),
-                        //     egui::Sense::click(),
-                        // );
-                        // if bg_response.clicked() {
-                        //     //state.selected_identifiables.clear();
-                        //     state.db_view_model.clear_selected_identifiables();
-                        //     state.need_viewport_update = true;
-                        // }
                         DockArea::new(&mut self.toolsheets_dock_tree)
                             .show_leaf_close_all_buttons(false)
                             .show_close_buttons(false)
@@ -536,89 +618,6 @@ impl App {
             // state
             //     .dropped_files
             //     .run(state.egui_renderer.context(), &|test| false);
-
-            state.load_file_dlg.update(state.egui_renderer.context());
-            if let Some(path) = state.load_file_dlg.take_picked() {
-                println!("File picked is: {:?}", path);
-
-                if let Some(ext) = path.extension()
-                    && let Some("3mf") = ext.to_str()
-                {
-                    let ops = load_3mf::Load3MFOps { path };
-                    if let Err(err) = state
-                        .operation_queue_tx
-                        .send_blocking(OperationRequest::BackgroundOp(Box::new(ops)))
-                    {
-                        println!("{err:?}");
-                    }
-                }
-            }
-
-            state
-                .save_selected_part_to_3mf_dlg
-                .update(state.egui_renderer.context());
-            if let Some(path) = state.save_selected_part_to_3mf_dlg.take_picked() {
-                println!("File path to save to is {path:?}");
-
-                let ops_msg = {
-                    if !operable_selected_identifiables.is_empty() {
-                        let save_mode = match state.current_app_mode {
-                            AppMode::Objects => {
-                                let parts = operable_selected_identifiables.iter().filter_map(
-                                    |i| match i {
-                                        Identifiable::Part(part_id) => Some(*part_id),
-                                        Identifiable::PartInstance(_) => None,
-                                    },
-                                );
-
-                                SaveMode::PartsOnly(parts.collect())
-                            }
-                            AppMode::Build => {
-                                let part_instances = operable_selected_identifiables
-                                    .iter()
-                                    .filter_map(|i| match i {
-                                        Identifiable::Part(_) => None,
-
-                                        Identifiable::PartInstance(part_instance_id) => {
-                                            Some(*part_instance_id)
-                                        }
-                                    });
-
-                                SaveMode::PartInstances(part_instances.collect())
-                            }
-                        };
-                        OperationRequest::BackgroundOp(Box::new(save_3mf::Save3mfOps {
-                            path,
-                            save_mode,
-                        }))
-                    } else {
-                        OperationRequest::ModalOp(Box::new(save_3mf::Save3mfOps {
-                            path,
-                            save_mode: SaveMode::Scene,
-                        }))
-                    }
-                };
-
-                if let Err(err) = state.operation_queue_tx.send_blocking(ops_msg) {
-                    println!("{err:?}");
-                }
-            }
-
-            state
-                .save_scene_to_3mf_dialog
-                .update(state.egui_renderer.context());
-            if let Some(path) = state.save_scene_to_3mf_dialog.take_picked() {
-                println!("File path to save to is {path:?}");
-
-                let ops_msg = OperationRequest::ModalOpWait(Box::new(save_3mf::Save3mfOps {
-                    path,
-                    save_mode: SaveMode::Scene,
-                }));
-
-                if let Err(err) = state.operation_queue_tx.send_blocking(ops_msg) {
-                    println!("{err:?}");
-                }
-            }
 
             let has_changes = {
                 let read_db = state.db.read_blocking();
