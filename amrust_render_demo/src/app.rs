@@ -1,7 +1,7 @@
 use crate::amrust_db::{self, Db, Identifiable, Mesh, Transformation};
 use crate::app_mode::AppMode;
-use crate::clear_db::ClearDbOps;
-use crate::commands::CommandContext;
+use crate::clear_db::{self, ClearDbOps};
+use crate::commands::{CommandContext, CommandsService};
 use crate::db_view_model::{
     self, DbViewModel, create_build_items_list_from_cache, create_object_tree_from_identifiable,
     create_objects_list_from_cache, create_scene_tree_items_by_unique_parts_from_cache,
@@ -18,7 +18,7 @@ use crate::services::FileDialogService;
 use crate::toolsheets::Toolsheets;
 use crate::tree_item_viewer::TreeItemViewer;
 use crate::viewport::Viewport3D;
-use crate::{load_3mf, save_3mf};
+use crate::{load_3mf, save_3mf, unzoom_scene};
 use amrust_render::bounding_box::BoundingBox;
 // use amrust_lib::widgets::dropped_files::DroppedFilesWidget;
 use amrust_render::camera::{self, CameraData, OrthographicCameraData};
@@ -307,6 +307,7 @@ pub struct App {
     window: Option<Arc<Window>>,
     toolsheets_dock_tree: DockState<String>,
     file_dialog_service: FileDialogService,
+    command_service: CommandsService,
 }
 
 impl App {
@@ -315,12 +316,19 @@ impl App {
 
         let toolsheets_dock_tree = DockState::new(vec![]);
 
+        let mut command_service = CommandsService::new();
+        load_3mf::register_commands(&mut command_service);
+        save_3mf::register_commands(&mut command_service);
+        clear_db::register_commands(&mut command_service);
+        unzoom_scene::register_commands(&mut command_service);
+
         Self {
             instance,
             state: None,
             window: None,
             toolsheets_dock_tree,
             file_dialog_service: FileDialogService::new(),
+            command_service,
         }
     }
 
@@ -420,12 +428,22 @@ impl App {
                 .file_dialog_service
                 .update_and_return_first_picked(state.egui_renderer.context())
             {
-                handler.handle_and_close_dialog(&mut CommandContext {
-                    db_view_model: &state.db_view_model,
-                    current_app_mode: state.current_app_mode,
-                    operation_queue_tx: state.operation_queue_tx.clone(),
-                    file_dialog_service: &mut self.file_dialog_service,
-                });
+                // handler.handle_and_close_dialog(&mut CommandContext {
+                //     db_view_model: &state.db_view_model,
+                //     current_app_mode: state.current_app_mode,
+                //     operation_queue_tx: state.operation_queue_tx.clone(),
+                //     file_dialog_service: &mut self.file_dialog_service,
+                // });
+
+                let mut command_context = CommandContext::new(
+                    &state.db_view_model,
+                    state.current_app_mode,
+                    state.operation_queue_tx.clone(),
+                    &mut self.file_dialog_service,
+                    &mut state.camera_data,
+                );
+
+                handler.handle_and_close_dialog(&mut command_context);
             }
 
             // take snapshot of previous frame data
@@ -440,157 +458,167 @@ impl App {
             egui::TopBottomPanel::top("top panel")
                 .resizable(false)
                 .show(state.egui_renderer.context(), |ui| {
-                    egui::MenuBar::new().ui(ui, |ui| {
-                        if ui.button("Import Part").clicked() {
-                            //state.load_file_dlg.pick_file();
+                    let mut command_context = CommandContext::new(
+                        &state.db_view_model,
+                        state.current_app_mode,
+                        state.operation_queue_tx.clone(),
+                        &mut self.file_dialog_service,
+                        &mut state.camera_data,
+                    );
 
-                            self.file_dialog_service.show_load_dialog(
-                                "3MF manufacturing format",
-                                vec!["3mf"],
-                                |path, context| {
-                                    if let Some(ext) = path.extension()
-                                        && let Some("3mf") = ext.to_str()
-                                    {
-                                        let ops = load_3mf::Load3MFOps { path };
-                                        if let Err(err) = context.operation_queue_tx.send_blocking(
-                                            OperationRequest::BackgroundOp(Box::new(ops)),
-                                        ) {
-                                            println!("{err:?}");
-                                        }
-                                    }
-                                },
-                            );
-                        }
+                    self.command_service
+                        .populate_menu_bar(ui, &mut command_context);
+                    // egui::MenuBar::new().ui(ui, |ui| {
+                    //     if ui.button("Import Part").clicked() {
+                    //         //state.load_file_dlg.pick_file();
 
-                        #[cfg(debug_assertions)]
-                        if ui.button("Add Test Mesh").clicked() {
-                            create_test_object(state.db.clone());
-                            state.need_viewport_update = true;
-                        }
+                    //         self.file_dialog_service.show_load_dialog(
+                    //             "3MF manufacturing format",
+                    //             vec!["3mf"],
+                    //             |path, context| {
+                    //                 if let Some(ext) = path.extension()
+                    //                     && let Some("3mf") = ext.to_str()
+                    //                 {
+                    //                     let ops = load_3mf::Load3MFOps { path };
+                    //                     if let Err(err) = context.operation_queue_tx.send_blocking(
+                    //                         OperationRequest::BackgroundOp(Box::new(ops)),
+                    //                     ) {
+                    //                         println!("{err:?}");
+                    //                     }
+                    //                 }
+                    //             },
+                    //         );
+                    //     }
 
-                        ui.add_enabled_ui(!state.db_view_model.is_empty(), |ui| {
-                            if ui.button("Unzoom Scene").clicked() {
-                                unzoom_bbox(&mut state.camera_data, bbox);
-                            }
+                    //     #[cfg(debug_assertions)]
+                    //     if ui.button("Add Test Mesh").clicked() {
+                    //         create_test_object(state.db.clone());
+                    //         state.need_viewport_update = true;
+                    //     }
 
-                            if ui.button("Clear All").clicked() {
-                                let clear_ops = ClearDbOps;
-                                if let Err(err) = state.operation_queue_tx.send_blocking(
-                                    OperationRequest::ModalOpImmediate(Box::new(clear_ops)),
-                                ) {
-                                    println!("{err:?}");
-                                }
-                            }
+                    //     ui.add_enabled_ui(!state.db_view_model.is_empty(), |ui| {
+                    //         if ui.button("Unzoom Scene").clicked() {
+                    //             unzoom_bbox(&mut state.camera_data, bbox);
+                    //         }
 
-                            if ui.button("Save Scene to 3MF").clicked() {
-                                self.file_dialog_service.show_save_dialog(
-                                    "3MF Manufacturing Format",
-                                    "3mf",
-                                    |path, context| {
-                                        let ops_msg = OperationRequest::ModalOpWait(Box::new(
-                                            save_3mf::Save3mfOps {
-                                                path,
-                                                save_mode: SaveMode::Scene,
-                                            },
-                                        ));
+                    //         if ui.button("Clear All").clicked() {
+                    //             let clear_ops = ClearDbOps;
+                    //             if let Err(err) = state.operation_queue_tx.send_blocking(
+                    //                 OperationRequest::ModalOpImmediate(Box::new(clear_ops)),
+                    //             ) {
+                    //                 println!("{err:?}");
+                    //             }
+                    //         }
 
-                                        if let Err(err) =
-                                            context.operation_queue_tx.send_blocking(ops_msg)
-                                        {
-                                            println!("{err:?}");
-                                        }
-                                    },
-                                );
-                            }
-                        });
+                    //         if ui.button("Save Scene to 3MF").clicked() {
+                    //             self.file_dialog_service.show_save_dialog(
+                    //                 "3MF Manufacturing Format",
+                    //                 "3mf",
+                    //                 |path, context| {
+                    //                     let ops_msg = OperationRequest::ModalOpWait(Box::new(
+                    //                         save_3mf::Save3mfOps {
+                    //                             path,
+                    //                             save_mode: SaveMode::Scene,
+                    //                         },
+                    //                     ));
 
-                        ui.add_enabled_ui(!operable_selected_identifiables.is_empty(), |ui| {
-                            if ui.button("Save Selected to 3mf").clicked() {
-                                // state.save_selected_part_to_3mf_dlg.save_file();
+                    //                     if let Err(err) =
+                    //                         context.operation_queue_tx.send_blocking(ops_msg)
+                    //                     {
+                    //                         println!("{err:?}");
+                    //                     }
+                    //                 },
+                    //             );
+                    //         }
+                    //     });
 
-                                self.file_dialog_service.show_save_dialog(
-                                    "3MF Manufacturing Format",
-                                    "3mf",
-                                    |path, context| {
-                                        let operable_selected_identifiables = context
-                                            .db_view_model
-                                            .get_operable_selected_identifiables()
-                                            .collect::<Vec<_>>();
-                                        let ops_msg = {
-                                            if !operable_selected_identifiables.is_empty() {
-                                                let save_mode = match context.current_app_mode {
-                                                    AppMode::Objects => {
-                                                        let parts = operable_selected_identifiables
-                                                            .iter()
-                                                            .filter_map(|i| match i {
-                                                                Identifiable::Part(part_id) => {
-                                                                    Some(*part_id)
-                                                                }
-                                                                Identifiable::PartInstance(_) => {
-                                                                    None
-                                                                }
-                                                            });
+                    //     ui.add_enabled_ui(!operable_selected_identifiables.is_empty(), |ui| {
+                    //         if ui.button("Save Selected to 3mf").clicked() {
+                    //             // state.save_selected_part_to_3mf_dlg.save_file();
 
-                                                        SaveMode::PartsOnly(parts.collect())
-                                                    }
-                                                    AppMode::Build => {
-                                                        let part_instances =
-                                                            operable_selected_identifiables
-                                                                .iter()
-                                                                .filter_map(|i| match i {
-                                                                    Identifiable::Part(_) => None,
+                    //             self.file_dialog_service.show_save_dialog(
+                    //                 "3MF Manufacturing Format",
+                    //                 "3mf",
+                    //                 |path, context| {
+                    //                     let operable_selected_identifiables = context
+                    //                         .db_view_model
+                    //                         .get_operable_selected_identifiables()
+                    //                         .collect::<Vec<_>>();
+                    //                     let ops_msg = {
+                    //                         if !operable_selected_identifiables.is_empty() {
+                    //                             let save_mode = match context.current_app_mode {
+                    //                                 AppMode::Objects => {
+                    //                                     let parts = operable_selected_identifiables
+                    //                                         .iter()
+                    //                                         .filter_map(|i| match i {
+                    //                                             Identifiable::Part(part_id) => {
+                    //                                                 Some(*part_id)
+                    //                                             }
+                    //                                             Identifiable::PartInstance(_) => {
+                    //                                                 None
+                    //                                             }
+                    //                                         });
 
-                                                                    Identifiable::PartInstance(
-                                                                        part_instance_id,
-                                                                    ) => Some(*part_instance_id),
-                                                                });
+                    //                                     SaveMode::PartsOnly(parts.collect())
+                    //                                 }
+                    //                                 AppMode::Build => {
+                    //                                     let part_instances =
+                    //                                         operable_selected_identifiables
+                    //                                             .iter()
+                    //                                             .filter_map(|i| match i {
+                    //                                                 Identifiable::Part(_) => None,
 
-                                                        SaveMode::PartInstances(
-                                                            part_instances.collect(),
-                                                        )
-                                                    }
-                                                };
-                                                OperationRequest::BackgroundOp(Box::new(
-                                                    save_3mf::Save3mfOps { path, save_mode },
-                                                ))
-                                            } else {
-                                                OperationRequest::ModalOp(Box::new(
-                                                    save_3mf::Save3mfOps {
-                                                        path,
-                                                        save_mode: SaveMode::Scene,
-                                                    },
-                                                ))
-                                            }
-                                        };
+                    //                                                 Identifiable::PartInstance(
+                    //                                                     part_instance_id,
+                    //                                                 ) => Some(*part_instance_id),
+                    //                                             });
 
-                                        if let Err(err) =
-                                            context.operation_queue_tx.send_blocking(ops_msg)
-                                        {
-                                            println!("{err:?}");
-                                        }
-                                    },
-                                );
-                            }
-                        });
+                    //                                     SaveMode::PartInstances(
+                    //                                         part_instances.collect(),
+                    //                                     )
+                    //                                 }
+                    //                             };
+                    //                             OperationRequest::BackgroundOp(Box::new(
+                    //                                 save_3mf::Save3mfOps { path, save_mode },
+                    //                             ))
+                    //                         } else {
+                    //                             OperationRequest::ModalOp(Box::new(
+                    //                                 save_3mf::Save3mfOps {
+                    //                                     path,
+                    //                                     save_mode: SaveMode::Scene,
+                    //                                 },
+                    //                             ))
+                    //                         }
+                    //                     };
 
-                        //onyl show modes if there is a scene
-                        if !state.db_view_model.is_empty() {
-                            ui.with_layout(Layout::right_to_left(egui::Align::RIGHT), |ui| {
-                                // ToDo: Add a tooltip here to explain the difference in modes
-                                ui.radio_value(
-                                    &mut state.current_app_mode,
-                                    AppMode::Objects,
-                                    "Objects Mode",
-                                );
+                    //                     if let Err(err) =
+                    //                         context.operation_queue_tx.send_blocking(ops_msg)
+                    //                     {
+                    //                         println!("{err:?}");
+                    //                     }
+                    //                 },
+                    //             );
+                    //         }
+                    //     });
 
-                                ui.radio_value(
-                                    &mut state.current_app_mode,
-                                    AppMode::Build,
-                                    "Build Mode",
-                                );
-                            });
-                        }
-                    });
+                    //     //onyl show modes if there is a scene
+                    //     if !state.db_view_model.is_empty() {
+                    //         ui.with_layout(Layout::right_to_left(egui::Align::RIGHT), |ui| {
+                    //             // ToDo: Add a tooltip here to explain the difference in modes
+                    //             ui.radio_value(
+                    //                 &mut state.current_app_mode,
+                    //                 AppMode::Objects,
+                    //                 "Objects Mode",
+                    //             );
+
+                    //             ui.radio_value(
+                    //                 &mut state.current_app_mode,
+                    //                 AppMode::Build,
+                    //                 "Build Mode",
+                    //             );
+                    //         });
+                    //     }
+                    // });
                 });
 
             if let Some(tree) = &mut state.toolsheets {

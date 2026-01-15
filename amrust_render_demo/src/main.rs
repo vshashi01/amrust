@@ -15,6 +15,7 @@ mod save_3mf;
 mod services;
 mod toolsheets;
 mod tree_item_viewer;
+mod unzoom_scene;
 mod viewport;
 
 use winit::event_loop::{ControlFlow, EventLoop};

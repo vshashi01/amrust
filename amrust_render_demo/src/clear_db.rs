@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use smol::Timer;
 
 use crate::{
-    commands::{Command, CommandCategory, CommandContext},
+    commands::{Command, CommandCategory, CommandContext, CommandsService},
     operation::{DbContext, Operation, OperationNature, OperationResponse},
     operation_manager::OperationRequest,
 };
@@ -48,12 +48,16 @@ impl Command for ClearDbCommand {
         "Clear All"
     }
 
-    fn shortcut(&self) -> Option<&str> {
-        Some("Ctrl+2")
+    fn is_visible(&self, context: &CommandContext) -> bool {
+        true
+    }
+
+    fn is_enabled(&self, context: &CommandContext) -> bool {
+        !context.db_view_model.is_empty()
     }
 
     fn category(&self) -> CommandCategory {
-        CommandCategory::General
+        CommandCategory::View
     }
 
     fn execute(&self, context: &mut CommandContext) {
@@ -64,4 +68,9 @@ impl Command for ClearDbCommand {
             println!("Failed to queue import operation: {:?}", err);
         }
     }
+}
+
+/// Register all commands provided by the clear_db module
+pub fn register_commands(commands_service: &mut CommandsService) {
+    commands_service.register_command(Box::new(ClearDbCommand));
 }

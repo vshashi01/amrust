@@ -289,10 +289,6 @@ impl Command for ImportPartCommand {
         "Import Part"
     }
 
-    fn shortcut(&self) -> Option<&str> {
-        Some("Ctrl+O")
-    }
-
     fn category(&self) -> CommandCategory {
         CommandCategory::File
     }

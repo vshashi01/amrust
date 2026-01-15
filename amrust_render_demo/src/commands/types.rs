@@ -1,4 +1,7 @@
-use amrust_render::{bounding_box::BoundingBox, camera::OrthographicCameraData};
+use amrust_render::{
+    bounding_box::BoundingBox,
+    camera::{CameraData, OrthographicCameraData},
+};
 use smol::channel::Sender;
 
 use crate::{
@@ -51,14 +54,36 @@ pub struct CommandContext<'a> {
 
     /// File dialog service for showing dialogs
     pub file_dialog_service: &'a mut FileDialogService,
-    // /// Camera data for scene manipulation
-    // pub camera_data: &'a mut OrthographicCameraData,
 
+    /// Camera data for scene manipulation
+    camera_data: &'a mut OrthographicCameraData,
     // /// Current scene bounding box
     // pub scene_bbox: Option<&'a BoundingBox>,
 
     // /// Flag to indicate viewport needs update
     // pub need_viewport_update: &'a mut bool,
+}
+
+impl<'a> CommandContext<'a> {
+    pub fn new(
+        db_view_model: &'a DbViewModel,
+        app_mode: AppMode,
+        operation_queue_tx: Sender<OperationRequest>,
+        file_dialog_service: &'a mut FileDialogService,
+        camera_data: &'a mut OrthographicCameraData,
+    ) -> Self {
+        Self {
+            db_view_model,
+            current_app_mode: app_mode,
+            operation_queue_tx,
+            file_dialog_service,
+            camera_data,
+        }
+    }
+
+    pub fn update_camera_data(&mut self, mutate_camera: impl FnOnce(&mut OrthographicCameraData)) {
+        (mutate_camera)(self.camera_data)
+    }
 }
 
 /// Categories for organizing commands

@@ -611,8 +611,12 @@ impl Command for SaveSceneCommand {
         "Save Scene to 3mf"
     }
 
-    fn shortcut(&self) -> Option<&str> {
-        Some("Ctrl+1")
+    fn is_visible(&self, context: &CommandContext) -> bool {
+        !context.db_view_model.is_empty()
+    }
+
+    fn is_enabled(&self, context: &CommandContext) -> bool {
+        !context.db_view_model.is_empty()
     }
 
     fn category(&self) -> CommandCategory {
@@ -657,8 +661,21 @@ impl Command for SavePartCommand {
         "Save Selected Parts to 3mf"
     }
 
-    fn shortcut(&self) -> Option<&str> {
-        Some("Ctrl+1")
+    fn is_visible(&self, context: &CommandContext) -> bool {
+        !context.db_view_model.is_empty()
+    }
+
+    fn is_enabled(&self, context: &CommandContext) -> bool {
+        if context
+            .db_view_model
+            .get_operable_selected_identifiables()
+            .count()
+            > 0
+        {
+            true
+        } else {
+            false
+        }
     }
 
     fn category(&self) -> CommandCategory {
