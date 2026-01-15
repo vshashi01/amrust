@@ -63,9 +63,9 @@ impl Command for ClearDbCommand {
     fn execute(&self, context: &mut CommandContext) {
         if let Err(err) = context
             .operation_queue_tx
-            .send_blocking(OperationRequest::BackgroundOp(Box::new(ClearDbOps)))
+            .send_blocking(OperationRequest::ModalOpImmediate(Box::new(ClearDbOps)))
         {
-            println!("Failed to queue import operation: {:?}", err);
+            println!("Failed to queue clear db operation: {:?}", err);
         }
     }
 }

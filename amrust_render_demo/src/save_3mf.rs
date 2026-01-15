@@ -19,6 +19,7 @@ use crate::amrust_db::PartInstance;
 use crate::amrust_db::PartInstanceId;
 use crate::amrust_db::PartRep;
 use crate::amrust_db::Transformation;
+use crate::app_mode::AppMode;
 use crate::commands::Command;
 use crate::commands::CommandCategory;
 use crate::commands::CommandContext;
@@ -611,10 +612,6 @@ impl Command for SaveSceneCommand {
         "Save Scene to 3mf"
     }
 
-    fn is_visible(&self, context: &CommandContext) -> bool {
-        !context.db_view_model.is_empty()
-    }
-
     fn is_enabled(&self, context: &CommandContext) -> bool {
         !context.db_view_model.is_empty()
     }
@@ -640,7 +637,7 @@ impl Command for SaveSceneCommand {
                     };
                     if let Err(err) = ctx
                         .operation_queue_tx
-                        .send_blocking(OperationRequest::BackgroundOp(Box::new(ops)))
+                        .send_blocking(OperationRequest::ModalOpWait(Box::new(ops)))
                     {
                         println!("Failed to queue import operation: {:?}", err);
                     }
@@ -661,10 +658,6 @@ impl Command for SavePartCommand {
         "Save Selected Parts to 3mf"
     }
 
-    fn is_visible(&self, context: &CommandContext) -> bool {
-        !context.db_view_model.is_empty()
-    }
-
     fn is_enabled(&self, context: &CommandContext) -> bool {
         if context
             .db_view_model
@@ -683,7 +676,6 @@ impl Command for SavePartCommand {
     }
 
     fn execute(&self, context: &mut CommandContext) {
-        // Show file dialog with handler for importing 3MF files
         context.file_dialog_service.show_save_dialog(
             "3D Manufacturing Format",
             "3mf",
@@ -693,15 +685,48 @@ impl Command for SavePartCommand {
                 if let Some(ext) = path.extension()
                     && ext == "3mf"
                 {
-                    let ops = Save3mfOps {
-                        path,
-                        save_mode: SaveMode::Scene,
+                    let operable_selected_identifiables = ctx
+                        .db_view_model
+                        .get_operable_selected_identifiables()
+                        .collect::<Vec<_>>();
+                    let ops_msg = {
+                        if !operable_selected_identifiables.is_empty() {
+                            let save_mode = match ctx.current_app_mode {
+                                AppMode::Objects => {
+                                    let parts =
+                                        operable_selected_identifiables.iter().filter_map(|i| {
+                                            match i {
+                                                Identifiable::Part(part_id) => Some(*part_id),
+                                                Identifiable::PartInstance(_) => None,
+                                            }
+                                        });
+
+                                    SaveMode::PartsOnly(parts.collect())
+                                }
+                                AppMode::Build => {
+                                    let part_instances = operable_selected_identifiables
+                                        .iter()
+                                        .filter_map(|i| match i {
+                                            Identifiable::Part(_) => None,
+
+                                            Identifiable::PartInstance(part_instance_id) => {
+                                                Some(*part_instance_id)
+                                            }
+                                        });
+
+                                    SaveMode::PartInstances(part_instances.collect())
+                                }
+                            };
+                            OperationRequest::BackgroundOp(Box::new(Save3mfOps { path, save_mode }))
+                        } else {
+                            OperationRequest::ModalOp(Box::new(Save3mfOps {
+                                path,
+                                save_mode: SaveMode::Scene,
+                            }))
+                        }
                     };
-                    if let Err(err) = ctx
-                        .operation_queue_tx
-                        .send_blocking(OperationRequest::BackgroundOp(Box::new(ops)))
-                    {
-                        println!("Failed to queue import operation: {:?}", err);
+                    if let Err(err) = ctx.operation_queue_tx.send_blocking(ops_msg) {
+                        println!("Failed to queue save part operation: {:?}", err);
                     }
                 }
             },
