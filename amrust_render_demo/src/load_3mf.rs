@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use glam::Vec3;
+use log::info;
 // use smol::Timer;
 use thiserror::Error;
 use threemf2::io::query::{self};
@@ -299,7 +300,7 @@ impl Command for ImportPartCommand {
             "3D Manufacturing Format",
             vec!["3mf"],
             |path: PathBuf, ctx: &mut CommandContext| {
-                println!("File picked is: {:?}", path);
+                info!("File picked is: {:?}", path);
 
                 if let Some(ext) = path.extension()
                     && ext == "3mf"
@@ -309,7 +310,7 @@ impl Command for ImportPartCommand {
                         .operation_queue_tx
                         .send_blocking(OperationRequest::BackgroundOp(Box::new(ops)))
                     {
-                        println!("Failed to queue import operation: {:?}", err);
+                        info!("Failed to queue import operation: {:?}", err);
                     }
                 }
             },

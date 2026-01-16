@@ -1,6 +1,7 @@
 use glam::Vec3;
 
 use amrust_render::{bounding_box::BoundingBox, camera::CameraTransform};
+use log::info;
 
 use crate::{
     commands::{Command, CommandCategory, CommandContext, CommandsService},
@@ -38,7 +39,7 @@ impl Command for UnzoomSceneCommand {
             .render_worker_queue_tx
             .send_blocking(RenderMessage::TransformCamera(transforms))
         {
-            println!("Error while sending Render message for unzoom: {err:?}");
+            info!("Error while sending Render message for unzoom: {err:?}");
         }
     }
 }
@@ -50,7 +51,7 @@ pub fn register_commands(commands_service: &mut CommandsService) {
 
 // pub fn unzoom_bbox(camera: &mut impl CameraData, total_bbox: &BoundingBox) {
 //     let top_left_corner = Vec3::new(total_bbox.min.x, total_bbox.min.y, total_bbox.max.z);
-//     // println!("The top left corner is: {}", top_left_corner);
+//     // info!("The top left corner is: {}", top_left_corner);
 //     camera
 //         .transform(amrust_render::camera::CameraTransform::SetView {
 //             eye_position: top_left_corner,

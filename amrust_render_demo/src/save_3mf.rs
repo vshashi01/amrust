@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use log::info;
 use smol::Timer;
 use thiserror::Error;
 use threemf2::core::model::Unit;
@@ -127,11 +128,11 @@ impl Operation for Save3mfOps {
                     .await
                 {
                     Ok(resp) => {
-                        println!("Operation Responsed: {resp:?}");
+                        info!("Operation Responsed: {resp:?}");
                         resp
                     }
                     Err(err) => {
-                        println!("Context error: {err:?}");
+                        info!("Context error: {err:?}");
                         OperationResponse::Failed {
                             name: "Save 3MF",
                             error: Box::new(err),
@@ -156,12 +157,12 @@ fn save(
 ) -> Result<(), DbTo3mfError> {
     let model_builder = match save_mode {
         SaveMode::Scene => {
-            println!("Saving Scene");
+            info!("Saving Scene");
             save_scene(db)
         }
         SaveMode::PartsOnly(part_ids) => {
             if !part_ids.is_empty() {
-                println!("Saving Parts");
+                info!("Saving Parts");
                 save_parts(db, part_ids)
             } else {
                 Err(DbTo3mfError::NoPartsToBeSaved)
@@ -169,7 +170,7 @@ fn save(
         }
         SaveMode::PartInstances(part_instance_ids) => {
             if !part_instance_ids.is_empty() {
-                println!("Saving Specific Instances");
+                info!("Saving Specific Instances");
                 save_instances(db, part_instance_ids)
             } else {
                 Err(DbTo3mfError::NoPartsToBeSaved)
@@ -185,7 +186,7 @@ fn save(
             Ok(package.write(threemf)?)
         }
         Err(err) => {
-            println!("Something went wrong: {err:?}");
+            info!("Something went wrong: {err:?}");
             Err(err)
         }
     }
@@ -624,7 +625,7 @@ impl Command for SaveSceneCommand {
             "3D Manufacturing Format",
             "3mf",
             |path: PathBuf, ctx: &mut CommandContext| {
-                println!("File picked is: {:?}", path);
+                info!("File picked is: {:?}", path);
 
                 if let Some(ext) = path.extension()
                     && ext == "3mf"
@@ -637,7 +638,7 @@ impl Command for SaveSceneCommand {
                         .operation_queue_tx
                         .send_blocking(OperationRequest::ModalOpWait(Box::new(ops)))
                     {
-                        println!("Failed to queue import operation: {:?}", err);
+                        info!("Failed to queue import operation: {:?}", err);
                     }
                 }
             },
@@ -673,7 +674,7 @@ impl Command for SavePartCommand {
             "3D Manufacturing Format",
             "3mf",
             |path: PathBuf, ctx: &mut CommandContext| {
-                println!("File picked is: {:?}", path);
+                info!("File picked is: {:?}", path);
 
                 if let Some(ext) = path.extension()
                     && ext == "3mf"
@@ -719,7 +720,7 @@ impl Command for SavePartCommand {
                         }
                     };
                     if let Err(err) = ctx.operation_queue_tx.send_blocking(ops_msg) {
-                        println!("Failed to queue save part operation: {:?}", err);
+                        info!("Failed to queue save part operation: {:?}", err);
                     }
                 }
             },

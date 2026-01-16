@@ -27,6 +27,7 @@ use egui_dock::{DockArea, DockState, NodeIndex};
 use egui_wgpu::wgpu::SurfaceError;
 use egui_wgpu::{ScreenDescriptor, wgpu};
 use glam::Vec3;
+use log::info;
 use smol::channel::{Receiver, Sender, TryRecvError};
 use smol::lock::RwLock;
 use smol::{Executor, channel};
@@ -141,7 +142,7 @@ impl AppState {
                 .name("smol-executor".to_owned())
                 .spawn(move || {
                     smol::block_on(async move {
-                        println!("Trying to run executor");
+                        info!("Trying to run executor");
                         exec.run(async move {
                             loop {
                                 smol::Timer::after(std::time::Duration::from_millis(1)).await;
@@ -172,7 +173,7 @@ impl AppState {
             let internal_render_db = render_db.clone();
             executor
                 .spawn(async {
-                    println!("Attempted to println in separate thread");
+                    info!("Attempted to println in separate thread");
                     let mut render_worker = RenderWorker::new(
                         renderer_settings,
                         internal_render_db,
@@ -253,10 +254,10 @@ impl AppState {
                         .egui_renderer
                         .register_texture(&self.device, &texture_view);
                     let _ = self.texture_id.insert(id);
-                    // println!("New texture view is attempted!")
+                    // info!("New texture view is attempted!")
                 }
                 RenderResponse::RenderComplete => {
-                    // println!("Rendered");
+                    // info!("Rendered");
                 }
             },
             Err(err) => match err {
@@ -268,14 +269,14 @@ impl AppState {
         match self.operation_response_rx.try_recv() {
             Ok(response) => match response {
                 OperationResponse::Succeeded { name } => {
-                    println!("Operation Success: {name}");
+                    info!("Operation Success: {name}");
                     self.need_viewport_update = true;
                 }
                 OperationResponse::Failed { name, error, .. } => {
-                    println!("Operation Failed: {name} with error {error:?}");
+                    info!("Operation Failed: {name} with error {error:?}");
                 }
                 OperationResponse::Aborted { name, .. } => {
-                    println!("Operation Cancelled: {name}");
+                    info!("Operation Cancelled: {name}");
                 }
             },
             Err(err) => match err {
@@ -310,6 +311,7 @@ pub struct App {
 
 impl App {
     pub fn new() -> Self {
+        egui_logger::builder().init().unwrap();
         let instance = egui_wgpu::wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
 
         let toolsheets_dock_tree = DockState::new(vec![]);
@@ -379,7 +381,7 @@ impl App {
             && let Some(min) = window.is_minimized()
             && min
         {
-            // println!("Window is minimized");
+            // info!("Window is minimized");
             return;
         }
 
@@ -395,7 +397,7 @@ impl App {
         match surface_texture {
             Err(SurfaceError::Outdated) => {
                 // Ignoring outdated to allow resizing and minimization
-                println!("wgpu surface outdated");
+                info!("wgpu surface outdated");
                 return;
             }
             Err(_) => {
@@ -533,11 +535,11 @@ impl App {
 
                 match new_db_cache {
                     Ok(cache) => {
-                        println!("Updated cache");
+                        info!("Updated cache");
                         state.db_view_model = cache;
                         state.need_viewport_update = true;
                     }
-                    Err(_) => println!("Updating data went wrong!"),
+                    Err(_) => info!("Updating data went wrong!"),
                 }
             }
 
@@ -661,7 +663,7 @@ impl App {
                     AppMode::Build => toolsheets.selected_build_items().copied().collect(),
                 };
 
-                println!("Selected identifiables are: {selected_identifiables:?}");
+                info!("Selected identifiables are: {selected_identifiables:?}");
 
                 let mut tree_items = vec![];
                 for id in &selected_identifiables {
@@ -701,7 +703,7 @@ impl App {
                     .render_message_tx
                     .send_blocking(RenderMessage::UpdateCamera(state.camera_data.clone()))
             {
-                println!("{err:?}");
+                info!("{err:?}");
             }
 
             //run the operation manager
@@ -728,9 +730,12 @@ impl App {
                     .get_queued_operations()
                     .collect::<Vec<_>>();
 
-                egui::TopBottomPanel::bottom(Id::new("bottom panel")).show(
-                    state.egui_renderer.context(),
-                    |ui| {
+                egui::TopBottomPanel::bottom(Id::new("bottom panel"))
+                    .resizable(true)
+                    .max_height(300.0)
+                    .show(state.egui_renderer.context(), |ui| {
+                        egui_logger::LoggerUi::default().show(ui);
+
                         ui.vertical(|ui| {
                             if background_ops.is_empty() {
                                 ui.label("No background operations running");
@@ -758,8 +763,7 @@ impl App {
                                 }
                             }
                         })
-                    },
-                );
+                    });
             }
 
             if state.show_operation_error_modal
@@ -810,7 +814,7 @@ impl ApplicationHandler for App {
 
         match event {
             WindowEvent::CloseRequested => {
-                println!("The close button was pressed; stopping");
+                info!("The close button was pressed; stopping");
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
@@ -828,13 +832,13 @@ impl ApplicationHandler for App {
                 self.handle_dpi_changed(scale_factor);
             }
             // WindowEvent::HoveredFileCancelled => {
-            //     println!("Hovered file cancelled")
+            //     info!("Hovered file cancelled")
             // }
             // WindowEvent::HoveredFile(filepath) => {
-            //     println!("File hovered");
+            //     info!("File hovered");
             // }
             // WindowEvent::DroppedFile(filepath) => {
-            //     println!("File dropped");
+            //     info!("File dropped");
             // }
             _ => (),
         }

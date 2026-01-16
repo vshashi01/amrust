@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
+use log::info;
 use smol::Timer;
 
 use crate::{
@@ -61,7 +62,7 @@ impl Command for ClearDbCommand {
             .operation_queue_tx
             .send_blocking(OperationRequest::ModalOpImmediate(Box::new(ClearDbOps)))
         {
-            println!("Failed to queue clear db operation: {:?}", err);
+            info!("Failed to queue clear db operation: {:?}", err);
         }
     }
 }

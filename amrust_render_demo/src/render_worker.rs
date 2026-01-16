@@ -5,6 +5,7 @@ use amrust_render::{
     camera::{CameraData, CameraTransform, OrthographicCameraData},
     renderer::{RenderTextureData, Renderer},
 };
+use log::info;
 use smol::{
     channel::{Receiver, Sender, TryRecvError},
     lock::RwLock,
@@ -75,7 +76,7 @@ impl RenderWorker {
                 }
             }
             Err(err) => {
-                println!("{err:?}");
+                info!("{err:?}");
                 panic!("{err}")
             }
         }
@@ -90,7 +91,7 @@ impl RenderWorker {
             ))
             .await
         {
-            println!("{err:?}");
+            info!("{err:?}");
         }
 
         loop {
@@ -106,7 +107,7 @@ impl RenderWorker {
                         }
 
                         self.renderer.update_camera(&self.camera);
-                        println!("Transformed camera");
+                        info!("Transformed camera");
                     }
                     RenderMessage::ResizeViewport(width, height) => {
                         self.renderer.set_size(width, height);
@@ -119,13 +120,13 @@ impl RenderWorker {
                             ))
                             .await
                         {
-                            println!("{err:?}");
+                            info!("{err:?}");
                         }
                     }
                     RenderMessage::Render => {
                         let render_db = self.render_db.read().await;
                         let render_data = render_db.get_renderables().collect::<Vec<_>>();
-                        // println!("Render data count: {:?}", render_data.len());
+                        // info!("Render data count: {:?}", render_data.len());
                         match self
                             .renderer
                             .render_to_texture(&render_data, &self.render_texture_data)
@@ -135,7 +136,7 @@ impl RenderWorker {
                                 if let Err(err) =
                                     self.sender.send(RenderResponse::RenderComplete).await
                                 {
-                                    println!("{err:?}");
+                                    info!("{err:?}");
                                 }
                             }
 

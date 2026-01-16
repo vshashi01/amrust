@@ -3,6 +3,7 @@ use amrust_render::{
     camera::{self, CameraData},
 };
 use egui::{Image, UiBuilder, Vec2, epaint};
+use log::info;
 
 pub struct Viewport3D {}
 
@@ -33,7 +34,7 @@ impl Viewport3D {
 
         if ui_response.inner.dragged_by(egui::PointerButton::Secondary) {
             let delta = ui_response.inner.drag_delta();
-            // println!("Drag delta is: {:?}", delta);
+            // info!("Drag delta is: {:?}", delta);
             let drag_sensitivity = 0.01;
             camera_data.transform(camera::CameraTransform::Rotate {
                 pivot: bbox.center(),
@@ -54,7 +55,7 @@ impl Viewport3D {
             ));
             ui.ctx().request_repaint();
         } else if ui_response.inner.clicked() {
-            println!("Clicked in the region");
+            info!("Clicked in the region");
         }
     }
 }

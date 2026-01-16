@@ -34,6 +34,7 @@ async-trait = { version = "0.1.89" }
 rkyv = { version = "0.8.12", features = ["bytecheck"] }
 rkyv_derive = { version = "0.8.12", features = ["bytecheck"] }
 bytecheck = { version = "0.8.2" }
+egui_logger = { version = "0.8.0" }
 
 amrust_render = { workspace = true }
 amrust_lib = { workspace = true }
