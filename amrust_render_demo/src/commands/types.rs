@@ -1,12 +1,8 @@
-use amrust_render::{
-    bounding_box::BoundingBox,
-    camera::{CameraData, OrthographicCameraData},
-};
 use smol::channel::Sender;
 
 use crate::{
-    amrust_db::Identifiable, app_mode::AppMode, db_view_model::DbViewModel,
-    operation_manager::OperationRequest, services::FileDialogService,
+    app_mode::AppMode, db_view_model::DbViewModel, operation_manager::OperationRequest,
+    render_worker::RenderMessage, services::FileDialogService,
 };
 
 /// Trait for commands that can be executed by the command service
@@ -33,9 +29,7 @@ pub trait Command: Send + Sync {
     }
 
     /// Category for organizing commands in UI
-    fn category(&self) -> CommandCategory {
-        CommandCategory::General
-    }
+    fn category(&self) -> CommandCategory;
 
     /// Execute the command with the given context
     fn execute(&self, context: &mut CommandContext);
@@ -55,11 +49,8 @@ pub struct CommandContext<'a> {
     /// File dialog service for showing dialogs
     pub file_dialog_service: &'a mut FileDialogService,
 
-    /// Camera data for scene manipulation
-    camera_data: &'a mut OrthographicCameraData,
-    // /// Current scene bounding box
-    // pub scene_bbox: Option<&'a BoundingBox>,
-
+    //Channel for queuing render work
+    pub render_worker_queue_tx: Sender<RenderMessage>,
     // /// Flag to indicate viewport needs update
     // pub need_viewport_update: &'a mut bool,
 }
@@ -70,28 +61,22 @@ impl<'a> CommandContext<'a> {
         app_mode: AppMode,
         operation_queue_tx: Sender<OperationRequest>,
         file_dialog_service: &'a mut FileDialogService,
-        camera_data: &'a mut OrthographicCameraData,
+        render_worker_queue_tx: Sender<RenderMessage>,
     ) -> Self {
         Self {
             db_view_model,
             current_app_mode: app_mode,
             operation_queue_tx,
             file_dialog_service,
-            camera_data,
+            render_worker_queue_tx,
         }
-    }
-
-    pub fn update_camera_data(&mut self, mutate_camera: impl FnOnce(&mut OrthographicCameraData)) {
-        (mutate_camera)(self.camera_data)
     }
 }
 
 /// Categories for organizing commands
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CommandCategory {
-    General,
     File,
     View,
-    Selection,
     Debug,
 }

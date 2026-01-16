@@ -8,8 +8,8 @@ use smol::{
 use crate::{
     amrust_db::{Db, Identifiable},
     operation::{
-        self, DbChangeMsg, Operation, OperationNature, OperationResponse,
-        get_new_operation_context, process_operation,
+        DbChangeMsg, Operation, OperationNature, OperationResponse, get_new_operation_context,
+        process_operation,
     },
 };
 
@@ -127,6 +127,7 @@ impl OperationManager {
 
         match self.operation_queue_rx.try_recv() {
             Ok(op_mode) => {
+                let new_operation_id = self.get_next_operation_id();
                 match op_mode {
                     OperationRequest::BackgroundOp(operation) => {
                         if matches!(
@@ -136,7 +137,7 @@ impl OperationManager {
                             //throw an error that this probably a bad idea
                         } else {
                             self.pending_task_queue.push_back(PendingOperation {
-                                operation_id: self.next_operation_id,
+                                operation_id: new_operation_id,
                                 operation,
                                 is_modal: false,
                                 is_waiting: false,
@@ -146,7 +147,7 @@ impl OperationManager {
                     OperationRequest::ModalOp(operation) => {
                         //always goes to the front of the queue
                         self.pending_task_queue.push_front(PendingOperation {
-                            operation_id: self.next_operation_id,
+                            operation_id: new_operation_id,
                             operation,
                             is_modal: true,
                             is_waiting: false,
@@ -154,7 +155,7 @@ impl OperationManager {
                     }
                     OperationRequest::ModalOpWait(operation) => {
                         let pending_op = PendingOperation {
-                            operation_id: self.next_operation_id,
+                            operation_id: new_operation_id,
                             operation,
                             is_modal: true,
                             is_waiting: true,
@@ -181,7 +182,7 @@ impl OperationManager {
                         } else {
                             //always goes to the front of the queue
                             self.pending_task_queue.push_front(PendingOperation {
-                                operation_id: self.next_operation_id,
+                                operation_id: new_operation_id,
                                 operation,
                                 is_modal: true,
                                 is_waiting: false,
@@ -189,7 +190,6 @@ impl OperationManager {
                         }
                     }
                 };
-                self.next_operation_id += 1;
             }
             Err(err) => match err {
                 TryRecvError::Empty => {}
@@ -204,18 +204,17 @@ impl OperationManager {
             // check if any existing modal operation is running
             let no_modal_ops_running = self.running_tasks.iter().all(|op| !op.is_modal);
             if let Some(first) = self.pending_task_queue.front() {
-                if !first.is_waiting && no_modal_ops_running {
-                    position_of_next_operation.insert(0);
-                } else if first.is_waiting && self.running_tasks.is_empty() {
-                    position_of_next_operation.insert(0);
+                if (!first.is_waiting && no_modal_ops_running)
+                    || (first.is_waiting && self.running_tasks.is_empty())
+                {
+                    let _ = position_of_next_operation.insert(0);
                 }
             } else if !self.pending_task_queue.is_empty() && no_modal_ops_running {
                 for (pos, pending_op) in &mut self.pending_task_queue.iter().enumerate() {
                     let can_get_context = match &pending_op.operation.get_operation_requirements() {
                         Some(nature) => match nature {
                             OperationNature::ModifyExistingFromBackground {
-                                identifiables,
-                                detach_parts_with_part_instances,
+                                identifiables, ..
                             } => !identifiables
                                 .iter()
                                 .any(|i| self.detached_identifiables.contains(i)),
@@ -308,19 +307,8 @@ impl OperationManager {
         }
     }
 
-    pub fn get_detached_identifiables(&self) -> Vec<Identifiable> {
-        self.detached_identifiables
-            .iter()
-            .copied()
-            .collect::<Vec<_>>()
-    }
-
     pub fn get_modal_operation(&self) -> Option<&RunningOperation> {
         self.running_tasks.iter().find(|op| op.is_modal)
-    }
-
-    pub fn get_operation_details(&self, id: u64) -> Option<&RunningOperation> {
-        self.running_tasks.iter().find(|op| op.operation_id == id)
     }
 
     pub fn get_all_background_operation(&self) -> impl Iterator<Item = &RunningOperation> {
@@ -332,161 +320,161 @@ impl OperationManager {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::amrust_db::Mesh;
-    use crate::amrust_db::{Identifiable, PartRep};
-    use crate::operation::{DbContext, DbContextType, OperationNature};
-    use async_trait::async_trait;
-    use glam::Vec3;
-    use smol::Executor;
-    use smol::Timer;
-    use smol::channel::bounded;
-    use smol::lock::RwLock;
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//     use crate::amrust_db::Mesh;
+//     use crate::amrust_db::{Identifiable, PartRep};
+//     use crate::operation::{DbContext, DbContextType, OperationNature};
+//     use async_trait::async_trait;
+//     use glam::Vec3;
+//     use smol::Executor;
+//     use smol::Timer;
+//     use smol::channel::bounded;
+//     use smol::lock::RwLock;
 
-    use std::sync::Arc;
+//     use std::sync::Arc;
 
-    struct MockOperation {
-        reqs: Option<OperationNature>,
-    }
+//     struct MockOperation {
+//         reqs: Option<OperationNature>,
+//     }
 
-    impl MockOperation {
-        fn new(reqs: Option<OperationNature>) -> Self {
-            Self { reqs }
-        }
-    }
+//     impl MockOperation {
+//         fn new(reqs: Option<OperationNature>) -> Self {
+//             Self { reqs }
+//         }
+//     }
 
-    #[async_trait]
-    impl Operation for MockOperation {
-        fn name(&self) -> &str {
-            "Test Successful"
-        }
+//     #[async_trait]
+//     impl Operation for MockOperation {
+//         fn name(&self) -> &str {
+//             "Test Successful"
+//         }
 
-        fn get_operation_requirements(&self) -> Option<OperationNature> {
-            self.reqs.clone()
-        }
+//         fn get_operation_requirements(&self) -> Option<OperationNature> {
+//             self.reqs.clone()
+//         }
 
-        async fn execute(&mut self, context: &mut DbContext) -> OperationResponse {
-            match &context.r#type {
-                DbContextType::Detached => {
-                    // Test entity counts in DetachedDb
-                    context
-                        .get_db(|db| {
-                            assert_eq!(db.get_parts_count(), 1);
-                            assert_eq!(db.get_part_instance_count(), 1);
-                        })
-                        .await
-                        .unwrap();
-                }
-                DbContextType::ReadFull => {
-                    // Test that can get db
-                    context
-                        .get_db(|db| {
-                            assert_eq!(db.get_parts_count(), 1);
-                            assert_eq!(db.get_part_instance_count(), 1);
-                        })
-                        .await
-                        .unwrap();
-                }
-                DbContextType::WriteFull => {
-                    // Test that can get db
-                    context
-                        .get_db(|db| {
-                            assert_eq!(db.get_parts_count(), 1);
-                            assert_eq!(db.get_part_instance_count(), 1);
-                        })
-                        .await
-                        .unwrap();
+//         async fn execute(&mut self, context: &mut DbContext) -> OperationResponse {
+//             match &context.r#type {
+//                 DbContextType::Detached => {
+//                     // Test entity counts in DetachedDb
+//                     context
+//                         .get_db(|db| {
+//                             assert_eq!(db.get_parts_count(), 1);
+//                             assert_eq!(db.get_part_instance_count(), 1);
+//                         })
+//                         .await
+//                         .unwrap();
+//                 }
+//                 DbContextType::ReadFull => {
+//                     // Test that can get db
+//                     context
+//                         .get_db(|db| {
+//                             assert_eq!(db.get_parts_count(), 1);
+//                             assert_eq!(db.get_part_instance_count(), 1);
+//                         })
+//                         .await
+//                         .unwrap();
+//                 }
+//                 DbContextType::WriteFull => {
+//                     // Test that can get db
+//                     context
+//                         .get_db(|db| {
+//                             assert_eq!(db.get_parts_count(), 1);
+//                             assert_eq!(db.get_part_instance_count(), 1);
+//                         })
+//                         .await
+//                         .unwrap();
 
-                    // Test that can write by clear_db
-                    context.clear_db().await.unwrap();
-                }
-                DbContextType::AppendOnly => {
-                    // Test that can append Db
-                    let mut db = Db::new();
-                    let _ = db
-                        .add_part_rep(PartRep::Mesh(Box::new(Mesh {
-                            vertices: vec![
-                                Vec3::new(0.0, 0.0, 0.0),
-                                Vec3::new(1.0, 0.0, 0.0),
-                                Vec3::new(0.0, 1.0, 0.0),
-                            ],
-                            triangles: vec![0, 1, 2],
-                        })))
-                        .unwrap();
+//                     // Test that can write by clear_db
+//                     context.clear_db().await.unwrap();
+//                 }
+//                 DbContextType::AppendOnly => {
+//                     // Test that can append Db
+//                     let mut db = Db::new();
+//                     let _ = db
+//                         .add_part_rep(PartRep::Mesh(Box::new(Mesh {
+//                             vertices: vec![
+//                                 Vec3::new(0.0, 0.0, 0.0),
+//                                 Vec3::new(1.0, 0.0, 0.0),
+//                                 Vec3::new(0.0, 1.0, 0.0),
+//                             ],
+//                             triangles: vec![0, 1, 2],
+//                         })))
+//                         .unwrap();
 
-                    context.append_db(db).await.unwrap();
-                }
-            }
-            OperationResponse::Succeeded { name: "test" }
-        }
-    }
+//                     context.append_db(db).await.unwrap();
+//                 }
+//             }
+//             OperationResponse::Succeeded { name: "test" }
+//         }
+//     }
 
-    // #[test]
-    // fn test_operation_manager_new() {
-    //     let (op_tx, op_rx) = bounded(1);
-    //     let (resp_tx, resp_rx) = bounded(1);
-    //     let manager = OperationManager::new(op_rx, resp_tx);
+//     // #[test]
+//     // fn test_operation_manager_new() {
+//     //     let (op_tx, op_rx) = bounded(1);
+//     //     let (resp_tx, resp_rx) = bounded(1);
+//     //     let manager = OperationManager::new(op_rx, resp_tx);
 
-    //     assert!(manager.running_tasks.is_empty());
-    //     assert!(manager.pending_task_queue.is_empty());
-    //     assert!(manager.detached_identifiables.is_empty());
-    // }
+//     //     assert!(manager.running_tasks.is_empty());
+//     //     assert!(manager.pending_task_queue.is_empty());
+//     //     assert!(manager.detached_identifiables.is_empty());
+//     // }
 
-    // #[test]
-    // fn test_run_async_operation() {
-    //     let (op_tx, op_rx) = bounded(1);
-    //     let (resp_tx, resp_rx) = bounded(1);
-    //     let mut manager = OperationManager::new(op_rx, resp_tx.clone());
-    //     let db = Arc::new(RwLock::new(Db::new()));
+//     // #[test]
+//     // fn test_run_async_operation() {
+//     //     let (op_tx, op_rx) = bounded(1);
+//     //     let (resp_tx, resp_rx) = bounded(1);
+//     //     let mut manager = OperationManager::new(op_rx, resp_tx.clone());
+//     //     let db = Arc::new(RwLock::new(Db::new()));
 
-    //     // Add test data to db
-    //     smol::block_on(async {
-    //         let mut db_write = db.write().await;
-    //         let _ = db_write
-    //             .add_part_rep(PartRep::Mesh(Box::new(Mesh {
-    //                 vertices: vec![Vec3::new(0.0, 0.0, 0.0)],
-    //                 triangles: vec![0],
-    //             })))
-    //             .unwrap();
-    //         let part_id = db_write.get_parts().next().unwrap().0;
-    //         let _ = db_write
-    //             .make_new_part_instance_from_part(&part_id, None)
-    //             .unwrap();
-    //     });
+//     //     // Add test data to db
+//     //     smol::block_on(async {
+//     //         let mut db_write = db.write().await;
+//     //         let _ = db_write
+//     //             .add_part_rep(PartRep::Mesh(Box::new(Mesh {
+//     //                 vertices: vec![Vec3::new(0.0, 0.0, 0.0)],
+//     //                 triangles: vec![0],
+//     //             })))
+//     //             .unwrap();
+//     //         let part_id = db_write.get_parts().next().unwrap().0;
+//     //         let _ = db_write
+//     //             .make_new_part_instance_from_part(&part_id, None)
+//     //             .unwrap();
+//     //     });
 
-    //     let part_id = smol::block_on(async {
-    //         let db_read = db.read().await;
-    //         db_read.get_parts().next().unwrap().0
-    //     });
+//     //     let part_id = smol::block_on(async {
+//     //         let db_read = db.read().await;
+//     //         db_read.get_parts().next().unwrap().0
+//     //     });
 
-    //     let op = MockOperation::new(Some(OperationNature::ModifyExistingFromBackground {
-    //         identifiables: vec![Identifiable::Part(part_id)],
-    //         detach_parts_with_part_instances: false,
-    //     }));
+//     //     let op = MockOperation::new(Some(OperationNature::ModifyExistingFromBackground {
+//     //         identifiables: vec![Identifiable::Part(part_id)],
+//     //         detach_parts_with_part_instances: false,
+//     //     }));
 
-    //     smol::block_on(async {
-    //         op_tx
-    //             .send(OperationRequest::BackgroundOp(Box::new(op)))
-    //             .await
-    //             .unwrap();
-    //     });
-    //     manager.run(&db, &Arc::new(Executor::new()));
+//     //     smol::block_on(async {
+//     //         op_tx
+//     //             .send(OperationRequest::BackgroundOp(Box::new(op)))
+//     //             .await
+//     //             .unwrap();
+//     //     });
+//     //     manager.run(&db, &Arc::new(Executor::new()));
 
-    //     // Check that task was spawned
-    //     assert_eq!(manager.task_queue.len(), 1);
+//     //     // Check that task was spawned
+//     //     assert_eq!(manager.task_queue.len(), 1);
 
-    //     // Wait for task to complete
-    //     while !manager.task_queue.is_empty() {
-    //         manager.run(&db, &Arc::new(Executor::new()));
-    //         smol::block_on(async {
-    //             Timer::after(std::time::Duration::from_millis(10)).await;
-    //         });
-    //     }
+//     //     // Wait for task to complete
+//     //     while !manager.task_queue.is_empty() {
+//     //         manager.run(&db, &Arc::new(Executor::new()));
+//     //         smol::block_on(async {
+//     //             Timer::after(std::time::Duration::from_millis(10)).await;
+//     //         });
+//     //     }
 
-    //     // Check response
-    //     let response = smol::block_on(async { resp_rx.recv().await.unwrap() });
-    //     assert!(matches!(response, OperationResponse::Succeeded { .. }));
-    // }
-}
+//     //     // Check response
+//     //     let response = smol::block_on(async { resp_rx.recv().await.unwrap() });
+//     //     assert!(matches!(response, OperationResponse::Succeeded { .. }));
+//     // }
+// }

@@ -1,10 +1,7 @@
-use crate::{
-    amrust_db::Identifiable, app_mode::AppMode, part_list::PartList,
-    tree_item_viewer::TreeItemViewer,
-};
+use crate::{amrust_db::Identifiable, part_list::PartList, tree_item_viewer::TreeItemViewer};
 
 pub struct Toolsheets {
-    pub app_mode: AppMode,
+    // pub app_mode: AppMode,
     pub part_list: PartList,
 
     pub objects_list: TreeItemViewer<Identifiable>,
@@ -22,13 +19,13 @@ pub struct Toolsheets {
 
 impl Toolsheets {
     pub fn new(
-        app_mode: AppMode,
+        // app_mode: AppMode,
         part_list: PartList,
         objects_list: TreeItemViewer<Identifiable>,
         build_items_list: TreeItemViewer<Identifiable>,
     ) -> Self {
         Toolsheets {
-            app_mode,
+            // app_mode,
             part_list,
             objects_list,
             build_items_list,
@@ -49,9 +46,9 @@ impl Toolsheets {
         self.blocked_items_on_part_list = identifiables.to_vec();
     }
 
-    pub fn selected_items_on_part_list(&self) -> impl Iterator<Item = &Identifiable> {
-        self.selected_items_on_part_list.iter()
-    }
+    // pub fn selected_items_on_part_list(&self) -> impl Iterator<Item = &Identifiable> {
+    //     self.selected_items_on_part_list.iter()
+    // }
 
     pub fn selected_objects(&self) -> impl Iterator<Item = &Identifiable> {
         self.selected_objects.iter()

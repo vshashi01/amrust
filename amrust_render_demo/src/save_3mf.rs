@@ -33,9 +33,8 @@ use crate::operation_manager::OperationRequest;
 
 #[derive(Debug, Error)]
 pub enum DbTo3mfError {
-    #[error("Unique part not found: {0}")]
-    UniquePartNotFound(PartId),
-
+    // #[error("Unique part not found: {0}")]
+    // UniquePartNotFound(PartId),
     #[error("Error with database")]
     DbError(#[from] DbError),
 
@@ -51,9 +50,8 @@ pub enum DbTo3mfError {
     #[error("Something wrong with building a 3MF Composed Part")]
     ThreemfComponentsObjectError(#[from] threemf2::io::ComponentsObjectError),
 
-    #[error("Not all components are processed already")]
-    ComposedPartCannotBeProcessed,
-
+    // #[error("Not all components are processed already")]
+    // ComposedPartCannotBeProcessed,
     #[error("Scene is empty")]
     SceneEmpty,
 
@@ -659,16 +657,11 @@ impl Command for SavePartCommand {
     }
 
     fn is_enabled(&self, context: &CommandContext) -> bool {
-        if context
+        context
             .db_view_model
-            .get_operable_selected_identifiables()
+            .get_all_operable_selected_identifiables()
             .count()
             > 0
-        {
-            true
-        } else {
-            false
-        }
     }
 
     fn category(&self) -> CommandCategory {
@@ -687,7 +680,7 @@ impl Command for SavePartCommand {
                 {
                     let operable_selected_identifiables = ctx
                         .db_view_model
-                        .get_operable_selected_identifiables()
+                        .get_all_operable_selected_identifiables()
                         .collect::<Vec<_>>();
                     let ops_msg = {
                         if !operable_selected_identifiables.is_empty() {

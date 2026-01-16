@@ -1,8 +1,15 @@
-use amrust_render::bounding_box::BoundingBox;
+use anyhow::Result;
+use glam::{Mat4, Vec3};
+use smol::lock::RwLock;
+
+use amrust_render::{
+    bounding_box::BoundingBox, gpu_mesh::MeshBuilder, instance::InstanceDataBuilder,
+    material::Material, transformation::TransformationData, vertex::Position,
+};
 
 use crate::{
-    amrust_db::{InstanceData, PartId, PartInstanceId, Transformation, add_render_object},
-    render_db::{RenderMeshId, RenderObjectId},
+    amrust_db::{Db, EntityChanges, Mesh, Part, PartId, PartInstanceId, PartRep, Transformation},
+    render_db::{RenderMeshId, RenderObject, RenderObjectId},
 };
 
 use crate::amrust_db::Identifiable;
@@ -10,8 +17,7 @@ use crate::app_mode::AppMode;
 use crate::render_db::RenderDb;
 use crate::tree_item_viewer::TreeItem;
 use amrust_render::transformation::Transformation as RenderTransformation;
-use glam::Mat4;
-use smol::lock::RwLock;
+
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -81,9 +87,9 @@ impl DbViewModel {
     //     &self.parts_data
     // }
 
-    pub fn get_part_instances_data(&self) -> &HashMap<PartInstanceId, PartInstanceCache> {
-        &self.instance_data
-    }
+    // pub fn get_part_instances_data(&self) -> &HashMap<PartInstanceId, PartInstanceCache> {
+    //     &self.instance_data
+    // }
 
     pub fn insert_part(&mut self, id: PartId, cache: PartCache) {
         self.parts_data.insert(id, cache);
@@ -117,9 +123,9 @@ impl DbViewModel {
         self.selected_identifiables.insert(identifiable);
     }
 
-    pub fn remove_selected_identifiable(&mut self, identifiable: &Identifiable) {
-        self.selected_identifiables.remove(identifiable);
-    }
+    // pub fn remove_selected_identifiable(&mut self, identifiable: &Identifiable) {
+    //     self.selected_identifiables.remove(identifiable);
+    // }
 
     pub fn clear_selected_identifiables(&mut self) {
         self.selected_identifiables.clear();
@@ -127,42 +133,27 @@ impl DbViewModel {
 
     pub fn get_all_identifiables(&self) -> impl Iterator<Item = Identifiable> {
         self.parts_data
-            .iter()
-            .map(|(id, _)| Identifiable::Part(*id))
+            .keys()
+            .map(|id| Identifiable::Part(*id))
             .chain(
                 self.instance_data
-                    .iter()
-                    .map(|(id, _)| Identifiable::PartInstance(*id)),
+                    .keys()
+                    .map(|id| Identifiable::PartInstance(*id)),
             )
     }
 
-    pub fn get_operable_selected_identifiables(&self) -> impl Iterator<Item = Identifiable> {
+    pub fn get_all_operable_selected_identifiables(&self) -> impl Iterator<Item = Identifiable> {
         self.get_all_operable_identifiables()
-            .filter(|identifiable| match identifiable {
-                Identifiable::Part(part_id) => !self.detached_parts.contains(part_id),
-                Identifiable::PartInstance(part_instance_id) => {
-                    !self.detached_part_instances.contains(part_instance_id)
-                }
-            })
+            .filter(|identifiable| self.selected_identifiables.contains(identifiable))
     }
 
+    //returns identifiables that are not operable currently
     pub fn get_all_operable_identifiables(&self) -> impl Iterator<Item = Identifiable> {
-        self.parts_data
-            .iter()
-            .filter_map(|(id, _)| {
-                if self.detached_parts.contains(id) {
-                    None
-                } else {
-                    Some(Identifiable::Part(*id))
-                }
+        self.get_all_identifiables()
+            .filter(|identifiable| match identifiable {
+                Identifiable::Part(id) => !self.detached_parts.contains(id),
+                Identifiable::PartInstance(id) => !self.detached_part_instances.contains(id),
             })
-            .chain(self.instance_data.iter().filter_map(|(id, _)| {
-                if self.detached_part_instances.contains(id) {
-                    None
-                } else {
-                    Some(Identifiable::PartInstance(*id))
-                }
-            }))
     }
 
     pub fn get_detached_identifiables(&self) -> impl Iterator<Item = Identifiable> {
@@ -370,7 +361,7 @@ fn compute_part_bbox(db_cache: &DbViewModel, part_id: &PartId) -> BoundingBox {
     }
 }
 
-pub fn create_objects_list_from_cache(db_cache: &DbViewModel) -> Vec<TreeItem<Identifiable>> {
+pub fn create_objects_list(db_cache: &DbViewModel) -> Vec<TreeItem<Identifiable>> {
     db_cache
         .parts_data
         .iter()
@@ -419,7 +410,7 @@ fn build_part_tree(
     }
 }
 
-pub fn create_build_items_list_from_cache(db_cache: &DbViewModel) -> Vec<TreeItem<Identifiable>> {
+pub fn create_build_items_list(db_cache: &DbViewModel) -> Vec<TreeItem<Identifiable>> {
     db_cache
         .scene_data
         .iter()
@@ -443,7 +434,7 @@ pub fn create_build_items_list_from_cache(db_cache: &DbViewModel) -> Vec<TreeIte
         .collect()
 }
 
-pub fn create_scene_tree_items_by_unique_parts_from_cache(
+pub fn create_scene_tree_items_by_unique_parts(
     db_cache: &DbViewModel,
 ) -> Vec<TreeItem<Identifiable>> {
     let mut instance_id_to_tree_item_map: HashMap<PartInstanceId, TreeItem<Identifiable>> =
@@ -567,7 +558,7 @@ pub fn create_object_tree_from_part(db: &DbViewModel, id: &PartId) -> Option<Tre
                 for id in &cache.components {
                     if let Some(item) = map.get(id) {
                         childs.push(item.clone());
-                    } else if let Some(item) = create_object_tree_from_instance(&db, id) {
+                    } else if let Some(item) = create_object_tree_from_instance(db, id) {
                         map.insert(id, item.clone());
                         childs.push(item);
                     }
@@ -593,7 +584,7 @@ pub fn create_object_tree_from_instance(
     instance_id: &PartInstanceId,
 ) -> Option<TreeItem<String>> {
     if let Some(data) = db.get_part_instance_data(instance_id)
-        && let Some(object_tree) = create_object_tree_from_part(&db, &data.part_id)
+        && let Some(object_tree) = create_object_tree_from_part(db, &data.part_id)
     {
         let transform_item = TreeItem::Leaf {
             id: format!("{}_Transform", instance_id),
@@ -629,17 +620,17 @@ pub struct MeshCache {
     pub bbox: BoundingBox,
     pub vertices_count: usize,
     pub triangles_count: usize,
-
     //all instances of this Mesh
-    pub instances: Vec<PartInstanceId>,
+    //ToDo: Re introduce instances when it is used.
+    // pub instances: Vec<PartInstanceId>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ComposedPartCache {
     pub components: Vec<PartInstanceId>,
-
     //all instances of this composed part
-    pub instances: Vec<PartInstanceId>,
+    //ToDo: Re introduce instances when it is used.
+    // pub instances: Vec<PartInstanceId>,
 }
 
 #[derive(Debug, Clone)]
@@ -653,4 +644,521 @@ pub struct PartInstanceCache {
     pub part_id: PartId,
     pub transform: Transformation,
     pub rep_type: PartRepType,
+}
+
+pub struct InstanceData {
+    pub gpu_mesh_id: RenderMeshId,
+    pub transforms: Vec<Transformation>,
+}
+
+pub async fn update_view_model_from_db(
+    db: Arc<RwLock<Db>>,
+    render_db: Arc<RwLock<RenderDb>>,
+    mut cache: DbViewModel,
+    device: Arc<wgpu::Device>,
+) -> Result<DbViewModel> {
+    let mut new_part_caches = vec![];
+    let mut new_part_instance_caches = vec![];
+
+    {
+        let read_db = db.read().await;
+
+        if read_db.is_empty() {
+            cache.clear();
+        } else {
+            let mut parts_that_require_new_render_objects = HashSet::new();
+            for (id, change) in read_db.get_changed_part_instances() {
+                //check if part instance is detached if yes push in detached and dont update cache
+                if matches!(change, EntityChanges::Detached) {
+                    cache.add_detached_part_instance(*id);
+
+                    if let Some(instance_data) = cache.get_part_instance_data(id)
+                        && let Some(lala) = read_db.get_changed_parts().get(&instance_data.part_id)
+                        && matches!(lala, EntityChanges::Detached)
+                    {
+                        cache.add_detached_part(instance_data.part_id);
+                    }
+                } else {
+                    //create new part instance cache
+                    if let Ok(instance) = read_db.get_part_instance_data(id) {
+                        // remove from detached (if existed) since it now back in the main db
+                        cache.remove_detached_part_instance(id);
+
+                        if let Some(change) = read_db.get_changed_parts().get(&instance.part_id)
+                            && matches!(change, EntityChanges::Detached)
+                        {
+                            cache.add_detached_part(instance.part_id);
+                        } else if let Ok(part) = read_db.get_part_data(&instance.part_id) {
+                            // remove from detached (if existed) since it now back in the main db
+                            cache.remove_detached_part(&instance.part_id);
+
+                            let rep_type = match &part.get_rep() {
+                                PartRep::Mesh(_) => PartRepType::Mesh,
+                                PartRep::ComposedPart(_) => PartRepType::ComposedPart,
+                            };
+                            parts_that_require_new_render_objects.insert(instance.part_id);
+                            new_part_instance_caches.push((
+                                *id,
+                                PartInstanceCache {
+                                    part_id: instance.part_id,
+                                    transform: instance.transform,
+                                    rep_type,
+                                },
+                            ));
+                        }
+                    }
+                }
+            }
+
+            for (id, instance_cache) in new_part_instance_caches {
+                cache.insert_part_instance(id, instance_cache);
+            }
+
+            let mut parts_to_be_processed = read_db
+                .get_changed_parts()
+                .keys()
+                .copied()
+                .collect::<Vec<_>>();
+            loop {
+                if parts_to_be_processed.is_empty() {
+                    break;
+                }
+
+                for (id, change) in read_db.get_changed_parts() {
+                    match change {
+                        EntityChanges::Added | EntityChanges::Reattached => {
+                            parts_that_require_new_render_objects.insert(*id);
+
+                            //create new part cache
+                            if let Ok(part) = read_db.get_part_data(id)
+                                && let Some(part_cache) =
+                                    create_part_cache(part, &device, render_db.clone())
+                            {
+                                new_part_caches.push((*id, part_cache));
+                            }
+                        }
+                        EntityChanges::Removed => todo!(),
+                        EntityChanges::Detached => {
+                            cache.add_detached_part(*id);
+                        }
+                    }
+
+                    if let Some(pos) = parts_to_be_processed
+                        .iter()
+                        .position(|to_be_processed_id| to_be_processed_id == id)
+                    {
+                        parts_to_be_processed.swap_remove(pos);
+                    }
+                }
+            }
+
+            for (id, part_cache) in new_part_caches {
+                cache.insert_part(id, part_cache);
+            }
+
+            // Update scene data if instances changed
+            if !read_db.get_changed_part_instances().is_empty()
+                && let Ok(scene) = read_db.get_scene()
+            {
+                cache.set_scene_data(scene.instances.clone());
+            }
+        }
+    }
+
+    // this is dangerous because the moment we release the read lock before changes could have happened?
+    {
+        let mut write_db = db.write().await;
+        write_db.clear_changed_part_instances();
+        write_db.clear_changed_parts();
+    }
+
+    cache.update_scene_based_render_objects(&device, render_db.clone());
+    cache.update_unique_parts_based_render_objects(&device, render_db.clone());
+
+    Ok(cache)
+}
+
+fn create_part_cache(
+    part: &Part,
+    device: &wgpu::Device,
+    render_db: Arc<RwLock<RenderDb>>,
+) -> Option<PartCache> {
+    match &part.get_rep() {
+        PartRep::Mesh(mesh) => {
+            let gpu_mesh_id = create_mesh_gpu_data(device, render_db.clone(), mesh);
+            let bbox =
+                compute_transformed_bounding_box_from_mesh(mesh, &Transformation(Mat4::IDENTITY));
+            let vertices_count = mesh.vertices.len();
+            let triangles_count = mesh.triangles.len() / 3;
+            Some(PartCache {
+                rep: PartRepCache::Mesh(MeshCache {
+                    gpu_mesh_id,
+                    bbox,
+                    vertices_count,
+                    triangles_count,
+                }),
+            })
+        }
+        PartRep::ComposedPart(components) => Some(PartCache {
+            rep: PartRepCache::ComposedPart(ComposedPartCache {
+                components: components.clone(),
+            }),
+        }),
+    }
+}
+
+// pub fn create_build_items_list(
+//     read_db: &DbViewModel,
+// ) -> Result<Vec<TreeItem<Identifiable>>, DbError> {
+//     let scene = read_db.get_scene()?;
+
+//     let mut tree_items = vec![];
+//     for i in &scene.instances {
+//         let part = read_db.get_part_data_from_part_instance(i)?;
+//         let instance_data = read_db.get_part_instance_data(i)?;
+//         let name = match &part.rep {
+//             PartRep::Mesh(_) => format!("Instance: {:?} - Mesh: {:?}", i, instance_data.part_id),
+//             PartRep::ComposedPart(_) => format!(
+//                 "Instance: {:?} - Composed Part: {:?}",
+//                 i, instance_data.part_id
+//             ),
+//         };
+
+//         let item = TreeItem::Leaf {
+//             id: Identifiable::PartInstance(*i),
+//             name,
+//             selectable: true,
+//         };
+
+//         tree_items.push(item);
+//     }
+
+//     Ok(tree_items)
+// }
+
+fn create_mesh_gpu_data(
+    device: &wgpu::Device,
+    render_db: Arc<RwLock<RenderDb>>,
+    mesh: &Mesh,
+) -> RenderMeshId {
+    let positions = convert_vertices_to_position(&mesh.vertices);
+    // println!("Number of vertices: {}", positions.len());
+    let indices = mesh.triangles.clone();
+    // println!("Number of triangles: {}", indices.len() / 3);
+    let color = convert_vertices_to_color(&mesh.vertices);
+    let wireframe_indices = convert_triangle_indices_to_wireframe_indices(&mesh.triangles);
+
+    let gpu_mesh = MeshBuilder::new()
+        .add_vertex_stream(positions.as_slice())
+        .add_vertex_stream(color.as_slice())
+        .add_mesh_index_stream(indices.as_slice())
+        .add_wireframe_index_stream(wireframe_indices.as_slice())
+        .build(device);
+
+    let mut render_db = render_db.write_blocking();
+    render_db.add_mesh(gpu_mesh)
+}
+
+fn compute_transformed_bounding_box_from_mesh(
+    mesh: &Mesh,
+    transform: &Transformation,
+) -> BoundingBox {
+    let mut bbox = BoundingBox::default();
+    for v in &mesh.vertices {
+        let v4 = transform.0 * v.extend(1.0);
+        let transformed = Vec3::new(v4.x, v4.y, v4.z);
+        bbox.expand_to_include(&transformed);
+    }
+    bbox
+}
+
+fn convert_points_vec_to_position(points: &[Vec3]) -> Vec<Position> {
+    points.iter().map(|p| Position([p.x, p.y, p.z])).collect()
+}
+
+fn convert_vertices_to_position(vertices: &[Vec3]) -> Vec<Position> {
+    vertices.iter().map(|v| Position([v.x, v.y, v.z])).collect()
+}
+
+fn convert_vertices_to_color(vertices: &[Vec3]) -> Vec<amrust_render::vertex::Color> {
+    vertices
+        .iter()
+        .map(|_| amrust_render::vertex::Color([0.5, 0.5, 0.5]))
+        .collect()
+}
+
+fn convert_triangle_indices_to_wireframe_indices(triangles: &[u32]) -> Vec<u32> {
+    let mut indices = Vec::new();
+
+    for triangle in triangles.chunks(3) {
+        if triangle.len() == 3 {
+            let v1 = triangle[0];
+            let v2 = triangle[1];
+            let v3 = triangle[2];
+            indices.push(v1);
+            indices.push(v2);
+            indices.push(v2);
+            indices.push(v3);
+            indices.push(v3);
+            indices.push(v1);
+        }
+    }
+    indices
+}
+
+pub fn add_render_object(
+    device: &wgpu::Device,
+    render_db: Arc<RwLock<RenderDb>>,
+    data: &InstanceData,
+    //mesh and wireframe
+) -> (RenderObjectId, RenderObjectId) {
+    let transformation_data: Vec<TransformationData> = data
+        .transforms
+        .iter()
+        .map(get_transformation_data)
+        .collect::<Vec<_>>();
+    let material_data = vec![Material::new(1.0, 1.0, 1.0).to_data(); transformation_data.len()];
+    let object = RenderObject {
+        renderable: amrust_render::Renderable::ColoredMesh,
+        gpu_mesh_id: data.gpu_mesh_id,
+        instance: InstanceDataBuilder::new()
+            .add_instance_stream(transformation_data.as_slice())
+            .add_instance_stream(material_data.as_slice())
+            .build(device),
+        local_resources: vec![],
+    };
+    let colored_object_id = {
+        let mut render_db = render_db.write_blocking();
+        render_db.add_object(object)
+    };
+
+    let wireframe_object = RenderObject {
+        renderable: amrust_render::Renderable::WireframeMesh,
+        gpu_mesh_id: data.gpu_mesh_id,
+        instance: InstanceDataBuilder::new()
+            .add_instance_stream(transformation_data.as_slice())
+            .add_instance_stream(material_data.as_slice())
+            .build(device),
+        local_resources: vec![],
+    };
+
+    let wireframe_object = {
+        let mut render_db = render_db.write_blocking();
+        render_db.add_object(wireframe_object)
+    };
+
+    (colored_object_id, wireframe_object)
+}
+
+fn add_bounding_box_wireframe(
+    device: &wgpu::Device,
+    render_db: Arc<RwLock<RenderDb>>,
+    bbox: &BoundingBox,
+) -> RenderObjectId {
+    let mesh = MeshBuilder::new()
+        .add_vertex_stream(convert_points_vec_to_position(&bbox.corners()).as_slice())
+        .add_wireframe_index_stream(&BoundingBox::wireframe_indices())
+        .build(device);
+
+    let mut render_db = render_db.write_blocking();
+    let mesh_id = render_db.add_mesh(mesh);
+
+    let wireframe_object = RenderObject {
+        renderable: amrust_render::Renderable::WireframeMesh,
+        gpu_mesh_id: mesh_id,
+        instance: InstanceDataBuilder::new()
+            .add_instance_stream(&[TransformationData(Mat4::IDENTITY.to_cols_array_2d())])
+            .add_instance_stream(&[Material::new(1.0, 1.0, 1.0).to_data()])
+            .build(device),
+        local_resources: vec![],
+    };
+
+    render_db.add_object(wireframe_object)
+}
+
+fn get_transformation_data(transformation: &Transformation) -> TransformationData {
+    TransformationData(transformation.0.to_cols_array_2d())
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_convert_points_vec_to_position() {
+        let points = vec![Vec3::new(1.0, 2.0, 3.0), Vec3::new(-1.0, -2.0, -3.0)];
+
+        let positions = super::convert_points_vec_to_position(&points);
+        assert_eq!(positions.len(), points.len());
+
+        assert_eq!(positions[0], Position([1.0, 2.0, 3.0]));
+        assert_eq!(positions[1], Position([-1.0, -2.0, -3.0]));
+    }
+
+    #[test]
+    fn test_convert_vertices_to_position() {
+        let vertices = vec![Vec3::new(0.0, 0.0, 0.0), Vec3::new(5.5, 6.6, 7.7)];
+        let positions = convert_vertices_to_position(&vertices);
+
+        assert_eq!(positions.len(), vertices.len());
+        assert_eq!(positions[0], Position([0.0, 0.0, 0.0]));
+        assert_eq!(positions[1], Position([5.5, 6.6, 7.7]));
+    }
+
+    #[test]
+    fn test_convert_vertices_to_color() {
+        let vertices = vec![Vec3::new(1.0, 2.0, 3.0); 3]; // three vertices
+        let colors = convert_vertices_to_color(&vertices);
+
+        assert_eq!(colors.len(), vertices.len());
+        // All colors should be [0.5, 0.5, 0.5]
+        for color in colors {
+            assert_eq!(color, amrust_render::vertex::Color([0.5, 0.5, 0.5]));
+        }
+    }
+
+    #[test]
+    fn test_convert_triangle_indices_to_wireframe_indices_single_triangle() {
+        // Triangles: one triangle with vertices (0, 1, 2)
+        let triangles = vec![0, 1, 2];
+        let indices = convert_triangle_indices_to_wireframe_indices(&triangles);
+
+        // Expected wireframe: (0,1), (1,2), (2,0)
+        assert_eq!(indices, vec![0, 1, 1, 2, 2, 0]);
+    }
+
+    #[test]
+    fn test_convert_triangle_indices_to_wireframe_indices_multiple_triangles() {
+        // Two triangles: (0,1,2) and (2,3,0)
+        let triangles = vec![0, 1, 2, 2, 3, 0];
+        let indices = convert_triangle_indices_to_wireframe_indices(&triangles);
+
+        let expected = vec![
+            0, 1, 1, 2, 2, 0, // first triangle
+            2, 3, 3, 0, 0, 2, // second triangle
+        ];
+        assert_eq!(indices, expected);
+    }
+
+    #[test]
+    fn test_convert_triangle_indices_to_wireframe_indices_incomplete_triangle() {
+        // A "triangle" with only 2 vertices shouldn't crash — it will be ignored
+        let triangles = vec![0, 1];
+        let indices = convert_triangle_indices_to_wireframe_indices(&triangles);
+
+        assert!(
+            indices.is_empty(),
+            "No indices should be generated for incomplete triangle"
+        );
+    }
+
+    #[test]
+    fn test_compute_transformed_bounding_box_from_mesh_identity() {
+        let mesh = Mesh {
+            vertices: vec![
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(1.0, 2.0, 3.0),
+                Vec3::new(-1.0, -2.0, -3.0),
+            ],
+            triangles: vec![0, 1, 2],
+        };
+
+        let transform = Transformation(Mat4::IDENTITY);
+        let bbox = compute_transformed_bounding_box_from_mesh(&mesh, &transform);
+
+        assert_eq!(bbox.min, Vec3::new(-1.0, -2.0, -3.0));
+        assert_eq!(bbox.max, Vec3::new(1.0, 2.0, 3.0));
+    }
+
+    #[test]
+    fn test_compute_transformed_bounding_box_from_mesh_with_translation() {
+        let mesh = Mesh {
+            vertices: vec![
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(1.0, 1.0, 1.0),
+                Vec3::new(2.0, 0.0, 0.0),
+            ],
+            triangles: vec![0, 1, 2],
+        };
+
+        let transform = Transformation(Mat4::from_translation(Vec3::new(2.0, 3.0, 4.0)));
+        let bbox = compute_transformed_bounding_box_from_mesh(&mesh, &transform);
+
+        assert_eq!(bbox.min, Vec3::new(2.0, 3.0, 4.0));
+        assert_eq!(bbox.max, Vec3::new(4.0, 4.0, 5.0));
+    }
+
+    #[test]
+    fn test_compute_transformed_bounding_box_from_mesh_with_scaling() {
+        let mesh = Mesh {
+            vertices: vec![
+                Vec3::new(-1.0, -1.0, -1.0),
+                Vec3::new(1.0, 1.0, 1.0),
+                Vec3::new(0.0, 2.0, -2.0),
+            ],
+            triangles: vec![0, 1, 2],
+        };
+
+        let transform = Transformation(Mat4::from_scale(Vec3::new(2.0, 2.0, 2.0)));
+        let bbox = compute_transformed_bounding_box_from_mesh(&mesh, &transform);
+
+        assert_eq!(bbox.min, Vec3::new(-2.0, -2.0, -4.0));
+        assert_eq!(bbox.max, Vec3::new(2.0, 4.0, 2.0));
+    }
+
+    #[test]
+    fn test_compute_transformed_bounding_box_from_mesh_with_rotation() {
+        use std::f32::consts::FRAC_PI_2; // 90 degrees
+
+        let mesh = Mesh {
+            vertices: vec![
+                Vec3::new(1.0, 0.0, 0.0),  // +X
+                Vec3::new(0.0, 1.0, 0.0),  // +Y
+                Vec3::new(-1.0, 0.0, 0.0), // -X
+            ],
+            triangles: vec![0, 1, 2],
+        };
+
+        let rotation = Mat4::from_rotation_z(FRAC_PI_2);
+        let transform = Transformation(rotation);
+        let bbox = compute_transformed_bounding_box_from_mesh(&mesh, &transform);
+
+        // Expected transformed:
+        // (1,0) -> (0,1)
+        // (0,1) -> (-1,0)
+        // (-1,0) -> (0,-1)
+        let expected_min = Vec3::new(-1.0, -1.0, 0.0);
+        let expected_max = Vec3::new(0.0, 1.0, 0.0);
+        assert!(bbox.min.abs_diff_eq(expected_min, 1e-6));
+        assert!(bbox.max.abs_diff_eq(expected_max, 1e-6));
+    }
+
+    #[test]
+    fn test_compute_transformed_bounding_box_from_mesh_with_rotation_and_translation() {
+        use std::f32::consts::FRAC_PI_2;
+
+        let mesh = Mesh {
+            vertices: vec![
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(0.0, 1.0, 0.0),
+            ],
+            triangles: vec![0, 1, 2],
+        };
+
+        let rotation = Mat4::from_rotation_z(FRAC_PI_2); // 90 degrees
+        let translation = Mat4::from_translation(Vec3::new(2.0, 0.0, 0.0));
+        // Translation * Rotation means: rotate first, then translate in world space
+        let transform = Transformation(translation * rotation);
+        let bbox = compute_transformed_bounding_box_from_mesh(&mesh, &transform);
+
+        // Step-by-step:
+        // (0,0)   -> (0,0) + (2,0)   = (2,0)
+        // (1,0)   -> (0,1) + (2,0)   = (2,1)
+        // (0,1)   -> (-1,0) + (2,0)  = (1,0)
+        let expected_min = Vec3::new(1.0, 0.0, 0.0);
+        let expected_max = Vec3::new(2.0, 1.0, 0.0);
+        assert!(bbox.min.abs_diff_eq(expected_min, 1e-6));
+        assert!(bbox.max.abs_diff_eq(expected_max, 1e-6));
+    }
 }

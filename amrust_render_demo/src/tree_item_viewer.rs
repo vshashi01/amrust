@@ -24,13 +24,13 @@ impl<T> TreeItem<T>
 where
     T: std::cmp::PartialEq + Clone + Debug,
 {
-    pub fn id(&self) -> &T {
-        match self {
-            TreeItem::Leaf { id, .. } => id,
-            TreeItem::Node { id, .. } => id,
-            TreeItem::InertNode { id, .. } => id,
-        }
-    }
+    // pub fn id(&self) -> &T {
+    //     match self {
+    //         TreeItem::Leaf { id, .. } => id,
+    //         TreeItem::Node { id, .. } => id,
+    //         TreeItem::InertNode { id, .. } => id,
+    //     }
+    // }
 
     fn draw_ui(
         &self,
@@ -141,7 +141,7 @@ where
                         ui.id().with("tree_item_viewer"),
                         egui::Sense::click(),
                     );
-                    if bg_response.clicked() {
+                    if bg_response.clicked() && self.clear_selections_on_empty_area_click {
                         selected_items.clear();
                     }
 

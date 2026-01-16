@@ -89,13 +89,13 @@ impl RenderDb {
     //     self.add_local_bind_group(bind_group)
     // }
 
-    pub fn render_mesh_exist(&self, ids: &[RenderMeshId]) -> bool {
-        ids.iter().all(|id| self.meshes.contains_key(*id))
-    }
+    // pub fn render_mesh_exist(&self, ids: &[RenderMeshId]) -> bool {
+    //     ids.iter().all(|id| self.meshes.contains_key(*id))
+    // }
 
-    pub fn render_object_exist(&self, ids: &[RenderObjectId]) -> bool {
-        ids.iter().all(|id| self.objects.contains_key(*id))
-    }
+    // pub fn render_object_exist(&self, ids: &[RenderObjectId]) -> bool {
+    //     ids.iter().all(|id| self.objects.contains_key(*id))
+    // }
 
     pub fn add_mesh(&mut self, mesh: GpuMesh) -> RenderMeshId {
         self.meshes.insert(mesh)
@@ -105,9 +105,9 @@ impl RenderDb {
         self.objects.insert(object)
     }
 
-    pub fn clear_objects_to_render(&mut self) {
-        self.objects_to_render.clear();
-    }
+    // pub fn clear_objects_to_render(&mut self) {
+    //     self.objects_to_render.clear();
+    // }
 
     pub fn clear_all(&mut self) {
         self.objects.clear();

@@ -1,11 +1,11 @@
-use crate::amrust_db::{self, Db, Identifiable, Mesh, Transformation};
+use crate::amrust_db::{Db, Identifiable};
+// use crate::amrust_db::{Transformation, Mesh};
 use crate::app_mode::AppMode;
-use crate::clear_db::{self, ClearDbOps};
+use crate::clear_db::{self};
 use crate::commands::{CommandContext, CommandsService};
 use crate::db_view_model::{
-    self, DbViewModel, create_build_items_list_from_cache, create_object_tree_from_identifiable,
-    create_objects_list_from_cache, create_scene_tree_items_by_unique_parts_from_cache,
-    get_total_bbox_from_cache,
+    self, DbViewModel, create_build_items_list, create_object_tree_from_identifiable,
+    create_objects_list, create_scene_tree_items_by_unique_parts, get_total_bbox_from_cache,
 };
 use crate::egui_tools::EguiRenderer;
 use crate::operation::OperationResponse;
@@ -13,7 +13,6 @@ use crate::operation_manager::{OperationError, OperationManager, OperationReques
 use crate::part_list::PartList;
 use crate::render_db::RenderDb;
 use crate::render_worker::{RenderMessage, RenderResponse, RenderWorker, RendererSettings};
-use crate::save_3mf::SaveMode;
 use crate::services::FileDialogService;
 use crate::toolsheets::Toolsheets;
 use crate::tree_item_viewer::TreeItemViewer;
@@ -22,16 +21,15 @@ use crate::{load_3mf, save_3mf, unzoom_scene};
 use amrust_render::bounding_box::BoundingBox;
 // use amrust_lib::widgets::dropped_files::DroppedFilesWidget;
 use amrust_render::camera::{self, CameraData, OrthographicCameraData};
-use amrust_render::normalized_box::{ORDERED_POSITIONS, ORDERED_POSITIONS_TRI_EDGE_INDICES};
+// use amrust_render::normalized_box::{ORDERED_POSITIONS, ORDERED_POSITIONS_TRI_EDGE_INDICES};
 use egui::{Id, Layout, epaint};
 use egui_dock::{DockArea, DockState, NodeIndex};
 use egui_wgpu::wgpu::SurfaceError;
 use egui_wgpu::{ScreenDescriptor, wgpu};
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use smol::channel::{Receiver, Sender, TryRecvError};
 use smol::lock::RwLock;
 use smol::{Executor, channel};
-use std::path::PathBuf;
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
@@ -51,7 +49,7 @@ struct AppState {
     pub camera_data: OrthographicCameraData,
     pub texture_id: Option<epaint::TextureId>,
     // pub dropped_files: DroppedFilesWidget,
-    pub picked_file: Option<PathBuf>,
+    // pub picked_file: Option<PathBuf>,
     pub scene_bbox: Option<BoundingBox>,
     pub db: Arc<RwLock<Db>>,
     pub toolsheets: Option<Toolsheets>,
@@ -208,7 +206,7 @@ impl AppState {
             camera_data,
             texture_id: None,
             // dropped_files: dropped_files_widget,
-            picked_file: None,
+            // picked_file: None,
             scene_bbox: None,
             db: Arc::new(RwLock::new(Db::new())),
             toolsheets: None,
@@ -440,7 +438,7 @@ impl App {
                     state.current_app_mode,
                     state.operation_queue_tx.clone(),
                     &mut self.file_dialog_service,
-                    &mut state.camera_data,
+                    state.render_message_tx.clone(),
                 );
 
                 handler.handle_and_close_dialog(&mut command_context);
@@ -453,7 +451,7 @@ impl App {
             let bbox = state.scene_bbox.as_ref().unwrap_or(&default_bbox);
             let operable_selected_identifiables = state
                 .db_view_model
-                .get_operable_selected_identifiables()
+                .get_all_operable_selected_identifiables()
                 .collect::<Vec<_>>();
             egui::TopBottomPanel::top("top panel")
                 .resizable(false)
@@ -463,11 +461,30 @@ impl App {
                         state.current_app_mode,
                         state.operation_queue_tx.clone(),
                         &mut self.file_dialog_service,
-                        &mut state.camera_data,
+                        state.render_message_tx.clone(),
                     );
 
                     self.command_service
                         .populate_menu_bar(ui, &mut command_context);
+
+                    //onyl show modes if there is a scene
+                    if !state.db_view_model.is_empty() {
+                        ui.with_layout(Layout::right_to_left(egui::Align::RIGHT), |ui| {
+                            // ToDo: Add a tooltip here to explain the difference in modes
+                            ui.radio_value(
+                                &mut state.current_app_mode,
+                                AppMode::Objects,
+                                "Objects Mode",
+                            );
+
+                            ui.radio_value(
+                                &mut state.current_app_mode,
+                                AppMode::Build,
+                                "Build Mode",
+                            );
+                        });
+                    }
+
                     // egui::MenuBar::new().ui(ui, |ui| {
                     //     if ui.button("Import Part").clicked() {
                     //         //state.load_file_dlg.pick_file();
@@ -664,7 +681,13 @@ impl App {
                 let device = state.device.clone();
 
                 let new_db_cache = smol::block_on(async {
-                    amrust_db::update_data(temp_db, temp_render_db, moved_cache, device).await
+                    db_view_model::update_view_model_from_db(
+                        temp_db,
+                        temp_render_db,
+                        moved_cache,
+                        device,
+                    )
+                    .await
                 });
 
                 match new_db_cache {
@@ -710,12 +733,10 @@ impl App {
 
                             let bbox =
                                 get_total_bbox_from_cache(&state.db_view_model, AppMode::Objects);
-                            let part_list = create_scene_tree_items_by_unique_parts_from_cache(
-                                &state.db_view_model,
-                            );
-                            let object_list = create_objects_list_from_cache(&state.db_view_model);
-                            let build_list =
-                                create_build_items_list_from_cache(&state.db_view_model);
+                            let part_list =
+                                create_scene_tree_items_by_unique_parts(&state.db_view_model);
+                            let object_list = create_objects_list(&state.db_view_model);
+                            let build_list = create_build_items_list(&state.db_view_model);
                             (render_objects, bbox, part_list, object_list, build_list)
                         }
                         AppMode::Build => {
@@ -726,11 +747,9 @@ impl App {
                                 .collect::<Vec<_>>();
                             let bbox =
                                 get_total_bbox_from_cache(&state.db_view_model, AppMode::Build);
-                            let part_list =
-                                create_build_items_list_from_cache(&state.db_view_model);
-                            let object_list = create_objects_list_from_cache(&state.db_view_model);
-                            let build_list =
-                                create_build_items_list_from_cache(&state.db_view_model);
+                            let part_list = create_build_items_list(&state.db_view_model);
+                            let object_list = create_objects_list(&state.db_view_model);
+                            let build_list = create_build_items_list(&state.db_view_model);
                             (render_objects, bbox, part_list, object_list, build_list)
                         }
                     };
@@ -744,7 +763,6 @@ impl App {
                 let part_list = PartList::new(part_list_items);
 
                 let mut toolsheets = Toolsheets::new(
-                    state.current_app_mode,
                     part_list,
                     TreeItemViewer::new(object_items, false, true),
                     TreeItemViewer::new(build_items, false, true),
@@ -796,7 +814,7 @@ impl App {
                 let mut tree_items = vec![];
                 for id in &operable_selected_identifiables {
                     if let Some(item) =
-                        create_object_tree_from_identifiable(&state.db_view_model, &id)
+                        create_object_tree_from_identifiable(&state.db_view_model, id)
                     {
                         tree_items.push(item);
                     }
@@ -1006,50 +1024,50 @@ impl ApplicationHandler for App {
     }
 }
 
-fn create_test_object(db: Arc<RwLock<Db>>) {
-    let mesh = Mesh {
-        vertices: ORDERED_POSITIONS
-            .iter()
-            .map(|p| Vec3::new(p.0[0], p.0[1], p.0[2]))
-            .collect(),
-        triangles: ORDERED_POSITIONS_TRI_EDGE_INDICES
-            .iter()
-            .map(|i| *i as u32)
-            .collect(),
-    };
+// fn create_test_object(db: Arc<RwLock<Db>>) {
+//     let mesh = Mesh {
+//         vertices: ORDERED_POSITIONS
+//             .iter()
+//             .map(|p| Vec3::new(p.0[0], p.0[1], p.0[2]))
+//             .collect(),
+//         triangles: ORDERED_POSITIONS_TRI_EDGE_INDICES
+//             .iter()
+//             .map(|i| *i as u32)
+//             .collect(),
+//     };
 
-    let mut db = db.write_blocking();
-    let part_id = db
-        .add_part_rep(crate::amrust_db::PartRep::Mesh(Box::new(mesh)))
-        .unwrap();
+//     let mut db = db.write_blocking();
+//     let part_id = db
+//         .add_part_rep(crate::amrust_db::PartRep::Mesh(Box::new(mesh)))
+//         .unwrap();
 
-    let instance_1 = db
-        .make_new_part_instance_from_part(
-            &part_id,
-            Some(Transformation(Mat4::from_translation(
-                (0.0, 5.0, 0.0).into(),
-            ))),
-        )
-        .unwrap();
+//     let instance_1 = db
+//         .make_new_part_instance_from_part(
+//             &part_id,
+//             Some(Transformation(Mat4::from_translation(
+//                 (0.0, 5.0, 0.0).into(),
+//             ))),
+//         )
+//         .unwrap();
 
-    db.add_part_instance_to_scene(&instance_1).unwrap();
+//     db.add_part_instance_to_scene(&instance_1).unwrap();
 
-    let instance_2 = db
-        .make_new_part_instance_from_part(
-            &part_id,
-            Some(Transformation(Mat4::from_axis_angle(
-                Vec3 {
-                    x: 0.0,
-                    y: 1.0,
-                    z: 0.0,
-                },
-                45.0_f32.to_radians(),
-            ))),
-        )
-        .unwrap();
+//     let instance_2 = db
+//         .make_new_part_instance_from_part(
+//             &part_id,
+//             Some(Transformation(Mat4::from_axis_angle(
+//                 Vec3 {
+//                     x: 0.0,
+//                     y: 1.0,
+//                     z: 0.0,
+//                 },
+//                 45.0_f32.to_radians(),
+//             ))),
+//         )
+//         .unwrap();
 
-    db.add_part_instance_to_scene(&instance_2).unwrap();
-}
+//     db.add_part_instance_to_scene(&instance_2).unwrap();
+// }
 
 fn get_camera_data() -> OrthographicCameraData {
     let mut camera_data = OrthographicCameraData {
@@ -1097,19 +1115,4 @@ fn get_camera_data() -> OrthographicCameraData {
         }));
 
     camera_data
-}
-
-pub fn unzoom_bbox(camera: &mut impl CameraData, total_bbox: &BoundingBox) {
-    let top_left_corner = Vec3::new(total_bbox.min.x, total_bbox.min.y, total_bbox.max.z);
-    // println!("The top left corner is: {}", top_left_corner);
-    camera
-        .transform(amrust_render::camera::CameraTransform::SetView {
-            eye_position: top_left_corner,
-            target_position: total_bbox.center(),
-            up_vector: Vec3::Z,
-        })
-        .transform(amrust_render::camera::CameraTransform::FitToExtent {
-            min: total_bbox.min,
-            max: total_bbox.max,
-        });
 }

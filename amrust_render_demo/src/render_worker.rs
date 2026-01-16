@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use amrust_render::{
     RenderDatabase,
-    camera::OrthographicCameraData,
+    camera::{CameraData, CameraTransform, OrthographicCameraData},
     renderer::{RenderTextureData, Renderer},
 };
 use smol::{
@@ -14,7 +14,7 @@ use crate::render_db::RenderDb;
 
 pub enum RenderMessage {
     UpdateCamera(OrthographicCameraData),
-    //TransformCamera(Vec<CameraTransform>),
+    TransformCamera(Vec<CameraTransform>),
     ResizeViewport(u32, u32),
     Render,
 }
@@ -97,14 +97,17 @@ impl RenderWorker {
             match self.receiver.try_recv() {
                 Ok(msg) => match msg {
                     RenderMessage::UpdateCamera(orthographic_camera_data) => {
-                        self.renderer.update_camera(&orthographic_camera_data);
+                        self.camera = orthographic_camera_data;
+                        self.renderer.update_camera(&self.camera);
                     }
-                    // RenderMessage::TransformCamera(transforms) => {
-                    //     for transform in transforms {
-                    //         self.camera.transform(transform);
-                    //     }
-                    //     println!("Transformed camera");
-                    // }
+                    RenderMessage::TransformCamera(transforms) => {
+                        for transform in transforms {
+                            self.camera.transform(transform);
+                        }
+
+                        self.renderer.update_camera(&self.camera);
+                        println!("Transformed camera");
+                    }
                     RenderMessage::ResizeViewport(width, height) => {
                         self.renderer.set_size(width, height);
                         self.render_texture_data = self.renderer.create_render_texture_data();

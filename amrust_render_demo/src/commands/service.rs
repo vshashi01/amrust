@@ -31,24 +31,11 @@ impl CommandsService {
         // Add to category
         self.categories
             .entry(category)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(id.clone());
 
         // Store command
         self.commands.insert(id, command);
-    }
-
-    /// Execute a command by its ID
-    pub fn execute_command(&self, id: &str, context: &mut CommandContext) {
-        if let Some(cmd) = self.commands.get(id) {
-            if cmd.is_enabled(context) {
-                cmd.execute(context);
-            } else {
-                println!("Command '{}' is disabled", id);
-            }
-        } else {
-            println!("Unknown command: {}", id);
-        }
     }
 
     /// Get all commands for a specific category that are visible
@@ -66,16 +53,6 @@ impl CommandsService {
                 .collect()
         } else {
             Vec::new()
-        }
-    }
-
-    /// Handle keyboard shortcut and return true if handled
-    pub fn handle_keyboard_shortcut(&self, shortcut: &str, context: &mut CommandContext) -> bool {
-        if let Some(command_id) = self.shortcuts.get(shortcut) {
-            self.execute_command(command_id, context);
-            true
-        } else {
-            false
         }
     }
 

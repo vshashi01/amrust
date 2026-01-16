@@ -48,10 +48,6 @@ impl Command for ClearDbCommand {
         "Clear All"
     }
 
-    fn is_visible(&self, context: &CommandContext) -> bool {
-        true
-    }
-
     fn is_enabled(&self, context: &CommandContext) -> bool {
         !context.db_view_model.is_empty()
     }

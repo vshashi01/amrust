@@ -421,8 +421,6 @@ pub async fn process_operation(
     response
 }
 
-/// --- Helper functions ---
-
 /// On success, commit or reattach data depending on context.
 async fn handle_success(ctx: DbContext, db_changes_tx: &Sender<DbChangeMsg>) {
     match ctx.r#type {

@@ -18,8 +18,7 @@ impl FileDialogHandler {
                 if let Some(picked) = &self.dialog.take_picked() {
                     (self.callback)(picked.clone(), context);
                 }
-            }
-            DialogType::LoadMultiple => todo!("Implement multi-file-loading"),
+            } // DialogType::LoadMultiple => todo!("Implement multi-file-loading"),
         }
     }
 }
@@ -27,29 +26,17 @@ impl FileDialogHandler {
 enum DialogType {
     Save,
     Load,
-    LoadMultiple,
+    // LoadMultiple,
 }
 
 /// Service for managing file dialogs with one-shot handler callbacks
 pub struct FileDialogService {
-    // load_dialog: FileDialog,
-    // save_dialogs: HashMap<String, FileDialog>,
-    // pending_load_handler: Option<Box<dyn FnOnce(PathBuf, &mut CommandContext)>>,
-    // pending_save_handlers: HashMap<String, Box<dyn FnOnce(PathBuf, &mut CommandContext)>>,
     pending_handlers: Vec<FileDialogHandler>,
 }
 
 impl FileDialogService {
     pub fn new() -> Self {
-        let load_dialog = FileDialog::new()
-            .add_file_filter_extensions("3MF", vec!["3mf"])
-            .default_file_filter("3MF");
-
         Self {
-            // load_dialog,
-            // save_dialogs: HashMap::new(),
-            // pending_load_handler: None,
-            // pending_save_handlers: HashMap::new(),
             pending_handlers: Vec::new(),
         }
     }

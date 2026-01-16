@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use glam::Vec3;
-use smol::Timer;
+// use smol::Timer;
 use thiserror::Error;
 use threemf2::io::query::{self};
 
@@ -17,7 +17,7 @@ use crate::operation_manager::OperationRequest;
 use core::f32;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::Duration;
+// use std::time::Duration;
 
 #[derive(Debug, Error)]
 pub enum DbFrom3mfError {
