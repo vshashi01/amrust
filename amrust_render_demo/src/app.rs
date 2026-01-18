@@ -22,7 +22,6 @@ use crate::ui::part_list::PartList;
 use crate::ui::toolsheets::Toolsheets;
 use crate::ui::tree_item_viewer::TreeItemViewer;
 use crate::ui::viewport::Viewport3D;
-use amrust_render::bounding_box::BoundingBox;
 // use amrust_lib::widgets::dropped_files::DroppedFilesWidget;
 use amrust_render::camera::{self, CameraData, OrthographicCameraData};
 // use amrust_render::normalized_box::{ORDERED_POSITIONS, ORDERED_POSITIONS_TRI_EDGE_INDICES};
@@ -51,11 +50,8 @@ struct AppState {
     pub surface: wgpu::Surface<'static>,
     pub dpi_factor: f32,
     pub egui_renderer: EguiRenderer,
-    pub camera_data: OrthographicCameraData,
     pub texture_id: Option<epaint::TextureId>,
     // pub dropped_files: DroppedFilesWidget,
-    // pub picked_file: Option<PathBuf>,
-    pub scene_bbox: Option<BoundingBox>,
     pub db: Arc<RwLock<Db>>,
     pub toolsheets: Option<Toolsheets>,
     pub viewport_3d: Viewport3D,
@@ -67,14 +63,7 @@ struct AppState {
     pub render_message_tx: Sender<RenderServiceRequest>,
     pub render_response_rx: Receiver<RenderServiceResponse>,
     pub render_db: Arc<RwLock<RenderDb>>,
-    //pub selected_identifiables: Vec<Identifiable>,
-    pub operation_manager: OperationService,
-    pub operation_queue_tx: Sender<OperationServiceRequest>,
-    pub operation_response_rx: Receiver<OperationResponse>,
-    pub operation_error_rx: Receiver<OperationServiceError>,
     pub operation_error_message: Option<String>,
-    pub show_operation_error_modal: bool,
-
     pub db_view_model: DbViewModel,
 }
 
@@ -191,16 +180,6 @@ impl AppState {
                 .detach();
         }
 
-        //create operation manager and its channels
-        let (operation_queue_tx, operation_queue_rx) = channel::unbounded();
-        let (operation_response_tx, operation_response_rx) = channel::unbounded();
-        let (operation_error_tx, operation_error_rx) = channel::unbounded();
-        let operation_manager = OperationService::new(
-            operation_queue_rx,
-            operation_response_tx,
-            operation_error_tx,
-        );
-
         Self {
             device: Arc::new(device),
             queue: Arc::new(queue),
@@ -208,11 +187,8 @@ impl AppState {
             surface_config,
             dpi_factor,
             egui_renderer,
-            camera_data,
             texture_id: None,
             // dropped_files: dropped_files_widget,
-            // picked_file: None,
-            scene_bbox: None,
             db: Arc::new(RwLock::new(Db::new())),
             toolsheets: None,
             viewport_3d: Viewport3D {},
@@ -223,14 +199,7 @@ impl AppState {
             render_message_tx,
             render_response_rx,
             render_db,
-            //selected_identifiables: vec![],
-            operation_manager,
-            operation_queue_tx,
-            operation_response_rx,
-            operation_error_rx,
             operation_error_message: None,
-            show_operation_error_modal: false,
-
             db_view_model: DbViewModel::new(),
         }
     }
@@ -269,38 +238,6 @@ impl AppState {
                 TryRecvError::Closed => panic!("Disconnected"),
             },
         }
-
-        match self.operation_response_rx.try_recv() {
-            Ok(response) => match response {
-                OperationResponse::Succeeded { name } => {
-                    info!("Operation Success: {name}");
-                    self.need_viewport_update = true;
-                }
-                OperationResponse::Failed { name, error, .. } => {
-                    info!("Operation Failed: {name} with error {error:?}");
-                }
-                OperationResponse::Aborted { name, .. } => {
-                    info!("Operation Cancelled: {name}");
-                }
-            },
-            Err(err) => match err {
-                TryRecvError::Empty => {}
-                TryRecvError::Closed => panic!("Operation Manager is killed!!"),
-            },
-        }
-
-        match self.operation_error_rx.try_recv() {
-            Ok(error) => match error {
-                OperationServiceError::ModalOpImmediateFailed(message) => {
-                    self.operation_error_message = Some(message);
-                    self.show_operation_error_modal = true;
-                }
-            },
-            Err(err) => match err {
-                TryRecvError::Empty => {}
-                TryRecvError::Closed => panic!("Operation error channel closed!!"),
-            },
-        }
     }
 }
 
@@ -311,6 +248,10 @@ pub struct App {
     toolsheets_dock_tree: DockState<String>,
     file_dialog_service: FileDialogService,
     command_service: CommandService,
+    operation_manager: OperationService,
+    operation_queue_tx: Sender<OperationServiceRequest>,
+    operation_response_rx: Receiver<OperationResponse>,
+    operation_error_rx: Receiver<OperationServiceError>,
 }
 
 impl App {
@@ -326,6 +267,15 @@ impl App {
         clear_db::register_commands(&mut command_service);
         unzoom_scene::register_commands(&mut command_service);
 
+        let (operation_queue_tx, operation_queue_rx) = channel::unbounded();
+        let (operation_response_tx, operation_response_rx) = channel::unbounded();
+        let (operation_error_tx, operation_error_rx) = channel::unbounded();
+        let operation_manager = OperationService::new(
+            operation_queue_rx,
+            operation_response_tx,
+            operation_error_tx,
+        );
+
         Self {
             instance,
             state: None,
@@ -333,6 +283,10 @@ impl App {
             toolsheets_dock_tree,
             file_dialog_service: FileDialogService::new(),
             command_service,
+            operation_manager,
+            operation_queue_tx,
+            operation_response_rx,
+            operation_error_rx,
         }
     }
 
@@ -367,9 +321,6 @@ impl App {
         if width > 0 && height > 0 {
             let state = self.state.as_mut().unwrap();
             state.resize_surface(width, height);
-            state
-                .camera_data
-                .set_viewport_size(width as f32, height as f32);
         }
     }
 
@@ -435,7 +386,7 @@ impl App {
                 let mut command_context = CommandContext::new(
                     &state.db_view_model,
                     state.current_app_mode,
-                    state.operation_queue_tx.clone(),
+                    self.operation_queue_tx.clone(),
                     &mut self.file_dialog_service,
                     state.render_message_tx.clone(),
                 );
@@ -443,11 +394,7 @@ impl App {
                 handler.handle_and_close_dialog(&mut command_context);
             }
 
-            // take snapshot of previous frame data
-            let prev_camera_data = state.camera_data.clone();
-
-            let default_bbox = BoundingBox::default();
-            let bbox = state.scene_bbox.as_ref().unwrap_or(&default_bbox);
+            let bbox = &get_total_bbox_from_cache(&state.db_view_model, state.current_app_mode);
             let operable_selected_identifiables = state
                 .db_view_model
                 .get_all_operable_selected_identifiables()
@@ -458,7 +405,7 @@ impl App {
                     let mut command_context = CommandContext::new(
                         &state.db_view_model,
                         state.current_app_mode,
-                        state.operation_queue_tx.clone(),
+                        self.operation_queue_tx.clone(),
                         &mut self.file_dialog_service,
                         state.render_message_tx.clone(),
                     );
@@ -499,7 +446,9 @@ impl App {
             egui::CentralPanel::default().show(state.egui_renderer.context(), |ui| {
                 match state.texture_id {
                     Some(id) => {
-                        state.viewport_3d.ui(ui, id, &mut state.camera_data, bbox);
+                        state
+                            .viewport_3d
+                            .ui(ui, id, &mut state.render_message_tx, bbox);
                     }
                     None => {
                         ui.label("Rendering Texture ID is missing!!");
@@ -569,7 +518,7 @@ impl App {
                     dock_tree
                 };
 
-                let (render_objects, bbox, part_list_items, object_items, build_items) =
+                let (render_objects, part_list_items, object_items, build_items) =
                     match &state.current_app_mode {
                         AppMode::Objects => {
                             let render_objects = state
@@ -578,13 +527,11 @@ impl App {
                                 .cloned()
                                 .collect::<Vec<_>>();
 
-                            let bbox =
-                                get_total_bbox_from_cache(&state.db_view_model, AppMode::Objects);
                             let part_list =
                                 create_scene_tree_items_by_unique_parts(&state.db_view_model);
                             let object_list = create_objects_list(&state.db_view_model);
                             let build_list = create_build_items_list(&state.db_view_model);
-                            (render_objects, bbox, part_list, object_list, build_list)
+                            (render_objects, part_list, object_list, build_list)
                         }
                         AppMode::Build => {
                             let render_objects = state
@@ -592,12 +539,10 @@ impl App {
                                 .get_scene_based_render_object_ids()
                                 .cloned()
                                 .collect::<Vec<_>>();
-                            let bbox =
-                                get_total_bbox_from_cache(&state.db_view_model, AppMode::Build);
                             let part_list = create_build_items_list(&state.db_view_model);
                             let object_list = create_objects_list(&state.db_view_model);
                             let build_list = create_build_items_list(&state.db_view_model);
-                            (render_objects, bbox, part_list, object_list, build_list)
+                            (render_objects, part_list, object_list, build_list)
                         }
                     };
 
@@ -652,7 +597,6 @@ impl App {
                 });
 
                 let _ = state.toolsheets.insert(toolsheets);
-                let _ = state.scene_bbox.insert(bbox);
 
                 state.need_viewport_update = false;
                 state.current_render_mode = state.current_app_mode;
@@ -701,23 +645,11 @@ impl App {
                 );
             }
 
-            //update the camera if the camera data is changed
-            if prev_camera_data != state.camera_data
-                && let Err(err) =
-                    state
-                        .render_message_tx
-                        .send_blocking(RenderServiceRequest::UpdateCamera(
-                            state.camera_data.clone(),
-                        ))
-            {
-                info!("{err:?}");
-            }
-
             //run the operation manager
             {
-                state.operation_manager.run(&state.db, &state.executor);
+                self.operation_manager.run(&state.db, &state.executor);
 
-                if let Some(op) = state.operation_manager.get_modal_operation() {
+                if let Some(op) = self.operation_manager.get_modal_operation() {
                     let _ = egui::Modal::new(egui::Id::new("app modal")).show(
                         state.egui_renderer.context(),
                         |ui| {
@@ -727,12 +659,12 @@ impl App {
                     );
                 }
 
-                let background_ops = state
+                let background_ops = self
                     .operation_manager
                     .get_all_background_operation()
                     .collect::<Vec<_>>();
 
-                let queued_ops = state
+                let queued_ops = self
                     .operation_manager
                     .get_queued_operations()
                     .collect::<Vec<_>>();
@@ -741,7 +673,9 @@ impl App {
                     .resizable(true)
                     .max_height(300.0)
                     .show(state.egui_renderer.context(), |ui| {
-                        egui_logger::LoggerUi::default().show(ui);
+                        egui::ScrollArea::both().max_height(250.0).show(ui, |ui| {
+                            egui_logger::LoggerUi::default().show(ui);
+                        });
 
                         ui.vertical(|ui| {
                             if background_ops.is_empty() {
@@ -773,15 +707,43 @@ impl App {
                     });
             }
 
-            if state.show_operation_error_modal
-                && let Some(message) = state.operation_error_message.clone()
-            {
+            match self.operation_response_rx.try_recv() {
+                Ok(response) => match response {
+                    OperationResponse::Succeeded { name } => {
+                        info!("Operation Success: {name}");
+                        state.need_viewport_update = true;
+                    }
+                    OperationResponse::Failed { name, error, .. } => {
+                        info!("Operation Failed: {name} with error {error:?}");
+                    }
+                    OperationResponse::Aborted { name, .. } => {
+                        info!("Operation Cancelled: {name}");
+                    }
+                },
+                Err(err) => match err {
+                    TryRecvError::Empty => {}
+                    TryRecvError::Closed => panic!("Operation Manager is killed!!"),
+                },
+            }
+
+            match self.operation_error_rx.try_recv() {
+                Ok(error) => match error {
+                    OperationServiceError::ModalOpImmediateFailed(message) => {
+                        state.operation_error_message = Some(message);
+                    }
+                },
+                Err(err) => match err {
+                    TryRecvError::Empty => {}
+                    TryRecvError::Closed => panic!("Operation error channel closed!!"),
+                },
+            }
+
+            if let Some(message) = state.operation_error_message.clone() {
                 let _ = egui::Modal::new(egui::Id::new("operation_error_modal")).show(
                     state.egui_renderer.context(),
                     |ui| {
                         ui.label(&message);
                         if ui.button("OK").clicked() {
-                            state.show_operation_error_modal = false;
                             state.operation_error_message = None;
                         }
                     },
