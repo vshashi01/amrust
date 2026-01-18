@@ -1,15 +1,15 @@
 use std::collections::HashMap;
 
-use crate::commands::{Command, CommandCategory, CommandContext};
+use crate::core::interfaces::command::{Command, CommandCategory, CommandContext};
 
 /// Central service for managing and executing commands
-pub struct CommandsService {
+pub struct CommandService {
     commands: HashMap<String, Box<dyn Command>>,
     shortcuts: HashMap<String, String>, // shortcut -> command_id
     categories: HashMap<CommandCategory, Vec<String>>, // category -> command_ids
 }
 
-impl CommandsService {
+impl CommandService {
     pub fn new() -> Self {
         Self {
             commands: HashMap::new(),

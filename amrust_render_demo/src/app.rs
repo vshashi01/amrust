@@ -1,23 +1,27 @@
-use crate::amrust_db::{Db, Identifiable};
-// use crate::amrust_db::{Transformation, Mesh};
-use crate::app_mode::AppMode;
-use crate::clear_db::{self};
-use crate::commands::{CommandContext, CommandsService};
+use crate::core::amrust_db::Db;
+use crate::core::app_mode::AppMode;
+use crate::core::interfaces::command::CommandContext;
+use crate::core::interfaces::operation::OperationResponse;
+use crate::core::render_db::RenderDb;
+use crate::core::services::FileDialogService;
+use crate::core::services::command_service::CommandService;
+use crate::core::services::operation_service::{
+    OperationService, OperationServiceError, OperationServiceRequest,
+};
+use crate::core::services::render_service::{
+    RenderService, RenderServiceRequest, RenderServiceResponse, RendererSettings,
+};
+use crate::core::types::identifiable::Identifiable;
 use crate::db_view_model::{
     self, DbViewModel, create_build_items_list, create_object_tree_from_identifiable,
     create_objects_list, create_scene_tree_items_by_unique_parts, get_total_bbox_from_cache,
 };
 use crate::egui_tools::EguiRenderer;
-use crate::operation::OperationResponse;
-use crate::operation_manager::{OperationError, OperationManager, OperationRequest};
-use crate::part_list::PartList;
-use crate::render_db::RenderDb;
-use crate::render_worker::{RenderMessage, RenderResponse, RenderWorker, RendererSettings};
-use crate::services::FileDialogService;
-use crate::toolsheets::Toolsheets;
-use crate::tree_item_viewer::TreeItemViewer;
-use crate::viewport::Viewport3D;
-use crate::{load_3mf, save_3mf, unzoom_scene};
+use crate::features::{clear_db, load_3mf, save_3mf, unzoom_scene};
+use crate::ui::part_list::PartList;
+use crate::ui::toolsheets::Toolsheets;
+use crate::ui::tree_item_viewer::TreeItemViewer;
+use crate::ui::viewport::Viewport3D;
 use amrust_render::bounding_box::BoundingBox;
 // use amrust_lib::widgets::dropped_files::DroppedFilesWidget;
 use amrust_render::camera::{self, CameraData, OrthographicCameraData};
@@ -60,14 +64,14 @@ struct AppState {
     pub need_viewport_update: bool,
 
     pub executor: Arc<Executor<'static>>,
-    pub render_message_tx: Sender<RenderMessage>,
-    pub render_response_rx: Receiver<RenderResponse>,
+    pub render_message_tx: Sender<RenderServiceRequest>,
+    pub render_response_rx: Receiver<RenderServiceResponse>,
     pub render_db: Arc<RwLock<RenderDb>>,
     //pub selected_identifiables: Vec<Identifiable>,
-    pub operation_manager: OperationManager,
-    pub operation_queue_tx: Sender<OperationRequest>,
+    pub operation_manager: OperationService,
+    pub operation_queue_tx: Sender<OperationServiceRequest>,
     pub operation_response_rx: Receiver<OperationResponse>,
-    pub operation_error_rx: Receiver<OperationError>,
+    pub operation_error_rx: Receiver<OperationServiceError>,
     pub operation_error_message: Option<String>,
     pub show_operation_error_modal: bool,
 
@@ -174,7 +178,7 @@ impl AppState {
             executor
                 .spawn(async {
                     info!("Attempted to println in separate thread");
-                    let mut render_worker = RenderWorker::new(
+                    let mut render_worker = RenderService::new(
                         renderer_settings,
                         internal_render_db,
                         render_message_rx,
@@ -191,7 +195,7 @@ impl AppState {
         let (operation_queue_tx, operation_queue_rx) = channel::unbounded();
         let (operation_response_tx, operation_response_rx) = channel::unbounded();
         let (operation_error_tx, operation_error_rx) = channel::unbounded();
-        let operation_manager = OperationManager::new(
+        let operation_manager = OperationService::new(
             operation_queue_rx,
             operation_response_tx,
             operation_error_tx,
@@ -238,25 +242,25 @@ impl AppState {
 
         // resize the viewport.
         self.render_message_tx
-            .send_blocking(RenderMessage::ResizeViewport(width, height))
+            .send_blocking(RenderServiceRequest::ResizeViewport(width, height))
             .unwrap();
     }
 
     fn handle_redraw(&mut self) {
         self.render_message_tx
-            .send_blocking(RenderMessage::Render)
+            .send_blocking(RenderServiceRequest::Render)
             .unwrap();
 
         match self.render_response_rx.try_recv() {
             Ok(response) => match response {
-                RenderResponse::NewTextureView(texture_view) => {
+                RenderServiceResponse::NewTextureView(texture_view) => {
                     let id = self
                         .egui_renderer
                         .register_texture(&self.device, &texture_view);
                     let _ = self.texture_id.insert(id);
                     // info!("New texture view is attempted!")
                 }
-                RenderResponse::RenderComplete => {
+                RenderServiceResponse::RenderComplete => {
                     // info!("Rendered");
                 }
             },
@@ -287,7 +291,7 @@ impl AppState {
 
         match self.operation_error_rx.try_recv() {
             Ok(error) => match error {
-                OperationError::ModalOpImmediateFailed(message) => {
+                OperationServiceError::ModalOpImmediateFailed(message) => {
                     self.operation_error_message = Some(message);
                     self.show_operation_error_modal = true;
                 }
@@ -306,7 +310,7 @@ pub struct App {
     window: Option<Arc<Window>>,
     toolsheets_dock_tree: DockState<String>,
     file_dialog_service: FileDialogService,
-    command_service: CommandsService,
+    command_service: CommandService,
 }
 
 impl App {
@@ -316,7 +320,7 @@ impl App {
 
         let toolsheets_dock_tree = DockState::new(vec![]);
 
-        let mut command_service = CommandsService::new();
+        let mut command_service = CommandService::new();
         load_3mf::register_commands(&mut command_service);
         save_3mf::register_commands(&mut command_service);
         clear_db::register_commands(&mut command_service);
@@ -699,9 +703,12 @@ impl App {
 
             //update the camera if the camera data is changed
             if prev_camera_data != state.camera_data
-                && let Err(err) = state
-                    .render_message_tx
-                    .send_blocking(RenderMessage::UpdateCamera(state.camera_data.clone()))
+                && let Err(err) =
+                    state
+                        .render_message_tx
+                        .send_blocking(RenderServiceRequest::UpdateCamera(
+                            state.camera_data.clone(),
+                        ))
             {
                 info!("{err:?}");
             }

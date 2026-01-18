@@ -1,24 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod amrust_db;
 mod app;
-mod app_mode;
-mod clear_db;
-mod commands;
+mod core;
 mod db_view_model;
 mod egui_tools;
-mod load_3mf;
-mod operation;
-mod operation_manager;
-mod part_list;
-mod render_db;
-mod render_worker;
-mod save_3mf;
-mod services;
-mod toolsheets;
-mod tree_item_viewer;
-mod unzoom_scene;
-mod viewport;
+mod features;
+mod ui;
 
 use winit::event_loop::{ControlFlow, EventLoop};
 

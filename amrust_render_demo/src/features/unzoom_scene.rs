@@ -4,9 +4,11 @@ use amrust_render::{bounding_box::BoundingBox, camera::CameraTransform};
 use log::info;
 
 use crate::{
-    commands::{Command, CommandCategory, CommandContext, CommandsService},
-    db_view_model::get_total_bbox_from_cache,
-    render_worker::RenderMessage,
+    core::services::render_service::RenderServiceRequest,
+    core::{
+        interfaces::command::{Command, CommandCategory, CommandContext},
+        services::command_service::CommandService,
+    },
 };
 
 pub struct UnzoomSceneCommand;
@@ -25,7 +27,7 @@ impl Command for UnzoomSceneCommand {
     }
 
     fn is_enabled(&self, context: &CommandContext) -> bool {
-        !context.db_view_model.is_empty()
+        !context.db_view_model.is_database_empty()
     }
 
     fn category(&self) -> CommandCategory {
@@ -33,11 +35,13 @@ impl Command for UnzoomSceneCommand {
     }
 
     fn execute(&self, context: &mut CommandContext) {
-        let total_bbox = get_total_bbox_from_cache(context.db_view_model, context.current_app_mode);
+        let total_bbox = context
+            .db_view_model
+            .get_total_visible_bbox(context.current_app_mode);
         let transforms = get_transform_to_unzoom(&total_bbox);
         if let Err(err) = context
             .render_worker_queue_tx
-            .send_blocking(RenderMessage::TransformCamera(transforms))
+            .send_blocking(RenderServiceRequest::TransformCamera(transforms))
         {
             info!("Error while sending Render message for unzoom: {err:?}");
         }
@@ -45,7 +49,7 @@ impl Command for UnzoomSceneCommand {
 }
 
 /// Register all commands provided by the clear_db module
-pub fn register_commands(commands_service: &mut CommandsService) {
+pub fn register_commands(commands_service: &mut CommandService) {
     commands_service.register_command(Box::new(UnzoomSceneCommand));
 }
 

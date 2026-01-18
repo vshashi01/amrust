@@ -1,4 +1,7 @@
-use crate::{amrust_db::Identifiable, part_list::PartList, tree_item_viewer::TreeItemViewer};
+use crate::{
+    core::types::identifiable::Identifiable, ui::part_list::PartList,
+    ui::tree_item_viewer::TreeItemViewer,
+};
 
 pub struct Toolsheets {
     // pub app_mode: AppMode,

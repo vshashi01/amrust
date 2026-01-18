@@ -6,23 +6,24 @@ use smol::{
     lock::RwLock,
 };
 
-use crate::{
-    amrust_db::{Db, Identifiable},
-    operation::{
-        DbChangeMsg, Operation, OperationNature, OperationResponse, get_new_operation_context,
-        process_operation,
+use crate::core::{
+    amrust_db::Db,
+    interfaces::operation::{Operation, OperationNature, OperationResponse},
+    types::{
+        db_context::{DbChangeMsg, get_new_operation_context, process_operation},
+        identifiable::Identifiable,
     },
 };
 
 use std::{collections::VecDeque, sync::Arc};
 
 #[derive(Debug, Clone)]
-pub enum OperationError {
+pub enum OperationServiceError {
     ModalOpImmediateFailed(String),
 }
 
 /// Defines the Mode to run the Operation in
-pub enum OperationRequest {
+pub enum OperationServiceRequest {
     /// A non-blocking operation meant for long running operations
     /// The MainUI is still accessible but such operations should refrain
     /// from taking the WriteFull [DbContext]
@@ -66,12 +67,12 @@ impl PendingOperation {
     }
 }
 
-pub struct OperationManager {
-    operation_queue_rx: Receiver<OperationRequest>,
+pub struct OperationService {
+    operation_queue_rx: Receiver<OperationServiceRequest>,
     operation_response_tx: Sender<OperationResponse>,
     db_changes_msg_rx: Receiver<DbChangeMsg>,
     db_changes_msg_tx: Sender<DbChangeMsg>,
-    error_tx: Sender<OperationError>,
+    error_tx: Sender<OperationServiceError>,
 
     next_operation_id: u64,
     running_tasks: Vec<RunningOperation>,
@@ -80,11 +81,11 @@ pub struct OperationManager {
     detached_identifiables: HashSet<Identifiable>,
 }
 
-impl OperationManager {
+impl OperationService {
     pub fn new(
-        operation_queue_rx: Receiver<OperationRequest>,
+        operation_queue_rx: Receiver<OperationServiceRequest>,
         operation_response_tx: Sender<OperationResponse>,
-        error_tx: Sender<OperationError>,
+        error_tx: Sender<OperationServiceError>,
     ) -> Self {
         let (db_changes_msg_tx, db_changes_msg_rx) = channel::unbounded::<DbChangeMsg>();
 
@@ -130,7 +131,7 @@ impl OperationManager {
             Ok(op_mode) => {
                 let new_operation_id = self.get_next_operation_id();
                 match op_mode {
-                    OperationRequest::BackgroundOp(operation) => {
+                    OperationServiceRequest::BackgroundOp(operation) => {
                         if matches!(
                             operation.get_operation_requirements(),
                             Some(OperationNature::ReadWriteInModal)
@@ -145,7 +146,7 @@ impl OperationManager {
                             })
                         }
                     }
-                    OperationRequest::ModalOp(operation) => {
+                    OperationServiceRequest::ModalOp(operation) => {
                         //always goes to the front of the queue
                         self.pending_task_queue.push_front(PendingOperation {
                             operation_id: new_operation_id,
@@ -154,7 +155,7 @@ impl OperationManager {
                             is_waiting: false,
                         });
                     }
-                    OperationRequest::ModalOpWait(operation) => {
+                    OperationServiceRequest::ModalOpWait(operation) => {
                         let pending_op = PendingOperation {
                             operation_id: new_operation_id,
                             operation,
@@ -172,10 +173,10 @@ impl OperationManager {
                             self.pending_task_queue.push_front(pending_op);
                         }
                     }
-                    OperationRequest::ModalOpImmediate(operation) => {
+                    OperationServiceRequest::ModalOpImmediate(operation) => {
                         if !self.running_tasks.is_empty() {
                             let _ = self.error_tx.send_blocking(
-                                OperationError::ModalOpImmediateFailed(
+                                OperationServiceError::ModalOpImmediateFailed(
                                     "Cannot run Immediate Modal Operation because there are other Operations running."
                                         .to_string(),
                                 ),

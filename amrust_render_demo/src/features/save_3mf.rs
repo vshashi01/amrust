@@ -12,25 +12,26 @@ use threemf2::io::ModelBuilder;
 use threemf2::io::ObjectId;
 use threemf2::io::ThreemfPackage;
 
-use crate::amrust_db;
-use crate::amrust_db::DbError;
-use crate::amrust_db::Identifiable;
-use crate::amrust_db::PartId;
-use crate::amrust_db::PartInstance;
-use crate::amrust_db::PartInstanceId;
-use crate::amrust_db::PartRep;
-use crate::amrust_db::Transformation;
-use crate::app_mode::AppMode;
-use crate::commands::Command;
-use crate::commands::CommandCategory;
-use crate::commands::CommandContext;
-use crate::commands::CommandsService;
-use crate::operation::DbContext;
-use crate::operation::DbReader;
-use crate::operation::Operation;
-use crate::operation::OperationNature;
-use crate::operation::OperationResponse;
-use crate::operation_manager::OperationRequest;
+use crate::core::amrust_db::DbError;
+use crate::core::app_mode::AppMode;
+use crate::core::interfaces::command::Command;
+use crate::core::interfaces::command::CommandCategory;
+use crate::core::interfaces::command::CommandContext;
+use crate::core::interfaces::db_reader::DbReader;
+use crate::core::interfaces::operation::Operation;
+use crate::core::interfaces::operation::OperationNature;
+use crate::core::interfaces::operation::OperationResponse;
+use crate::core::services::command_service::CommandService;
+use crate::core::services::operation_service::OperationServiceRequest;
+use crate::core::types::db_context::DbContext;
+use crate::core::types::identifiable::Identifiable;
+use crate::core::types::mesh::Mesh;
+use crate::core::types::part::Part;
+use crate::core::types::part::PartId;
+use crate::core::types::part::PartRep;
+use crate::core::types::part_instance::PartInstance;
+use crate::core::types::part_instance::PartInstanceId;
+use crate::core::types::transformation::Transformation;
 
 #[derive(Debug, Error)]
 pub enum DbTo3mfError {
@@ -429,7 +430,7 @@ fn process_reps(
     parts_to_be_processed: &mut Vec<PartId>,
     instance_map: &HashMap<PartInstanceId, PartInstance>,
     id: &PartId,
-    part: &amrust_db::Part,
+    part: &Part,
 ) -> Result<(), DbTo3mfError> {
     if parts_already_processed.contains_key(id) {
         return Ok(());
@@ -556,7 +557,7 @@ fn process_composed_part_and_insert_component_object(
 
 fn process_and_insert_mesh_object(
     model_builder: &mut ModelBuilder,
-    mesh: &amrust_db::Mesh,
+    mesh: &Mesh,
 ) -> Result<ObjectId, DbTo3mfError> {
     match model_builder.add_mesh_object(|m| {
         m.add_vertices(
@@ -612,7 +613,7 @@ impl Command for SaveSceneCommand {
     }
 
     fn is_enabled(&self, context: &CommandContext) -> bool {
-        !context.db_view_model.is_empty()
+        !context.db_view_model.is_database_empty()
     }
 
     fn category(&self) -> CommandCategory {
@@ -636,7 +637,7 @@ impl Command for SaveSceneCommand {
                     };
                     if let Err(err) = ctx
                         .operation_queue_tx
-                        .send_blocking(OperationRequest::ModalOpWait(Box::new(ops)))
+                        .send_blocking(OperationServiceRequest::ModalOpWait(Box::new(ops)))
                     {
                         info!("Failed to queue import operation: {:?}", err);
                     }
@@ -658,11 +659,10 @@ impl Command for SavePartCommand {
     }
 
     fn is_enabled(&self, context: &CommandContext) -> bool {
-        context
+        !context
             .db_view_model
             .get_all_operable_selected_identifiables()
-            .count()
-            > 0
+            .is_empty()
     }
 
     fn category(&self) -> CommandCategory {
@@ -679,10 +679,8 @@ impl Command for SavePartCommand {
                 if let Some(ext) = path.extension()
                     && ext == "3mf"
                 {
-                    let operable_selected_identifiables = ctx
-                        .db_view_model
-                        .get_all_operable_selected_identifiables()
-                        .collect::<Vec<_>>();
+                    let operable_selected_identifiables =
+                        ctx.db_view_model.get_all_operable_selected_identifiables();
                     let ops_msg = {
                         if !operable_selected_identifiables.is_empty() {
                             let save_mode = match ctx.current_app_mode {
@@ -711,9 +709,12 @@ impl Command for SavePartCommand {
                                     SaveMode::PartInstances(part_instances.collect())
                                 }
                             };
-                            OperationRequest::BackgroundOp(Box::new(Save3mfOps { path, save_mode }))
+                            OperationServiceRequest::BackgroundOp(Box::new(Save3mfOps {
+                                path,
+                                save_mode,
+                            }))
                         } else {
-                            OperationRequest::ModalOp(Box::new(Save3mfOps {
+                            OperationServiceRequest::ModalOp(Box::new(Save3mfOps {
                                 path,
                                 save_mode: SaveMode::Scene,
                             }))
@@ -729,19 +730,17 @@ impl Command for SavePartCommand {
 }
 
 /// Register all commands provided by the load_3mf module
-pub fn register_commands(commands_service: &mut CommandsService) {
+pub fn register_commands(commands_service: &mut CommandService) {
     commands_service.register_command(Box::new(SaveSceneCommand));
     commands_service.register_command(Box::new(SavePartCommand));
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use std::{fs::File, path::PathBuf};
 
-    use crate::{
-        load_3mf,
-        save_3mf::{save_instances, save_parts, save_scene},
-    };
+    use crate::{core::types::part::PartRep, features::load_3mf};
 
     #[test]
     fn test_save_scene() {
@@ -781,7 +780,7 @@ mod tests {
         let mesh_instances = db
             .get_part_instances()
             .filter_map(|(id, _, part)| {
-                if matches!(part.get_rep(), crate::amrust_db::PartRep::Mesh(_)) {
+                if matches!(part.get_rep(), PartRep::Mesh(_)) {
                     Some(id)
                 } else {
                     None
@@ -822,7 +821,7 @@ mod tests {
         let composedpart_instance = db
             .get_part_instances()
             .filter_map(|(id, _, part)| {
-                if matches!(part.get_rep(), crate::amrust_db::PartRep::ComposedPart(_)) {
+                if matches!(part.get_rep(), PartRep::ComposedPart(_)) {
                     Some(id)
                 } else {
                     None
@@ -866,7 +865,7 @@ mod tests {
         let mesh_parts = db
             .get_parts()
             .filter_map(|(id, part)| {
-                if matches!(part.get_rep(), crate::amrust_db::PartRep::Mesh(_)) {
+                if matches!(part.get_rep(), PartRep::Mesh(_)) {
                     Some(id)
                 } else {
                     None
@@ -907,7 +906,7 @@ mod tests {
         let composed_part = db
             .get_parts()
             .filter_map(|(id, part)| {
-                if matches!(part.get_rep(), crate::amrust_db::PartRep::ComposedPart(_)) {
+                if matches!(part.get_rep(), PartRep::ComposedPart(_)) {
                     Some(id)
                 } else {
                     None

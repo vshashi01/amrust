@@ -1,7 +1,7 @@
 use egui_file_dialog::FileDialog;
 use std::path::PathBuf;
 
-use crate::commands::CommandContext;
+use crate::core::interfaces::command::CommandContext;
 
 pub type FileDialogHandlerCallback = Box<dyn FnOnce(PathBuf, &mut CommandContext)>;
 

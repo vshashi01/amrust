@@ -10,10 +10,14 @@ use threemf2::core::mesh::{Triangle, Vertex};
 use threemf2::core::transform::Transform;
 use threemf2::io::ThreemfPackage;
 
-use crate::amrust_db::{Db, DbError, Mesh, PartId, PartRep, Scene};
-use crate::commands::{Command, CommandCategory, CommandContext, CommandsService};
-use crate::operation::{DbContext, Operation, OperationNature, OperationResponse};
-use crate::operation_manager::OperationRequest;
+use crate::core::amrust_db::{Db, DbError, Scene};
+use crate::core::interfaces::command::{Command, CommandCategory, CommandContext};
+use crate::core::interfaces::operation::{Operation, OperationNature, OperationResponse};
+use crate::core::services::command_service::CommandService;
+use crate::core::services::operation_service::OperationServiceRequest;
+use crate::core::types::db_context::DbContext;
+use crate::core::types::mesh::Mesh;
+use crate::core::types::part::{PartId, PartRep};
 
 use core::f32;
 use std::collections::HashMap;
@@ -308,7 +312,7 @@ impl Command for ImportPartCommand {
                     let ops = Load3MFOps { path };
                     if let Err(err) = ctx
                         .operation_queue_tx
-                        .send_blocking(OperationRequest::BackgroundOp(Box::new(ops)))
+                        .send_blocking(OperationServiceRequest::BackgroundOp(Box::new(ops)))
                     {
                         info!("Failed to queue import operation: {:?}", err);
                     }
@@ -319,6 +323,6 @@ impl Command for ImportPartCommand {
 }
 
 /// Register all commands provided by the load_3mf module
-pub fn register_commands(commands_service: &mut CommandsService) {
+pub fn register_commands(commands_service: &mut CommandService) {
     commands_service.register_command(Box::new(ImportPartCommand));
 }

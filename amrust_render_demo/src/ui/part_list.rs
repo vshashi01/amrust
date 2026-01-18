@@ -1,6 +1,6 @@
 use crate::{
-    amrust_db::Identifiable,
-    tree_item_viewer::{TreeItem, TreeItemViewer},
+    core::types::identifiable::Identifiable,
+    ui::tree_item_viewer::{TreeItem, TreeItemViewer},
 };
 
 pub struct PartList {

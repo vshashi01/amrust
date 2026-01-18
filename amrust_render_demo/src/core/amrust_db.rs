@@ -1,6 +1,4 @@
 #![allow(clippy::needless_lifetimes)]
-use amrust_render::transformation::TransformationData;
-use glam::Mat4;
 use rkyv::api::low::from_bytes_unchecked;
 use rkyv::bytecheck::CheckBytes;
 use rkyv::rancor::Fallible;
@@ -10,147 +8,14 @@ use rkyv_derive::{Archive, Deserialize, Serialize};
 use slotmap::{KeyData, SlotMap, new_key_type};
 use thiserror::Error;
 
-use core::fmt;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 
-use crate::operation::DbReader;
-
-#[derive(Debug, Clone, Archive, Serialize, Deserialize, CheckBytes)]
-pub struct Part {
-    rep: PartRep,
-}
-
-impl Part {
-    pub fn get_rep(&self) -> &PartRep {
-        &self.rep
-    }
-}
-
-new_key_type! {
-    pub struct PartId;
-}
-
-impl fmt::Display for PartId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&format!("{self:?}"))
-    }
-}
-
-unsafe impl<C: ?Sized + Fallible> CheckBytes<C> for PartId {
-    unsafe fn check_bytes(
-        _value: *const Self,
-        _context: &mut C,
-    ) -> Result<(), <C as Fallible>::Error> {
-        Ok(())
-    }
-}
-
-#[derive(Debug, Archive, CheckBytes, Hash, PartialEq, Eq)]
-#[repr(transparent)]
-pub struct ArchivedSlotMapId(u64);
-
-unsafe impl rkyv::Portable for ArchivedSlotMapId {}
-
-unsafe impl rkyv::traits::NoUndef for ArchivedSlotMapId {}
-
-impl rkyv::Archive for PartId {
-    type Archived = ArchivedSlotMapId;
-
-    type Resolver = ();
-
-    fn resolve(&self, _: Self::Resolver, out: rkyv::Place<Self::Archived>) {
-        out.write(ArchivedSlotMapId(self.0.as_ffi()));
-    }
-}
-
-impl<S: Fallible + ?Sized> rkyv::Serialize<S> for PartId {
-    fn serialize(&self, _serializer: &mut S) -> Result<Self::Resolver, S::Error> {
-        Ok(())
-    }
-}
-
-impl<D: Fallible + ?Sized> rkyv::Deserialize<PartId, D> for ArchivedSlotMapId {
-    fn deserialize(&self, _deserializer: &mut D) -> Result<PartId, D::Error> {
-        Ok(PartId(KeyData::from_ffi(self.0)))
-    }
-}
-
-#[derive(Debug, Clone, Archive, Serialize, Deserialize)]
-pub enum PartRep {
-    Mesh(Box<Mesh>),
-    ComposedPart(Vec<PartInstanceId>),
-}
-
-unsafe impl rkyv::Portable for PartRep {}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Archive, Serialize, Deserialize, CheckBytes)]
-pub struct Transformation(pub Mat4);
-
-impl From<&Transformation> for TransformationData {
-    fn from(val: &Transformation) -> Self {
-        TransformationData(val.0.to_cols_array_2d())
-    }
-}
-
-impl From<amrust_render::transformation::Transformation> for Transformation {
-    fn from(value: amrust_render::transformation::Transformation) -> Self {
-        Transformation(value.0)
-    }
-}
-
-#[derive(Debug, Clone, Archive, Serialize, Deserialize, CheckBytes)]
-pub struct PartInstance {
-    pub part_id: PartId,
-    pub transform: Transformation,
-}
-
-impl PartInstance {
-    pub fn new(part_id: PartId, transform: Option<Transformation>) -> PartInstance {
-        PartInstance {
-            part_id,
-            transform: transform.unwrap_or_default(),
-        }
-    }
-}
-
-new_key_type! {
-    pub struct PartInstanceId;
-}
-
-impl fmt::Display for PartInstanceId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&format!("{self:?}"))
-    }
-}
-
-impl rkyv::Archive for PartInstanceId {
-    type Archived = ArchivedSlotMapId;
-
-    type Resolver = ();
-
-    fn resolve(&self, _: Self::Resolver, out: rkyv::Place<Self::Archived>) {
-        out.write(ArchivedSlotMapId(self.0.as_ffi()));
-    }
-}
-
-impl<S: Fallible + ?Sized> rkyv::Serialize<S> for PartInstanceId {
-    fn serialize(&self, _serializer: &mut S) -> Result<Self::Resolver, S::Error> {
-        Ok(())
-    }
-}
-
-impl<D: Fallible + ?Sized> rkyv::Deserialize<PartInstanceId, D> for ArchivedSlotMapId {
-    fn deserialize(&self, _deserializer: &mut D) -> Result<PartInstanceId, D::Error> {
-        Ok(PartInstanceId(KeyData::from_ffi(self.0)))
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-pub enum Identifiable {
-    Part(PartId),
-    PartInstance(PartInstanceId),
-}
+use crate::core::interfaces::db_reader::DbReader;
+use crate::core::types::archived::ArchivedSlotMapId;
+use crate::core::types::part::{Part, PartId, PartRep};
+use crate::core::types::part_instance::{PartInstance, PartInstanceId};
+use crate::core::types::transformation::Transformation;
 
 #[derive(Debug, Clone, Archive, Serialize, Deserialize, CheckBytes)]
 pub struct Scene {
@@ -175,22 +40,6 @@ impl Scene {
 
     pub fn is_empty(&self) -> bool {
         self.instances.is_empty()
-    }
-}
-
-#[derive(Clone, Archive, Serialize, Deserialize, CheckBytes)]
-pub struct Mesh {
-    pub vertices: Vec<glam::Vec3>,
-    pub triangles: Vec<u32>,
-}
-
-impl Debug for Mesh {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Mesh")
-            .field("vertices:", &self.vertices.len())
-            .field("triangles:", &self.triangles.len())
-            // .field("bbox:", &self.bbox)
-            .finish()
     }
 }
 
@@ -351,7 +200,7 @@ impl Db {
             return Err(DbError::InvalidPartRep);
         }
 
-        let part_id = self.unique_parts.insert(Part { rep: part_rep });
+        let part_id = self.unique_parts.insert(Part::new(part_rep));
         self.mark_part_changed(part_id, EntityChanges::Added);
         Ok(part_id)
     }
@@ -489,11 +338,11 @@ impl Db {
         //process all the mesh unique parts first
         let unique_mesh_parts = other
             .get_parts()
-            .filter(|(_, part)| matches!(part.rep, PartRep::Mesh(_)))
+            .filter(|(_, part)| matches!(part.get_rep(), PartRep::Mesh(_)))
             .collect::<Vec<_>>();
 
         for (unique_part_id, mesh_part) in unique_mesh_parts {
-            if let PartRep::Mesh(mesh) = &mesh_part.rep {
+            if let PartRep::Mesh(mesh) = &mesh_part.get_rep() {
                 let new_unique_part_id = self.add_part_rep(PartRep::Mesh(mesh.clone()))?;
 
                 // self.mark_part_changed(new_unique_part_id, EntityChanges::Added);
@@ -504,7 +353,7 @@ impl Db {
         //process all unique composed parts
         let unique_composed_parts = other
             .get_parts()
-            .filter(|(_, part)| matches!(part.rep, PartRep::ComposedPart(_)))
+            .filter(|(_, part)| matches!(part.get_rep(), PartRep::ComposedPart(_)))
             .collect::<Vec<_>>();
 
         let mut unprocessed_unique_composed_parts = unique_composed_parts
@@ -524,7 +373,7 @@ impl Db {
                     continue;
                 }
 
-                if let PartRep::ComposedPart(instances) = &composed_parts.rep {
+                if let PartRep::ComposedPart(instances) = &composed_parts.get_rep() {
                     let can_process = instances.iter().all(|i| {
                         let part_id = &other.get_part_from_part_instance(i);
                         match part_id {
@@ -564,9 +413,13 @@ impl Db {
                         let item_index = unprocessed_unique_composed_parts
                             .iter()
                             .enumerate()
-                            .find(|(_, u)| u.0 == unique_part_id.0)
-                            .map(|(index, _)| index);
-
+                            .find_map(|(index, u)| {
+                                if *u == unique_part_id {
+                                    Some(index)
+                                } else {
+                                    None
+                                }
+                            });
                         if let Some(index) = item_index {
                             unprocessed_unique_composed_parts.remove(index);
                         }
@@ -1159,6 +1012,8 @@ mod tests {
     use glam::Vec3;
     use slotmap::Key;
 
+    use crate::core::types::mesh::Mesh;
+
     use super::*;
 
     #[test]
@@ -1173,7 +1028,7 @@ mod tests {
             .unwrap();
 
         let retrieved = db.get_part_data(&part_id).unwrap();
-        match &retrieved.rep {
+        match &retrieved.get_rep() {
             PartRep::Mesh(m) => assert_eq!(m.vertices.len(), mesh.vertices.len()),
             _ => panic!("Expected Mesh part"),
         }

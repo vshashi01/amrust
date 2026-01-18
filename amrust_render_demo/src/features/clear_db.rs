@@ -4,10 +4,13 @@ use async_trait::async_trait;
 use log::info;
 use smol::Timer;
 
-use crate::{
-    commands::{Command, CommandCategory, CommandContext, CommandsService},
-    operation::{DbContext, Operation, OperationNature, OperationResponse},
-    operation_manager::OperationRequest,
+use crate::core::{
+    interfaces::{
+        command::{Command, CommandCategory, CommandContext},
+        operation::{Operation, OperationNature, OperationResponse},
+    },
+    services::{command_service::CommandService, operation_service::OperationServiceRequest},
+    types::db_context::DbContext,
 };
 
 pub struct ClearDbOps;
@@ -50,7 +53,7 @@ impl Command for ClearDbCommand {
     }
 
     fn is_enabled(&self, context: &CommandContext) -> bool {
-        !context.db_view_model.is_empty()
+        !context.db_view_model.is_database_empty()
     }
 
     fn category(&self) -> CommandCategory {
@@ -58,9 +61,12 @@ impl Command for ClearDbCommand {
     }
 
     fn execute(&self, context: &mut CommandContext) {
-        if let Err(err) = context
-            .operation_queue_tx
-            .send_blocking(OperationRequest::ModalOpImmediate(Box::new(ClearDbOps)))
+        if let Err(err) =
+            context
+                .operation_queue_tx
+                .send_blocking(OperationServiceRequest::ModalOpImmediate(Box::new(
+                    ClearDbOps,
+                )))
         {
             info!("Failed to queue clear db operation: {:?}", err);
         }
@@ -68,6 +74,6 @@ impl Command for ClearDbCommand {
 }
 
 /// Register all commands provided by the clear_db module
-pub fn register_commands(commands_service: &mut CommandsService) {
+pub fn register_commands(commands_service: &mut CommandService) {
     commands_service.register_command(Box::new(ClearDbCommand));
 }

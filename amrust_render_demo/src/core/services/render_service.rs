@@ -11,26 +11,26 @@ use smol::{
     lock::RwLock,
 };
 
-use crate::render_db::RenderDb;
+use crate::core::render_db::RenderDb;
 
-pub enum RenderMessage {
+pub enum RenderServiceRequest {
     UpdateCamera(OrthographicCameraData),
     TransformCamera(Vec<CameraTransform>),
     ResizeViewport(u32, u32),
     Render,
 }
 
-pub enum RenderResponse {
+pub enum RenderServiceResponse {
     NewTextureView(wgpu::TextureView),
     RenderComplete,
 }
 
-pub struct RenderWorker {
+pub struct RenderService {
     renderer: Renderer,
     camera: OrthographicCameraData,
 
-    receiver: Receiver<RenderMessage>,
-    sender: Sender<RenderResponse>,
+    receiver: Receiver<RenderServiceRequest>,
+    sender: Sender<RenderServiceResponse>,
 
     render_texture_data: RenderTextureData,
     render_db: Arc<RwLock<RenderDb>>,
@@ -45,12 +45,12 @@ pub struct RendererSettings {
     pub initial_camera_data: OrthographicCameraData,
 }
 
-impl RenderWorker {
+impl RenderService {
     pub async fn new(
         renderer_settings: RendererSettings,
         render_db: Arc<RwLock<RenderDb>>,
-        receiver: Receiver<RenderMessage>,
-        sender: Sender<RenderResponse>,
+        receiver: Receiver<RenderServiceRequest>,
+        sender: Sender<RenderServiceResponse>,
     ) -> Self {
         match Renderer::from_existing_device_and_queue(
             renderer_settings.device,
@@ -86,7 +86,7 @@ impl RenderWorker {
         //send this message at least once.
         if let Err(err) = self
             .sender
-            .send(RenderResponse::NewTextureView(
+            .send(RenderServiceResponse::NewTextureView(
                 self.render_texture_data.texture_view.clone(),
             ))
             .await
@@ -97,11 +97,11 @@ impl RenderWorker {
         loop {
             match self.receiver.try_recv() {
                 Ok(msg) => match msg {
-                    RenderMessage::UpdateCamera(orthographic_camera_data) => {
+                    RenderServiceRequest::UpdateCamera(orthographic_camera_data) => {
                         self.camera = orthographic_camera_data;
                         self.renderer.update_camera(&self.camera);
                     }
-                    RenderMessage::TransformCamera(transforms) => {
+                    RenderServiceRequest::TransformCamera(transforms) => {
                         for transform in transforms {
                             self.camera.transform(transform);
                         }
@@ -109,13 +109,13 @@ impl RenderWorker {
                         self.renderer.update_camera(&self.camera);
                         info!("Transformed camera");
                     }
-                    RenderMessage::ResizeViewport(width, height) => {
+                    RenderServiceRequest::ResizeViewport(width, height) => {
                         self.renderer.set_size(width, height);
                         self.render_texture_data = self.renderer.create_render_texture_data();
 
                         if let Err(err) = self
                             .sender
-                            .send(RenderResponse::NewTextureView(
+                            .send(RenderServiceResponse::NewTextureView(
                                 self.render_texture_data.texture_view.clone(),
                             ))
                             .await
@@ -123,7 +123,7 @@ impl RenderWorker {
                             info!("{err:?}");
                         }
                     }
-                    RenderMessage::Render => {
+                    RenderServiceRequest::Render => {
                         let render_db = self.render_db.read().await;
                         let render_data = render_db.get_renderables().collect::<Vec<_>>();
                         // info!("Render data count: {:?}", render_data.len());
@@ -133,8 +133,10 @@ impl RenderWorker {
                             .await
                         {
                             Ok(_) => {
-                                if let Err(err) =
-                                    self.sender.send(RenderResponse::RenderComplete).await
+                                if let Err(err) = self
+                                    .sender
+                                    .send(RenderServiceResponse::RenderComplete)
+                                    .await
                                 {
                                     info!("{err:?}");
                                 }

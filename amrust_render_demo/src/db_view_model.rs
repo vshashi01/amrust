@@ -8,14 +8,24 @@ use amrust_render::{
 };
 
 use crate::{
-    amrust_db::{Db, EntityChanges, Mesh, Part, PartId, PartInstanceId, PartRep, Transformation},
-    render_db::{RenderMeshId, RenderObject, RenderObjectId},
+    core::{
+        amrust_db::{Db, EntityChanges},
+        app_mode::AppMode,
+        interfaces::db_view::DbView,
+        render_db::{RenderMeshId, RenderObject, RenderObjectId},
+        types::{
+            identifiable::Identifiable,
+            mesh::Mesh,
+            part::{Part, PartId, PartRep},
+            part_instance::PartInstanceId,
+            part_rep_type::PartRepType,
+            transformation::Transformation,
+        },
+    },
+    ui::tree_item_viewer::TreeItem,
 };
 
-use crate::amrust_db::Identifiable;
-use crate::app_mode::AppMode;
-use crate::render_db::RenderDb;
-use crate::tree_item_viewer::TreeItem;
+use crate::core::render_db::RenderDb;
 use amrust_render::transformation::Transformation as RenderTransformation;
 
 use std::collections::{HashMap, HashSet};
@@ -603,6 +613,20 @@ pub fn create_object_tree_from_instance(
     None
 }
 
+impl DbView for DbViewModel {
+    fn get_total_visible_bbox(&self, app_mode: AppMode) -> BoundingBox {
+        get_total_bbox_from_cache(self, app_mode)
+    }
+
+    fn get_all_operable_selected_identifiables(&self) -> Vec<Identifiable> {
+        self.get_all_operable_selected_identifiables().collect()
+    }
+
+    fn is_database_empty(&self) -> bool {
+        self.is_empty()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PartCache {
     pub rep: PartRepCache,
@@ -631,12 +655,6 @@ pub struct ComposedPartCache {
     //all instances of this composed part
     //ToDo: Re introduce instances when it is used.
     // pub instances: Vec<PartInstanceId>,
-}
-
-#[derive(Debug, Clone)]
-pub enum PartRepType {
-    Mesh,
-    ComposedPart,
 }
 
 #[derive(Debug, Clone)]

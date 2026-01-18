@@ -1,8 +1,12 @@
 use smol::channel::Sender;
 
-use crate::{
-    app_mode::AppMode, db_view_model::DbViewModel, operation_manager::OperationRequest,
-    render_worker::RenderMessage, services::FileDialogService,
+use crate::core::{
+    app_mode::AppMode,
+    interfaces::db_view::DbView,
+    services::{
+        FileDialogService, operation_service::OperationServiceRequest,
+        render_service::RenderServiceRequest,
+    },
 };
 
 /// Trait for commands that can be executed by the command service
@@ -38,30 +42,31 @@ pub trait Command: Send + Sync {
 /// Context provided to commands during execution
 pub struct CommandContext<'a> {
     /// Current database view model state
-    pub db_view_model: &'a DbViewModel,
+    /// ToDo move Command Context elsewhere
+    pub db_view_model: &'a dyn DbView,
 
     /// Current application mode (Objects vs Build)
     pub current_app_mode: AppMode,
 
     /// Channel for queuing operations
-    pub operation_queue_tx: Sender<OperationRequest>,
+    pub operation_queue_tx: Sender<OperationServiceRequest>,
 
     /// File dialog service for showing dialogs
     pub file_dialog_service: &'a mut FileDialogService,
 
     //Channel for queuing render work
-    pub render_worker_queue_tx: Sender<RenderMessage>,
+    pub render_worker_queue_tx: Sender<RenderServiceRequest>,
     // /// Flag to indicate viewport needs update
     // pub need_viewport_update: &'a mut bool,
 }
 
 impl<'a> CommandContext<'a> {
     pub fn new(
-        db_view_model: &'a DbViewModel,
+        db_view_model: &'a dyn DbView,
         app_mode: AppMode,
-        operation_queue_tx: Sender<OperationRequest>,
+        operation_queue_tx: Sender<OperationServiceRequest>,
         file_dialog_service: &'a mut FileDialogService,
-        render_worker_queue_tx: Sender<RenderMessage>,
+        render_worker_queue_tx: Sender<RenderServiceRequest>,
     ) -> Self {
         Self {
             db_view_model,
