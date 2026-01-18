@@ -860,9 +860,7 @@ fn create_mesh_gpu_data(
     mesh: &Mesh,
 ) -> RenderMeshId {
     let positions = convert_vertices_to_position(&mesh.vertices);
-    // info!("Number of vertices: {}", positions.len());
     let indices = mesh.triangles.clone();
-    // info!("Number of triangles: {}", indices.len() / 3);
     let color = convert_vertices_to_color(&mesh.vertices);
     let wireframe_indices = convert_triangle_indices_to_wireframe_indices(&mesh.triangles);
 

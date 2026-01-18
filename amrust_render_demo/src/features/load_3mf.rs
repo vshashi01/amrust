@@ -304,8 +304,6 @@ impl Command for ImportPartCommand {
             "3D Manufacturing Format",
             vec!["3mf"],
             |path: PathBuf, ctx: &mut CommandContext| {
-                info!("File picked is: {:?}", path);
-
                 if let Some(ext) = path.extension()
                     && ext == "3mf"
                 {
@@ -314,7 +312,7 @@ impl Command for ImportPartCommand {
                         .operation_queue_tx
                         .send_blocking(OperationServiceRequest::BackgroundOp(Box::new(ops)))
                     {
-                        info!("Failed to queue import operation: {:?}", err);
+                        log::error!("Failed to queue import operation: {err:?}");
                     }
                 }
             },

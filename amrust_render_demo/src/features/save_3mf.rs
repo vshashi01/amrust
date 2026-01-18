@@ -128,18 +128,12 @@ impl Operation for Save3mfOps {
                     })
                     .await
                 {
-                    Ok(resp) => {
-                        info!("Operation Responsed: {resp:?}");
-                        resp
-                    }
-                    Err(err) => {
-                        info!("Context error: {err:?}");
-                        OperationResponse::Failed {
-                            name: "Save 3MF",
-                            error: Box::new(err),
-                            is_restore_db_required: false,
-                        }
-                    }
+                    Ok(resp) => resp,
+                    Err(err) => OperationResponse::Failed {
+                        name: "Save 3MF",
+                        error: Box::new(err),
+                        is_restore_db_required: false,
+                    },
                 }
             }
             Err(err) => OperationResponse::Failed {
@@ -158,12 +152,12 @@ fn save(
 ) -> Result<(), DbTo3mfError> {
     let model_builder = match save_mode {
         SaveMode::Scene => {
-            info!("Saving Scene");
+            log::debug!("Saving Scene");
             save_scene(db)
         }
         SaveMode::PartsOnly(part_ids) => {
             if !part_ids.is_empty() {
-                info!("Saving Parts");
+                log::debug!("Saving Parts");
                 save_parts(db, part_ids)
             } else {
                 Err(DbTo3mfError::NoPartsToBeSaved)
@@ -171,7 +165,7 @@ fn save(
         }
         SaveMode::PartInstances(part_instance_ids) => {
             if !part_instance_ids.is_empty() {
-                info!("Saving Specific Instances");
+                log::debug!("Saving Specific Instances");
                 save_instances(db, part_instance_ids)
             } else {
                 Err(DbTo3mfError::NoPartsToBeSaved)
@@ -187,7 +181,7 @@ fn save(
             Ok(package.write(threemf)?)
         }
         Err(err) => {
-            info!("Something went wrong: {err:?}");
+            log::error!("Something went wrong: {err:?}");
             Err(err)
         }
     }
@@ -626,8 +620,6 @@ impl Command for SaveSceneCommand {
             "3D Manufacturing Format",
             "3mf",
             |path: PathBuf, ctx: &mut CommandContext| {
-                info!("File picked is: {:?}", path);
-
                 if let Some(ext) = path.extension()
                     && ext == "3mf"
                 {
@@ -639,7 +631,7 @@ impl Command for SaveSceneCommand {
                         .operation_queue_tx
                         .send_blocking(OperationServiceRequest::ModalOpWait(Box::new(ops)))
                     {
-                        info!("Failed to queue import operation: {:?}", err);
+                        log::error!("Failed to queue import operation: {err:?}");
                     }
                 }
             },
@@ -674,8 +666,6 @@ impl Command for SavePartCommand {
             "3D Manufacturing Format",
             "3mf",
             |path: PathBuf, ctx: &mut CommandContext| {
-                info!("File picked is: {:?}", path);
-
                 if let Some(ext) = path.extension()
                     && ext == "3mf"
                 {
@@ -721,7 +711,7 @@ impl Command for SavePartCommand {
                         }
                     };
                     if let Err(err) = ctx.operation_queue_tx.send_blocking(ops_msg) {
-                        info!("Failed to queue save part operation: {:?}", err);
+                        log::error!("Failed to queue save part operation: {err:?}");
                     }
                 }
             },

@@ -43,7 +43,7 @@ impl Command for UnzoomSceneCommand {
             .render_worker_queue_tx
             .send_blocking(RenderServiceRequest::TransformCamera(transforms))
         {
-            info!("Error while sending Render message for unzoom: {err:?}");
+            log::error!("Error while sending Render message for unzoom: {err:?}");
         }
     }
 }

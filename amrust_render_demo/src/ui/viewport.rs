@@ -34,7 +34,6 @@ impl Viewport3D {
 
         if ui_response.inner.dragged_by(egui::PointerButton::Secondary) {
             let delta = ui_response.inner.drag_delta();
-            // info!("Drag delta is: {:?}", delta);
             let drag_sensitivity = 0.01;
             transforms.push(CameraTransform::Rotate {
                 pivot: bbox.center(),
@@ -54,7 +53,7 @@ impl Viewport3D {
                 glam::Vec3::new(-delta.x, -delta.y, 0.0) * pan_sensitivity,
             ));
         } else if ui_response.inner.clicked() {
-            info!("Clicked in the region");
+            log::debug!("Clicked in the region");
         }
 
         if !transforms.is_empty()

@@ -1,5 +1,4 @@
 use egui::ahash::{HashSet, HashSetExt};
-use log::info;
 use smol::{
     Executor, Task,
     channel::{self, Receiver, Sender, TryRecvError},
@@ -124,7 +123,7 @@ impl OperationService {
 
         for i in finished_task_index {
             let task = self.running_tasks.remove(i);
-            info!("Remove task: {task:?}");
+            log::debug!("Remove task: {task:?}");
         }
 
         match self.operation_queue_rx.try_recv() {
@@ -255,13 +254,11 @@ impl OperationService {
                     .await
                 {
                     Ok((ops_context, ops)) => {
-                        info!("running the Operation in separate thread");
-                        //let response = ops.execute(&mut ops_context).await;
-
+                        log::debug!("running the Operation in separate thread");
                         let response = process_operation(ops, ops_context, db_changes_tx).await;
 
                         if let Err(err) = operation_response_tx.send(response).await {
-                            info!("{err:?}");
+                            log::error!("{err:?}");
                         }
                     }
                     Err(_) => {
@@ -272,7 +269,7 @@ impl OperationService {
                             })
                             .await
                         {
-                            info!("{err:?}");
+                            log::error!("{err:?}");
                         }
                     }
                 }

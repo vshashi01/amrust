@@ -1,4 +1,3 @@
-use log::info;
 use rkyv::util::AlignedVec;
 use smol::{channel::Sender, lock::RwLock};
 use thiserror::Error;
@@ -353,7 +352,7 @@ async fn handle_success(ctx: DbContext, db_changes_tx: &Sender<DbChangeMsg>) {
 
                 let mut write_db = ctx.main_db.write().await;
                 if let Err(err) = write_db.reattach(detached_db) {
-                    info!("Reattaching DetachedDb failed: {err:?}");
+                    log::error!("Reattaching DetachedDb failed: {err:?}");
 
                     if let Some(archive) = &ctx.detached_db_archive {
                         unsafe {
@@ -376,7 +375,7 @@ async fn handle_success(ctx: DbContext, db_changes_tx: &Sender<DbChangeMsg>) {
             if let Some(db) = ctx.append_db {
                 let mut write_main_db = ctx.main_db.write().await;
                 if let Err(err) = write_main_db.append(db) {
-                    info!("Appending AppendDb failed: {err:?}");
+                    log::error!("Appending AppendDb failed: {err:?}");
                     unsafe {
                         if let Err(err) = write_main_db.restore_from_bytes(&ctx.main_db_archive) {
                             panic!("Restoring the MainDb from Archived Bytes failed: {err:?}")

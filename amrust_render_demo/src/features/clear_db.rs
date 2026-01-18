@@ -68,7 +68,7 @@ impl Command for ClearDbCommand {
                     ClearDbOps,
                 )))
         {
-            info!("Failed to queue clear db operation: {:?}", err);
+            log::error!("Failed to queue clear db operation: {err:?}");
         }
     }
 }

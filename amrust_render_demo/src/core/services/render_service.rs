@@ -5,7 +5,6 @@ use amrust_render::{
     camera::{CameraData, CameraTransform, OrthographicCameraData},
     renderer::{RenderTextureData, Renderer},
 };
-use log::info;
 use smol::{
     channel::{Receiver, Sender, TryRecvError},
     lock::RwLock,
@@ -76,7 +75,7 @@ impl RenderService {
                 }
             }
             Err(err) => {
-                info!("{err:?}");
+                log::error!("{err:?}");
                 panic!("{err}")
             }
         }
@@ -91,7 +90,7 @@ impl RenderService {
             ))
             .await
         {
-            info!("{err:?}");
+            log::error!("{err:?}");
         }
 
         loop {
@@ -107,7 +106,7 @@ impl RenderService {
                         }
 
                         self.renderer.update_camera(&self.camera);
-                        info!("Transformed camera");
+                        // log::debug!("Transformed camera");
                     }
                     RenderServiceRequest::ResizeViewport(width, height) => {
                         self.renderer.set_size(width, height);
@@ -120,13 +119,13 @@ impl RenderService {
                             ))
                             .await
                         {
-                            info!("{err:?}");
+                            log::error!("{err:?}");
                         }
                     }
                     RenderServiceRequest::Render => {
                         let render_db = self.render_db.read().await;
                         let render_data = render_db.get_renderables().collect::<Vec<_>>();
-                        // info!("Render data count: {:?}", render_data.len());
+                        log::debug!("Render data count: {:?}", render_data.len());
                         match self
                             .renderer
                             .render_to_texture(&render_data, &self.render_texture_data)
@@ -138,11 +137,14 @@ impl RenderService {
                                     .send(RenderServiceResponse::RenderComplete)
                                     .await
                                 {
-                                    info!("{err:?}");
+                                    log::error!("{err:?}");
                                 }
                             }
 
-                            Err(err) => panic!("{err:?}"),
+                            Err(err) => {
+                                log::error!("{err:?}");
+                                panic!("{err:?}")
+                            }
                         }
                     }
                 },

@@ -30,7 +30,6 @@ use egui_dock::{DockArea, DockState, NodeIndex};
 use egui_wgpu::wgpu::SurfaceError;
 use egui_wgpu::{ScreenDescriptor, wgpu};
 use glam::Vec3;
-use log::info;
 use smol::channel::{Receiver, Sender, TryRecvError};
 use smol::lock::RwLock;
 use smol::{Executor, channel};
@@ -135,7 +134,7 @@ impl AppState {
                 .name("smol-executor".to_owned())
                 .spawn(move || {
                     smol::block_on(async move {
-                        info!("Trying to run executor");
+                        log::debug!("Trying to run executor");
                         exec.run(async move {
                             loop {
                                 smol::Timer::after(std::time::Duration::from_millis(1)).await;
@@ -166,7 +165,7 @@ impl AppState {
             let internal_render_db = render_db.clone();
             executor
                 .spawn(async {
-                    info!("Attempted to println in separate thread");
+                    log::debug!("Attempted to println in separate thread");
                     let mut render_worker = RenderService::new(
                         renderer_settings,
                         internal_render_db,
@@ -227,11 +226,8 @@ impl AppState {
                         .egui_renderer
                         .register_texture(&self.device, &texture_view);
                     let _ = self.texture_id.insert(id);
-                    // info!("New texture view is attempted!")
                 }
-                RenderServiceResponse::RenderComplete => {
-                    // info!("Rendered");
-                }
+                RenderServiceResponse::RenderComplete => {}
             },
             Err(err) => match err {
                 TryRecvError::Empty => {}
@@ -352,11 +348,12 @@ impl App {
         match surface_texture {
             Err(SurfaceError::Outdated) => {
                 // Ignoring outdated to allow resizing and minimization
-                info!("wgpu surface outdated");
+                log::error!("wgpu surface outdated");
                 return;
             }
-            Err(_) => {
-                surface_texture.expect("Failed to acquire next swap chain texture");
+            Err(err) => {
+                log::error!("{err:?}");
+                // surface_texture.expect("Failed to acquire next swap chain texture");
                 return;
             }
             Ok(_) => {
@@ -488,11 +485,10 @@ impl App {
 
                 match new_db_cache {
                     Ok(cache) => {
-                        info!("Updated cache");
                         state.db_view_model = cache;
                         state.need_viewport_update = true;
                     }
-                    Err(_) => info!("Updating data went wrong!"),
+                    Err(_) => log::error!("Updating data went wrong!"),
                 }
             }
 
@@ -611,7 +607,7 @@ impl App {
                     AppMode::Build => toolsheets.selected_build_items().copied().collect(),
                 };
 
-                info!("Selected identifiables are: {selected_identifiables:?}");
+                log::debug!("Selected identifiables are: {selected_identifiables:?}");
 
                 let mut tree_items = vec![];
                 for id in &selected_identifiables {
@@ -710,14 +706,14 @@ impl App {
             match self.operation_response_rx.try_recv() {
                 Ok(response) => match response {
                     OperationResponse::Succeeded { name } => {
-                        info!("Operation Success: {name}");
+                        log::info!("Operation Success: {name}");
                         state.need_viewport_update = true;
                     }
                     OperationResponse::Failed { name, error, .. } => {
-                        info!("Operation Failed: {name} with error {error:?}");
+                        log::info!("Operation Failed: {name} with error {error:?}");
                     }
                     OperationResponse::Aborted { name, .. } => {
-                        info!("Operation Cancelled: {name}");
+                        log::info!("Operation Cancelled: {name}");
                     }
                 },
                 Err(err) => match err {
@@ -783,7 +779,7 @@ impl ApplicationHandler for App {
 
         match event {
             WindowEvent::CloseRequested => {
-                info!("The close button was pressed; stopping");
+                log::info!("The close button was pressed; stopping");
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
