@@ -18,7 +18,7 @@ use crate::db_view_model::{
     create_objects_list, create_scene_tree_items_by_unique_parts, get_total_bbox_from_cache,
 };
 use crate::egui_tools::EguiRenderer;
-use crate::features::{clear_db, load_3mf, save_3mf, unzoom_scene};
+use crate::features::{clear_db, load_3mf, save_3mf, unload, unzoom_scene};
 use crate::ui::part_list::PartList;
 use crate::ui::toolsheets::Toolsheets;
 use crate::ui::tree_item_viewer::TreeItemViewer;
@@ -270,6 +270,7 @@ impl App {
         save_3mf::register_commands(&mut command_service);
         clear_db::register_commands(&mut command_service);
         unzoom_scene::register_commands(&mut command_service);
+        unload::register_commands(&mut command_service);
 
         let (operation_queue_tx, operation_queue_rx) = channel::unbounded();
         let (operation_response_tx, operation_response_rx) = channel::unbounded();
@@ -489,7 +490,7 @@ impl App {
                 let device = state.device.clone();
 
                 let new_db_cache = smol::block_on(async {
-                    db_view_model::update_view_model_from_db(
+                    db_view_model::update_view_model_from_db_new(
                         temp_db,
                         temp_render_db,
                         moved_cache,

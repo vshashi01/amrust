@@ -12,6 +12,8 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 
 use crate::core::interfaces::db_reader::DbReader;
+use crate::core::interfaces::db_reader_writer::DbReaderWriter;
+use crate::core::interfaces::db_writer::DbWriter;
 use crate::core::types::archived::ArchivedSlotMapId;
 use crate::core::types::part::{Part, PartId, PartRep};
 use crate::core::types::part_instance::{PartInstance, PartInstanceId};
@@ -766,7 +768,49 @@ impl DbReader for Db {
     fn get_part<'a>(&'a self, part_id: &PartId) -> Option<&'a Part> {
         self.unique_parts.get(*part_id)
     }
+
+    fn can_remove_part<'a>(&'a self, id: &PartId) -> bool {
+        !self
+            .get_part_instances()
+            .any(|(_, instance_data, _)| instance_data.part_id == *id)
+    }
+
+    fn can_remove_part_instance<'a>(&'a self, id: &PartInstanceId) -> bool {
+        !self.get_parts().any(|(_, part)| match part.get_rep() {
+            PartRep::Mesh(_) => false,
+            PartRep::ComposedPart(part_instance_ids) => part_instance_ids.contains(&id),
+        })
+    }
 }
+
+impl DbWriter for Db {
+    fn clear_all(&mut self) {
+        self.clear_all();
+    }
+
+    fn remove_part(&mut self, id: PartId) -> bool {
+        if self.unique_parts.remove(id).is_some() {
+            self.mark_part_changed(id, EntityChanges::Removed);
+            return true;
+        }
+
+        false
+    }
+
+    fn remove_part_instance(&mut self, id: PartInstanceId) -> bool {
+        if self.part_instances.remove(id).is_some() {
+            self.mark_part_instance_changed(id, EntityChanges::Removed);
+            if let Some(scene) = &mut self.scene {
+                scene.instances.retain(|instace_id| *instace_id != id);
+            }
+            return true;
+        }
+
+        false
+    }
+}
+
+impl DbReaderWriter for Db {}
 
 #[derive(Debug, Error)]
 pub enum DetachedDbError {
@@ -1003,6 +1047,16 @@ impl DbReader for DetachedDb {
         } else {
             None
         }
+    }
+
+    fn can_remove_part<'a>(&'a self, id: &PartId) -> bool {
+        //for now we wont allow removing Parts from DetachedDb
+        false
+    }
+
+    fn can_remove_part_instance<'a>(&'a self, id: &PartInstanceId) -> bool {
+        // for now we wont allow removing Part Instances for DetachedDb
+        false
     }
 }
 

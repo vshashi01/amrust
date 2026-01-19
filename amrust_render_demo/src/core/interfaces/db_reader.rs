@@ -27,4 +27,8 @@ pub trait DbReader: Send + Sync + 'static {
     ) -> Box<dyn Iterator<Item = (PartInstanceId, &'a PartInstance, &'a Part)> + 'a>;
 
     fn get_scene<'a>(&'a self) -> Option<&'a Scene>;
+
+    fn can_remove_part<'a>(&'a self, id: &PartId) -> bool;
+
+    fn can_remove_part_instance<'a>(&'a self, id: &PartInstanceId) -> bool;
 }

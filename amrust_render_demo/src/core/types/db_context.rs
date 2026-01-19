@@ -6,6 +6,8 @@ use crate::core::{
     amrust_db::{Db, DetachedDb},
     interfaces::{
         db_reader::DbReader,
+        db_reader_writer::DbReaderWriter,
+        db_writer::DbWriter,
         operation::{Operation, OperationNature, OperationResponse},
     },
     types::identifiable::Identifiable,
@@ -125,6 +127,32 @@ impl DbContext {
 
             DbContextType::AppendOnly => {
                 if let Some(db) = &self.append_db {
+                    Ok(f(db))
+                } else {
+                    Err(DbContextError::AppendDbMissing)
+                }
+            }
+        }
+    }
+
+    /// Can get Write access to the effective Db in the context
+    /// The effective Db maybe different based on the OperationContext.
+    /// Note this is not the Main Db always, to get that you need to use get_main_db instead
+    /// Caution with holding this too long in the ReadFull and WriteFull context
+    /// since it can lead to deadlocks in the system
+    pub async fn get_db_mut<T>(
+        &mut self,
+        f: impl FnOnce(&mut dyn DbReaderWriter) -> T,
+    ) -> Result<T, DbContextError> {
+        match &self.r#type {
+            DbContextType::Detached => Err(DbContextError::DetachedContext),
+            DbContextType::ReadFull | DbContextType::WriteFull => {
+                let mut write_db = self.main_db.write().await;
+                Ok(f(&mut *write_db))
+            }
+
+            DbContextType::AppendOnly => {
+                if let Some(db) = &mut self.append_db {
                     Ok(f(db))
                 } else {
                     Err(DbContextError::AppendDbMissing)

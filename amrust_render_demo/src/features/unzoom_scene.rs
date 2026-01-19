@@ -48,7 +48,7 @@ impl Command for UnzoomSceneCommand {
     }
 }
 
-/// Register all commands provided by the clear_db module
+/// Register all commands provided by the module
 pub fn register_commands(commands_service: &mut CommandService) {
     commands_service.register_command(Box::new(UnzoomSceneCommand));
 }
