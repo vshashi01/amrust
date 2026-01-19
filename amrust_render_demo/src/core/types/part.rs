@@ -68,4 +68,20 @@ pub enum PartRep {
     ComposedPart(Vec<PartInstanceId>),
 }
 
+impl PartRep {
+    pub fn as_mesh(&self) -> Option<&Mesh> {
+        match self {
+            PartRep::Mesh(mesh) => Some(mesh),
+            _ => None,
+        }
+    }
+
+    pub fn as_composed_part(&self) -> Option<&Vec<PartInstanceId>> {
+        match self {
+            PartRep::ComposedPart(instances) => Some(instances),
+            _ => None,
+        }
+    }
+}
+
 unsafe impl rkyv::Portable for PartRep {}

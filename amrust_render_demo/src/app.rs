@@ -8,6 +8,7 @@ use crate::core::services::command_service::CommandService;
 use crate::core::services::operation_service::{
     OperationService, OperationServiceError, OperationServiceRequest,
 };
+use crate::core::services::picker_service::PickerService;
 use crate::core::services::render_service::{
     RenderService, RenderServiceRequest, RenderServiceResponse, RendererSettings,
 };
@@ -54,6 +55,7 @@ struct AppState {
     pub db: Arc<RwLock<Db>>,
     pub toolsheets: Option<Toolsheets>,
     pub viewport_3d: Viewport3D,
+    pub picker_service: PickerService,
     pub current_app_mode: AppMode,
     pub current_render_mode: AppMode,
     pub need_viewport_update: bool,
@@ -191,6 +193,7 @@ impl AppState {
             db: Arc::new(RwLock::new(Db::new())),
             toolsheets: None,
             viewport_3d: Viewport3D {},
+            picker_service: PickerService,
             current_app_mode: AppMode::Build,
             current_render_mode: AppMode::Build,
             need_viewport_update: false,
@@ -443,9 +446,15 @@ impl App {
             egui::CentralPanel::default().show(state.egui_renderer.context(), |ui| {
                 match state.texture_id {
                     Some(id) => {
-                        state
-                            .viewport_3d
-                            .ui(ui, id, &mut state.render_message_tx, bbox);
+                        state.viewport_3d.ui(
+                            ui,
+                            id,
+                            &mut state.render_message_tx,
+                            bbox,
+                            &state.db,
+                            &state.current_app_mode,
+                            &state.picker_service,
+                        );
                     }
                     None => {
                         ui.label("Rendering Texture ID is missing!!");

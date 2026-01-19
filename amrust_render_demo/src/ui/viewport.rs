@@ -1,8 +1,16 @@
-use amrust_render::{bounding_box::BoundingBox, camera::CameraTransform};
+use amrust_render::{
+    bounding_box::BoundingBox,
+    camera::{CameraTransform, OrthographicCameraData},
+};
 use egui::{Image, UiBuilder, Vec2, epaint};
 use log::info;
 use smol::channel::Sender;
+use smol::lock::RwLock;
+use std::sync::Arc;
 
+use crate::core::amrust_db::Db;
+use crate::core::app_mode::AppMode;
+use crate::core::services::picker_service::PickerService;
 use crate::core::services::render_service::RenderServiceRequest;
 
 pub struct Viewport3D {}
@@ -14,6 +22,9 @@ impl Viewport3D {
         texture_id: epaint::TextureId,
         render_service_request_sender: &Sender<RenderServiceRequest>,
         bbox: &BoundingBox,
+        db: &Arc<RwLock<Db>>,
+        app_mode: &AppMode,
+        picker_service: &PickerService,
     ) {
         let size = ui.available_size() - Vec2::splat(10.0);
         let image_texture = Image::new((texture_id, size)).sense(egui::Sense::all());
@@ -54,6 +65,23 @@ impl Viewport3D {
             ));
         } else if ui_response.inner.clicked() {
             log::debug!("Clicked in the region");
+            if let Some(pos) = ui_response.inner.interact_pointer_pos() {
+                if let Some(db_read) = db.try_read() {
+                    let screen_point = glam::Vec2::new(pos.x, pos.y);
+                    let viewport_size = glam::Vec2::new(size.x, size.y);
+                    let camera = OrthographicCameraData::default(); // TODO: get real camera
+                    let radius = 0.1; // example radius
+                    let picks = picker_service.pick(
+                        &db_read,
+                        app_mode,
+                        screen_point,
+                        viewport_size,
+                        &camera,
+                        radius,
+                    );
+                    log::info!("Picked entities: {:?}", picks);
+                }
+            }
         }
 
         if !transforms.is_empty()
