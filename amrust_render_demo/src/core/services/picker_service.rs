@@ -3,7 +3,7 @@ use crate::core::app_mode::AppMode;
 use crate::core::types::identifiable::Identifiable;
 use amrust_render::bounding_box::BoundingBox;
 use amrust_render::camera::{CameraData, OrthographicCameraData};
-use glam::{Vec2, Vec3};
+use glam::{Mat4, Vec2, Vec3};
 
 #[derive(Debug, Clone)]
 pub struct PickedEntity {
@@ -27,37 +27,35 @@ impl PickerService {
         app_mode: &AppMode,
         screen_point: Vec2,
         viewport_size: Vec2,
-        camera: &OrthographicCameraData,
+        view_proj: Mat4,
         radius: f32,
     ) -> Vec<PickedEntity> {
-        let ray = screen_to_ray(screen_point, viewport_size, camera);
+        let ray = screen_to_ray(screen_point, viewport_size, view_proj);
         let mut results = Vec::new();
 
         match app_mode {
             AppMode::Build => {
                 if let Ok(scene) = db.get_scene() {
                     for &instance_id in &scene.instances {
-                        if let Ok(instance) = db.get_part_instance_data(&instance_id) {
-                            if let Ok(part) = db.get_part_data(&instance.part_id) {
-                                if let Some(mesh) = part.get_rep().as_mesh() {
-                                    let transformed_bbox =
-                                        compute_transformed_bbox(mesh, &instance.transform);
-                                    if !ray_bbox_intersect(&ray, &transformed_bbox) {
-                                        continue;
-                                    }
-                                    let local_ray =
-                                        transform_ray_to_local(&ray, &instance.transform);
-                                    let intersections = intersect_ray_mesh(&local_ray, mesh);
-                                    for intersection in intersections {
-                                        let distance = distance_point_to_ray(&intersection, &ray);
-                                        if distance <= radius {
-                                            results.push(PickedEntity {
-                                                entity: Identifiable::PartInstance(instance_id),
-                                                intersection,
-                                                distance,
-                                            });
-                                        }
-                                    }
+                        if let Ok(instance) = db.get_part_instance_data(&instance_id)
+                            && let Ok(part) = db.get_part_data(&instance.part_id)
+                            && let Some(mesh) = part.get_rep().as_mesh()
+                        {
+                            let transformed_bbox =
+                                compute_transformed_bbox(mesh, &instance.transform);
+                            if !ray_bbox_intersect(&ray, &transformed_bbox) {
+                                continue;
+                            }
+                            let local_ray = transform_ray_to_local(&ray, &instance.transform);
+                            let intersections = intersect_ray_mesh(&local_ray, mesh);
+                            for intersection in intersections {
+                                let distance = distance_point_to_ray(&intersection, &ray);
+                                if distance <= radius {
+                                    results.push(PickedEntity {
+                                        entity: Identifiable::PartInstance(instance_id),
+                                        intersection,
+                                        distance,
+                                    });
                                 }
                             }
                         }
@@ -88,34 +86,25 @@ impl PickerService {
                         for &child_instance_id in composed {
                             if let Ok(child_instance) =
                                 db.get_part_instance_data(&child_instance_id)
+                                && let Ok(child_part) = db.get_part_data(&child_instance.part_id)
+                                && let Some(child_mesh) = child_part.get_rep().as_mesh()
                             {
-                                if let Ok(child_part) = db.get_part_data(&child_instance.part_id) {
-                                    if let Some(child_mesh) = child_part.get_rep().as_mesh() {
-                                        let combined_transform = child_instance.transform; // Assuming no parent transform here
-                                        let transformed_bbox = compute_transformed_bbox(
-                                            child_mesh,
-                                            &combined_transform,
-                                        );
-                                        if !ray_bbox_intersect(&ray, &transformed_bbox) {
-                                            continue;
-                                        }
-                                        let local_ray =
-                                            transform_ray_to_local(&ray, &combined_transform);
-                                        let intersections =
-                                            intersect_ray_mesh(&local_ray, child_mesh);
-                                        for intersection in intersections {
-                                            let distance =
-                                                distance_point_to_ray(&intersection, &ray);
-                                            if distance <= radius {
-                                                results.push(PickedEntity {
-                                                    entity: Identifiable::PartInstance(
-                                                        child_instance_id,
-                                                    ),
-                                                    intersection,
-                                                    distance,
-                                                });
-                                            }
-                                        }
+                                let combined_transform = child_instance.transform; // Assuming no parent transform here
+                                let transformed_bbox =
+                                    compute_transformed_bbox(child_mesh, &combined_transform);
+                                if !ray_bbox_intersect(&ray, &transformed_bbox) {
+                                    continue;
+                                }
+                                let local_ray = transform_ray_to_local(&ray, &combined_transform);
+                                let intersections = intersect_ray_mesh(&local_ray, child_mesh);
+                                for intersection in intersections {
+                                    let distance = distance_point_to_ray(&intersection, &ray);
+                                    if distance <= radius {
+                                        results.push(PickedEntity {
+                                            entity: Identifiable::PartInstance(child_instance_id),
+                                            intersection,
+                                            distance,
+                                        });
                                     }
                                 }
                             }
@@ -130,13 +119,13 @@ impl PickerService {
     }
 }
 
-fn screen_to_ray(screen_point: Vec2, viewport_size: Vec2, camera: &OrthographicCameraData) -> Ray {
+fn screen_to_ray(screen_point: Vec2, viewport_size: Vec2, view_proj: Mat4) -> Ray {
     // Normalize to NDC (-1 to 1)
     let ndc_x = (2.0 * screen_point.x / viewport_size.x) - 1.0;
     let ndc_y = 1.0 - (2.0 * screen_point.y / viewport_size.y);
 
     // Orthographic: ray direction is constant, origin varies
-    let view_proj = camera.get_view_matrix() * camera.get_projection_matrix();
+    // let view_proj = camera.get_view_matrix() * camera.get_projection_matrix();
     let inv_view_proj = view_proj.inverse();
 
     let near_point = inv_view_proj * Vec3::new(ndc_x, ndc_y, -1.0).extend(1.0);
@@ -262,8 +251,6 @@ mod tests {
     use super::*;
     use crate::core::amrust_db::Db;
     use crate::core::app_mode::AppMode;
-    use crate::core::types::mesh::Mesh;
-    use crate::core::types::part::Part;
     use amrust_render::camera::OrthographicCameraData;
 
     #[test]
@@ -273,20 +260,25 @@ mod tests {
         let app_mode = AppMode::Build;
         let screen_point = glam::Vec2::new(0.0, 0.0);
         let viewport_size = glam::Vec2::new(800.0, 600.0);
-        let camera = OrthographicCameraData::default();
         let radius = 0.1;
 
-        let results = picker.pick(&db, &app_mode, screen_point, viewport_size, &camera, radius);
+        let results = picker.pick(
+            &db,
+            &app_mode,
+            screen_point,
+            viewport_size,
+            Mat4::IDENTITY,
+            radius,
+        );
         assert!(results.is_empty());
     }
 
     #[test]
     fn test_screen_to_ray() {
-        let camera = OrthographicCameraData::default();
         let screen_point = glam::Vec2::new(400.0, 300.0); // center
         let viewport_size = glam::Vec2::new(800.0, 600.0);
 
-        let ray = screen_to_ray(screen_point, viewport_size, &camera);
+        let ray = screen_to_ray(screen_point, viewport_size, Mat4::IDENTITY);
         // For orthographic, direction should be along Z or something, but depends on camera.
         // Just check it's a ray
         assert!(ray.direction.length() > 0.0);

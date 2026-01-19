@@ -30,7 +30,7 @@ use egui::{Id, Layout, epaint};
 use egui_dock::{DockArea, DockState, NodeIndex};
 use egui_wgpu::wgpu::SurfaceError;
 use egui_wgpu::{ScreenDescriptor, wgpu};
-use glam::Vec3;
+use glam::{Mat4, Vec3};
 use smol::channel::{Receiver, Sender, TryRecvError};
 use smol::lock::RwLock;
 use smol::{Executor, channel};
@@ -66,6 +66,7 @@ struct AppState {
     pub render_db: Arc<RwLock<RenderDb>>,
     pub operation_error_message: Option<String>,
     pub db_view_model: DbViewModel,
+    pub current_view_projection: Mat4,
 }
 
 impl AppState {
@@ -203,6 +204,7 @@ impl AppState {
             render_db,
             operation_error_message: None,
             db_view_model: DbViewModel::new(),
+            current_view_projection: Mat4::IDENTITY,
         }
     }
 
@@ -229,6 +231,9 @@ impl AppState {
                         .egui_renderer
                         .register_texture(&self.device, &texture_view);
                     let _ = self.texture_id.insert(id);
+                }
+                RenderServiceResponse::NewView(view_proj) => {
+                    self.current_view_projection = view_proj;
                 }
                 RenderServiceResponse::RenderComplete => {}
             },
@@ -449,11 +454,12 @@ impl App {
                         state.viewport_3d.ui(
                             ui,
                             id,
-                            &mut state.render_message_tx,
+                            &state.render_message_tx,
                             bbox,
                             &state.db,
                             &state.current_app_mode,
                             &state.picker_service,
+                            state.current_view_projection,
                         );
                     }
                     None => {

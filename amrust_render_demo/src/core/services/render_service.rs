@@ -5,6 +5,7 @@ use amrust_render::{
     camera::{CameraData, CameraTransform, OrthographicCameraData},
     renderer::{RenderTextureData, Renderer},
 };
+use glam::Mat4;
 use smol::{
     channel::{Receiver, Sender, TryRecvError},
     lock::RwLock,
@@ -22,6 +23,7 @@ pub enum RenderServiceRequest {
 pub enum RenderServiceResponse {
     NewTextureView(wgpu::TextureView),
     RenderComplete,
+    NewView(Mat4),
 }
 
 pub struct RenderService {
@@ -98,15 +100,14 @@ impl RenderService {
                 Ok(msg) => match msg {
                     RenderServiceRequest::UpdateCamera(orthographic_camera_data) => {
                         self.camera = orthographic_camera_data;
-                        self.renderer.update_camera(&self.camera);
+                        self.update_camera().await;
                     }
                     RenderServiceRequest::TransformCamera(transforms) => {
                         for transform in transforms {
                             self.camera.transform(transform);
                         }
 
-                        self.renderer.update_camera(&self.camera);
-                        // log::debug!("Transformed camera");
+                        self.update_camera().await;
                     }
                     RenderServiceRequest::ResizeViewport(width, height) => {
                         self.renderer.set_size(width, height);
@@ -157,6 +158,19 @@ impl RenderService {
                     TryRecvError::Closed => break,
                 },
             }
+        }
+    }
+
+    async fn update_camera(&mut self) {
+        self.renderer.update_camera(&self.camera);
+
+        let view_proj = self.camera.get_view_matrix() * self.camera.get_projection_matrix();
+        if let Err(err) = self
+            .sender
+            .send(RenderServiceResponse::NewView(view_proj))
+            .await
+        {
+            log::error!("Sending view projection failed: {err:?}");
         }
     }
 }
