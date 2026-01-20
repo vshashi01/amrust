@@ -20,6 +20,7 @@ use crate::db_view_model::{
 use crate::egui_tools::EguiRenderer;
 use crate::features::{clear_db, load_3mf, save_3mf, unload, unzoom_scene};
 use crate::ui::part_list::PartList;
+use crate::ui::popup_dialog::{self, DialogResponse};
 use crate::ui::toolsheets::Toolsheets;
 use crate::ui::tree_item_viewer::TreeItemViewer;
 use crate::ui::viewport::Viewport3D;
@@ -434,6 +435,11 @@ impl App {
                                 AppMode::Build,
                                 "Build Mode",
                             );
+
+                            #[cfg(debug_assertions)]
+                            if ui.button("Show error dialog").clicked() {
+                                state.operation_error_message = Some("Custom Error".to_string());
+                            }
                         });
                     }
                 });
@@ -750,16 +756,17 @@ impl App {
                 },
             }
 
-            if let Some(message) = state.operation_error_message.clone() {
-                let _ = egui::Modal::new(egui::Id::new("operation_error_modal")).show(
+            if let Some(message) = &state.operation_error_message {
+                match popup_dialog::error_modal_dialog(
                     state.egui_renderer.context(),
-                    |ui| {
-                        ui.label(&message);
-                        if ui.button("OK").clicked() {
-                            state.operation_error_message = None;
-                        }
-                    },
-                );
+                    egui::Id::new("operation_error_modal"),
+                    message,
+                ) {
+                    DialogResponse::Ok => {
+                        state.operation_error_message = None;
+                    }
+                    _ => {}
+                }
             }
 
             state.egui_renderer.end_frame_and_draw(

@@ -46,11 +46,15 @@ where
                 selectable,
             } => {
                 if *selectable && !disabled_items.contains(id) {
-                    if ui
-                        .selectable_label(selected_items.contains(id), name)
-                        .clicked()
-                    {
-                        selected_items.clear();
+                    let selectable_response =
+                        ui.selectable_label(selected_items.contains(id), name);
+
+                    let input = ui.input(|i| i.clone());
+                    if selectable_response.clicked() {
+                        if !input.modifiers.ctrl {
+                            selected_items.clear();
+                        }
+
                         selected_items.push(id.clone());
                     };
                 } else {
