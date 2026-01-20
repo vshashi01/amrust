@@ -1,7 +1,5 @@
-use glam::Vec3;
-
 use amrust_render::{bounding_box::BoundingBox, camera::CameraTransform};
-use log::info;
+use glam::Vec3;
 
 use crate::{
     core::services::render_service::RenderServiceRequest,

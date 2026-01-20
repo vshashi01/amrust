@@ -177,20 +177,31 @@ impl DbViewModel {
             )
     }
 
-    pub fn update_scene_based_render_objects(
+    fn update_scene_based_render_objects(
         &mut self,
         device: &wgpu::Device,
         render_db: Arc<RwLock<RenderDb>>,
+        localized_parts_to_update: Option<&HashSet<PartId>>,
     ) {
         let mut part_id_to_instance_data = HashMap::<PartId, InstanceData>::new();
 
         for instance_id in &self.scene_data {
             if let Some(instance_cache) = self.get_part_instance_data(instance_id) {
-                self.process_part_instance_recursive(
-                    &mut part_id_to_instance_data,
-                    instance_cache,
-                    &Transformation(Mat4::IDENTITY),
-                );
+                if let Some(parts_to_update) = localized_parts_to_update {
+                    if parts_to_update.contains(&instance_cache.part_id) {
+                        self.process_part_instance_recursive(
+                            &mut part_id_to_instance_data,
+                            instance_cache,
+                            &Transformation(Mat4::IDENTITY),
+                        );
+                    }
+                } else {
+                    self.process_part_instance_recursive(
+                        &mut part_id_to_instance_data,
+                        instance_cache,
+                        &Transformation(Mat4::IDENTITY),
+                    );
+                }
             }
         }
 
@@ -253,23 +264,35 @@ impl DbViewModel {
         &mut self,
         device: &wgpu::Device,
         render_db: Arc<RwLock<RenderDb>>,
+        localized_parts_to_update: Option<&HashSet<PartId>>,
     ) {
         let mut mesh_to_transforms = HashMap::<PartId, Vec<Transformation>>::new();
 
         for (part_id, part_cache) in &self.parts_data {
-            self.process_part_for_unique_render(
-                &mut mesh_to_transforms,
-                part_id,
-                part_cache,
-                &Transformation(Mat4::IDENTITY),
-            );
+            if let Some(parts_to_process) = localized_parts_to_update {
+                if parts_to_process.contains(part_id) {
+                    self.process_part_for_unique_render(
+                        &mut mesh_to_transforms,
+                        part_id,
+                        part_cache,
+                        &Transformation(Mat4::IDENTITY),
+                    );
+                }
+            } else {
+                self.process_part_for_unique_render(
+                    &mut mesh_to_transforms,
+                    part_id,
+                    part_cache,
+                    &Transformation(Mat4::IDENTITY),
+                );
+            }
         }
 
         for (mesh_part_id, transforms) in mesh_to_transforms {
-            if !self
-                .unique_parts_based_render_objects
-                .contains_key(&mesh_part_id)
-                && let Some(part_cache) = self.get_part_data(&mesh_part_id)
+            // if !self
+            //     .unique_parts_based_render_objects
+            //     .contains_key(&mesh_part_id)
+            if let Some(part_cache) = self.get_part_data(&mesh_part_id)
                 && let PartRepCache::Mesh(mesh_cache) = &part_cache.rep
             {
                 let instance_data = InstanceData {
@@ -669,132 +692,132 @@ pub struct InstanceData {
     pub transforms: Vec<Transformation>,
 }
 
-pub async fn update_view_model_from_db(
-    db: Arc<RwLock<Db>>,
-    render_db: Arc<RwLock<RenderDb>>,
-    mut cache: DbViewModel,
-    device: Arc<wgpu::Device>,
-) -> Result<DbViewModel> {
-    let mut new_part_caches = vec![];
-    let mut new_part_instance_caches = vec![];
+// pub async fn update_view_model_from_db(
+//     db: Arc<RwLock<Db>>,
+//     render_db: Arc<RwLock<RenderDb>>,
+//     mut cache: DbViewModel,
+//     device: Arc<wgpu::Device>,
+// ) -> Result<DbViewModel> {
+//     let mut new_part_caches = vec![];
+//     let mut new_part_instance_caches = vec![];
 
-    {
-        let read_db = db.read().await;
+//     {
+//         let read_db = db.read().await;
 
-        if read_db.is_empty() {
-            cache.clear();
-        } else {
-            let mut parts_that_require_new_render_objects = HashSet::new();
-            for (id, change) in read_db.get_changed_part_instances() {
-                //check if part instance is detached if yes push in detached and dont update cache
-                if matches!(change, EntityChanges::Detached) {
-                    cache.add_detached_part_instance(*id);
+//         if read_db.is_empty() {
+//             cache.clear();
+//         } else {
+//             let mut parts_that_require_new_render_objects = HashSet::new();
+//             for (id, change) in read_db.get_changed_part_instances() {
+//                 //check if part instance is detached if yes push in detached and dont update cache
+//                 if matches!(change, EntityChanges::Detached) {
+//                     cache.add_detached_part_instance(*id);
 
-                    if let Some(instance_data) = cache.get_part_instance_data(id)
-                        && let Some(lala) = read_db.get_changed_parts().get(&instance_data.part_id)
-                        && matches!(lala, EntityChanges::Detached)
-                    {
-                        cache.add_detached_part(instance_data.part_id);
-                    }
-                } else {
-                    //create new part instance cache
-                    if let Ok(instance) = read_db.get_part_instance_data(id) {
-                        // remove from detached (if existed) since it now back in the main db
-                        cache.remove_detached_part_instance(id);
+//                     if let Some(instance_data) = cache.get_part_instance_data(id)
+//                         && let Some(lala) = read_db.get_changed_parts().get(&instance_data.part_id)
+//                         && matches!(lala, EntityChanges::Detached)
+//                     {
+//                         cache.add_detached_part(instance_data.part_id);
+//                     }
+//                 } else {
+//                     //create new part instance cache
+//                     if let Ok(instance) = read_db.get_part_instance_data(id) {
+//                         // remove from detached (if existed) since it now back in the main db
+//                         cache.remove_detached_part_instance(id);
 
-                        if let Some(change) = read_db.get_changed_parts().get(&instance.part_id)
-                            && matches!(change, EntityChanges::Detached)
-                        {
-                            cache.add_detached_part(instance.part_id);
-                        } else if let Ok(part) = read_db.get_part_data(&instance.part_id) {
-                            // remove from detached (if existed) since it now back in the main db
-                            cache.remove_detached_part(&instance.part_id);
+//                         if let Some(change) = read_db.get_changed_parts().get(&instance.part_id)
+//                             && matches!(change, EntityChanges::Detached)
+//                         {
+//                             cache.add_detached_part(instance.part_id);
+//                         } else if let Ok(part) = read_db.get_part_data(&instance.part_id) {
+//                             // remove from detached (if existed) since it now back in the main db
+//                             cache.remove_detached_part(&instance.part_id);
 
-                            let rep_type = match &part.get_rep() {
-                                PartRep::Mesh(_) => PartRepType::Mesh,
-                                PartRep::ComposedPart(_) => PartRepType::ComposedPart,
-                            };
-                            parts_that_require_new_render_objects.insert(instance.part_id);
-                            new_part_instance_caches.push((
-                                *id,
-                                PartInstanceCache {
-                                    part_id: instance.part_id,
-                                    transform: instance.transform,
-                                    rep_type,
-                                },
-                            ));
-                        }
-                    }
-                }
-            }
+//                             let rep_type = match &part.get_rep() {
+//                                 PartRep::Mesh(_) => PartRepType::Mesh,
+//                                 PartRep::ComposedPart(_) => PartRepType::ComposedPart,
+//                             };
+//                             parts_that_require_new_render_objects.insert(instance.part_id);
+//                             new_part_instance_caches.push((
+//                                 *id,
+//                                 PartInstanceCache {
+//                                     part_id: instance.part_id,
+//                                     transform: instance.transform,
+//                                     rep_type,
+//                                 },
+//                             ));
+//                         }
+//                     }
+//                 }
+//             }
 
-            for (id, instance_cache) in new_part_instance_caches {
-                cache.insert_part_instance(id, instance_cache);
-            }
+//             for (id, instance_cache) in new_part_instance_caches {
+//                 cache.insert_part_instance(id, instance_cache);
+//             }
 
-            let mut parts_to_be_processed = read_db
-                .get_changed_parts()
-                .keys()
-                .copied()
-                .collect::<Vec<_>>();
-            loop {
-                if parts_to_be_processed.is_empty() {
-                    break;
-                }
+//             let mut parts_to_be_processed = read_db
+//                 .get_changed_parts()
+//                 .keys()
+//                 .copied()
+//                 .collect::<Vec<_>>();
+//             loop {
+//                 if parts_to_be_processed.is_empty() {
+//                     break;
+//                 }
 
-                for (id, change) in read_db.get_changed_parts() {
-                    match change {
-                        EntityChanges::Added | EntityChanges::Reattached => {
-                            parts_that_require_new_render_objects.insert(*id);
+//                 for (id, change) in read_db.get_changed_parts() {
+//                     match change {
+//                         EntityChanges::Added | EntityChanges::Reattached => {
+//                             parts_that_require_new_render_objects.insert(*id);
 
-                            //create new part cache
-                            if let Ok(part) = read_db.get_part_data(id)
-                                && let Some(part_cache) =
-                                    create_part_cache(part, &device, render_db.clone())
-                            {
-                                new_part_caches.push((*id, part_cache));
-                            }
-                        }
-                        EntityChanges::Removed => todo!(),
-                        EntityChanges::Detached => {
-                            cache.add_detached_part(*id);
-                        }
-                    }
+//                             //create new part cache
+//                             if let Ok(part) = read_db.get_part_data(id)
+//                                 && let Some(part_cache) =
+//                                     create_part_cache(part, &device, render_db.clone())
+//                             {
+//                                 new_part_caches.push((*id, part_cache));
+//                             }
+//                         }
+//                         EntityChanges::Removed => todo!(),
+//                         EntityChanges::Detached => {
+//                             cache.add_detached_part(*id);
+//                         }
+//                     }
 
-                    if let Some(pos) = parts_to_be_processed
-                        .iter()
-                        .position(|to_be_processed_id| to_be_processed_id == id)
-                    {
-                        parts_to_be_processed.swap_remove(pos);
-                    }
-                }
-            }
+//                     if let Some(pos) = parts_to_be_processed
+//                         .iter()
+//                         .position(|to_be_processed_id| to_be_processed_id == id)
+//                     {
+//                         parts_to_be_processed.swap_remove(pos);
+//                     }
+//                 }
+//             }
 
-            for (id, part_cache) in new_part_caches {
-                cache.insert_part(id, part_cache);
-            }
+//             for (id, part_cache) in new_part_caches {
+//                 cache.insert_part(id, part_cache);
+//             }
 
-            // Update scene data if instances changed
-            if !read_db.get_changed_part_instances().is_empty()
-                && let Ok(scene) = read_db.get_scene()
-            {
-                cache.set_scene_data(scene.instances.clone());
-            }
-        }
-    }
+//             // Update scene data if instances changed
+//             if !read_db.get_changed_part_instances().is_empty()
+//                 && let Ok(scene) = read_db.get_scene()
+//             {
+//                 cache.set_scene_data(scene.instances.clone());
+//             }
+//         }
+//     }
 
-    // this is dangerous because the moment we release the read lock before changes could have happened?
-    {
-        let mut write_db = db.write().await;
-        write_db.clear_changed_part_instances();
-        write_db.clear_changed_parts();
-    }
+//     // this is dangerous because the moment we release the read lock before changes could have happened?
+//     {
+//         let mut write_db = db.write().await;
+//         write_db.clear_changed_part_instances();
+//         write_db.clear_changed_parts();
+//     }
 
-    cache.update_scene_based_render_objects(&device, render_db.clone());
-    cache.update_unique_parts_based_render_objects(&device, render_db.clone());
+//     cache.update_scene_based_render_objects(&device, render_db.clone());
+//     cache.update_unique_parts_based_render_objects(&device, render_db.clone());
 
-    Ok(cache)
-}
+//     Ok(cache)
+// }
 
 pub async fn update_view_model_from_db_new(
     db: Arc<RwLock<Db>>,
@@ -802,16 +825,16 @@ pub async fn update_view_model_from_db_new(
     mut cache: DbViewModel,
     device: Arc<wgpu::Device>,
 ) -> Result<DbViewModel> {
-    let mut new_part_caches = vec![];
+    // let mut new_part_caches = vec![];
     let mut new_part_instance_caches = vec![];
 
+    let mut parts_that_require_update = HashSet::new();
     {
         let read_db = db.read().await;
 
         if read_db.is_empty() {
             cache.clear();
         } else {
-            let mut parts_that_require_new_render_objects = HashSet::new();
             for (id, change) in read_db.get_changed_part_instances() {
                 //check if part instance is detached if yes push in detached and dont update cache
                 let regenerate_instance_data = match change {
@@ -819,7 +842,7 @@ pub async fn update_view_model_from_db_new(
                     EntityChanges::Removed => {
                         //clear all data
                         if let Some(instance_cache) = cache.instance_data.remove(id) {
-                            parts_that_require_new_render_objects.insert(instance_cache.part_id);
+                            parts_that_require_update.insert(instance_cache.part_id);
                         }
 
                         false
@@ -854,6 +877,7 @@ pub async fn update_view_model_from_db_new(
                         }
                     };
 
+                    parts_that_require_update.insert(instance_data.part_id);
                     new_part_instance_caches.push((
                         *id,
                         PartInstanceCache {
@@ -869,56 +893,69 @@ pub async fn update_view_model_from_db_new(
                 cache.insert_part_instance(id, instance_cache);
             }
 
-            let mut parts_to_be_processed = read_db
-                .get_changed_parts()
-                .keys()
-                .copied()
+            for (id, change) in read_db.get_changed_parts() {
+                match change {
+                    EntityChanges::Added | EntityChanges::Reattached => {
+                        parts_that_require_update.insert(*id);
+                    }
+                    EntityChanges::Removed => {
+                        cache.parts_data.remove(id);
+                        parts_that_require_update.remove(id);
+                        cache.scene_based_render_objects.remove(id);
+                        cache.unique_parts_based_render_objects.remove(id);
+                    }
+                    EntityChanges::Detached => {
+                        cache.add_detached_part(*id);
+                    }
+                }
+            }
+
+            for id in &parts_that_require_update {
+                //create new part cache
+                if let Ok(part) = read_db.get_part_data(id)
+                    && let Some(part_cache) = create_part_cache(part, &device, render_db.clone())
+                {
+                    //new_part_caches.push((*id, part_cache));
+                    cache.insert_part(*id, part_cache);
+                }
+            }
+
+            let mut parts_to_require_render_object_update = HashSet::new();
+            let parts_to_process = parts_that_require_update
+                .iter()
+                .cloned()
                 .collect::<Vec<_>>();
-            loop {
-                if parts_to_be_processed.is_empty() {
-                    break;
-                }
 
-                for (id, change) in read_db.get_changed_parts() {
-                    match change {
-                        EntityChanges::Added | EntityChanges::Reattached => {
-                            parts_that_require_new_render_objects.insert(*id);
+            compute_all_meshes_that_need_new_render_object(
+                &cache,
+                &parts_to_process,
+                &mut parts_to_require_render_object_update,
+            );
 
-                            //create new part cache
-                            if let Ok(part) = read_db.get_part_data(id)
-                                && let Some(part_cache) =
-                                    create_part_cache(part, &device, render_db.clone())
-                            {
-                                new_part_caches.push((*id, part_cache));
-                            }
-                        }
-                        EntityChanges::Removed => {
-                            cache.parts_data.remove(id);
-                            cache.scene_based_render_objects.remove(id);
-                            cache.unique_parts_based_render_objects.remove(id);
-                        }
-                        EntityChanges::Detached => {
-                            cache.add_detached_part(*id);
-                        }
-                    }
-
-                    if let Some(pos) = parts_to_be_processed
-                        .iter()
-                        .position(|to_be_processed_id| to_be_processed_id == id)
-                    {
-                        parts_to_be_processed.swap_remove(pos);
-                    }
-                }
+            for id in &parts_to_require_render_object_update {
+                cache.scene_based_render_objects.remove(id);
+                cache.unique_parts_based_render_objects.remove(id);
             }
 
-            for (id, part_cache) in new_part_caches {
-                cache.insert_part(id, part_cache);
-            }
+            // for (id, part_cache) in new_part_caches {
+            //     cache.insert_part(id, part_cache);
+            // }
 
             // Update scene data if instances changed
             if let Ok(scene) = read_db.get_scene() {
                 cache.set_scene_data(scene.instances.clone());
             }
+
+            cache.update_scene_based_render_objects(
+                &device,
+                render_db.clone(),
+                Some(&parts_to_require_render_object_update),
+            );
+            cache.update_unique_parts_based_render_objects(
+                &device,
+                render_db.clone(),
+                Some(&parts_to_require_render_object_update),
+            );
         }
     }
 
@@ -929,10 +966,50 @@ pub async fn update_view_model_from_db_new(
         write_db.clear_changed_parts();
     }
 
-    cache.update_scene_based_render_objects(&device, render_db.clone());
-    cache.update_unique_parts_based_render_objects(&device, render_db.clone());
-
     Ok(cache)
+}
+
+fn compute_all_meshes_that_need_new_render_object(
+    cache: &DbViewModel,
+    parts_that_require_update: &[PartId],
+    all_parts_that_require_new_render_object: &mut HashSet<PartId>,
+) {
+    for id in parts_that_require_update {
+        if let Some(part_cache) = cache.get_part_data(id) {
+            match &part_cache.rep {
+                PartRepCache::Mesh(mesh_cache) => {
+                    //do nothing
+                    all_parts_that_require_new_render_object.insert(*id);
+                }
+                PartRepCache::ComposedPart(composed_part_cache) => {
+                    for comp in &composed_part_cache.components {
+                        let mut child_components_to_process = vec![];
+                        if let Some(instance_cache) = cache.get_part_instance_data(comp) {
+                            match instance_cache.rep_type {
+                                PartRepType::Mesh => {
+                                    all_parts_that_require_new_render_object
+                                        .insert(instance_cache.part_id);
+                                }
+                                PartRepType::ComposedPart => {
+                                    child_components_to_process.push(instance_cache.part_id);
+                                }
+                            }
+                        }
+
+                        all_parts_that_require_new_render_object.insert(*id);
+
+                        if !child_components_to_process.is_empty() {
+                            compute_all_meshes_that_need_new_render_object(
+                                cache,
+                                &child_components_to_process,
+                                all_parts_that_require_new_render_object,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn create_part_cache(

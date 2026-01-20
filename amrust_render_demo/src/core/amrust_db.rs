@@ -789,8 +789,19 @@ impl DbWriter for Db {
     }
 
     fn remove_part(&mut self, id: PartId) -> bool {
-        if self.unique_parts.remove(id).is_some() {
+        if let Some(part) = self.unique_parts.remove(id) {
             self.mark_part_changed(id, EntityChanges::Removed);
+
+            match part.get_rep() {
+                PartRep::Mesh(_) => {}
+                PartRep::ComposedPart(components) => {
+                    for id in components {
+                        if self.can_remove_part_instance(id) {
+                            let _ = self.remove_part_instance(*id);
+                        }
+                    }
+                }
+            }
             return true;
         }
 
@@ -801,7 +812,7 @@ impl DbWriter for Db {
         if self.part_instances.remove(id).is_some() {
             self.mark_part_instance_changed(id, EntityChanges::Removed);
             if let Some(scene) = &mut self.scene {
-                scene.instances.retain(|instace_id| *instace_id != id);
+                scene.instances.retain(|instance_id| *instance_id != id);
             }
             return true;
         }
