@@ -5,6 +5,7 @@ use crate::core::interfaces::operation::OperationResponse;
 use crate::core::render_db::RenderDb;
 use crate::core::services::FileDialogService;
 use crate::core::services::command_service::CommandService;
+use crate::core::services::dialog_service::{DialogService, DialogServiceRequest};
 use crate::core::services::operation_service::{
     OperationService, OperationServiceError, OperationServiceRequest,
 };
@@ -27,8 +28,9 @@ use crate::ui::viewport::Viewport3D;
 // use amrust_lib::widgets::dropped_files::DroppedFilesWidget;
 use amrust_render::camera::{self, CameraData, OrthographicCameraData};
 // use amrust_render::normalized_box::{ORDERED_POSITIONS, ORDERED_POSITIONS_TRI_EDGE_INDICES};
-use egui::{Id, Layout, epaint};
+use egui::{Align2, Direction, Id, Layout, epaint};
 use egui_dock::{DockArea, DockState, NodeIndex};
+use egui_toast::{Toast, ToastOptions};
 use egui_wgpu::wgpu::SurfaceError;
 use egui_wgpu::{ScreenDescriptor, wgpu};
 use glam::{Mat4, Vec3};
@@ -36,6 +38,8 @@ use smol::channel::{Receiver, Sender, TryRecvError};
 use smol::lock::RwLock;
 use smol::{Executor, channel};
 use std::sync::Arc;
+use std::sync::mpsc::channel;
+use std::time::Duration;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
@@ -257,6 +261,9 @@ pub struct App {
     operation_queue_tx: Sender<OperationServiceRequest>,
     operation_response_rx: Receiver<OperationResponse>,
     operation_error_rx: Receiver<OperationServiceError>,
+    toasts: egui_toast::Toasts,
+    dialog_service: DialogService,
+    dialog_request_tx: Sender<DialogServiceRequest>,
 }
 
 impl App {
@@ -282,6 +289,9 @@ impl App {
             operation_error_tx,
         );
 
+        let (dialog_service_tx, dialog_service_rx) = channel::unbounded();
+        let dialog_service = DialogService::new(dialog_service_rx);
+
         Self {
             instance,
             state: None,
@@ -293,6 +303,11 @@ impl App {
             operation_queue_tx,
             operation_response_rx,
             operation_error_rx,
+            toasts: egui_toast::Toasts::new()
+                .anchor(Align2::RIGHT_TOP, (-10.0, 10.0))
+                .direction(Direction::TopDown),
+            dialog_service,
+            dialog_request_tx: dialog_service_tx,
         }
     }
 
@@ -409,39 +424,69 @@ impl App {
             egui::TopBottomPanel::top("top panel")
                 .resizable(false)
                 .show(state.egui_renderer.context(), |ui| {
-                    let mut command_context = CommandContext::new(
-                        &state.db_view_model,
-                        state.current_app_mode,
-                        self.operation_queue_tx.clone(),
-                        &mut self.file_dialog_service,
-                        state.render_message_tx.clone(),
-                    );
+                    ui.horizontal(|ui| {
+                        let mut command_context = CommandContext::new(
+                            &state.db_view_model,
+                            state.current_app_mode,
+                            self.operation_queue_tx.clone(),
+                            &mut self.file_dialog_service,
+                            state.render_message_tx.clone(),
+                        );
 
-                    self.command_service
-                        .populate_menu_bar(ui, &mut command_context);
+                        self.command_service
+                            .populate_menu_bar(ui, &mut command_context);
 
-                    //onyl show modes if there is a scene
-                    if !state.db_view_model.is_empty() {
-                        ui.with_layout(Layout::right_to_left(egui::Align::RIGHT), |ui| {
-                            // ToDo: Add a tooltip here to explain the difference in modes
-                            ui.radio_value(
-                                &mut state.current_app_mode,
-                                AppMode::Objects,
-                                "Objects Mode",
-                            );
+                        //onyl show modes if there is a scene
+                        if !state.db_view_model.is_empty() {
+                            ui.with_layout(Layout::right_to_left(egui::Align::RIGHT), |ui| {
+                                // ToDo: Add a tooltip here to explain the difference in modes
+                                ui.radio_value(
+                                    &mut state.current_app_mode,
+                                    AppMode::Objects,
+                                    "Objects Mode",
+                                );
 
-                            ui.radio_value(
-                                &mut state.current_app_mode,
-                                AppMode::Build,
-                                "Build Mode",
-                            );
+                                ui.radio_value(
+                                    &mut state.current_app_mode,
+                                    AppMode::Build,
+                                    "Build Mode",
+                                );
 
-                            #[cfg(debug_assertions)]
-                            if ui.button("Show error dialog").clicked() {
-                                state.operation_error_message = Some("Custom Error".to_string());
-                            }
-                        });
-                    }
+                                #[cfg(debug_assertions)]
+                                if ui.button("Show error dialog").clicked() {
+                                    state.operation_error_message =
+                                        Some("Custom Error".to_string());
+                                }
+
+                                #[cfg(debug_assertions)]
+                                if ui.button("Show operation dialog").clicked() {
+                                    self.dialog_request_tx.send_blocking(
+                                        DialogServiceRequest::SemiModalDialog(
+                                            "Test Operation Dialog",
+                                            Box::new( move || {
+                                                use crate::core::services::dialog_service::DialogStateInNextFrame;
+
+                                                let mut result = DialogStateInNextFrame::Show;
+
+                                                egui::Window::new("Test Operation Dialog").show(
+                                                    state.egui_renderer.context(),
+                                                    |ui| {
+                                                        ui.label("This is a new dialog");
+
+                                                        if ui.button("Close this dialog").clicked()
+                                                        {
+                                                            result = DialogStateInNextFrame::Closed;
+                                                        }
+                                                    },
+                                                );
+                                                result
+                                            }),
+                                        ),
+                                    );
+                                }
+                            });
+                        }
+                    });
                 });
 
             if let Some(tree) = &mut state.toolsheets {
@@ -473,6 +518,8 @@ impl App {
                         ui.label("Rendering Texture ID is missing!!");
                     }
                 }
+
+                self.toasts.show(state.egui_renderer.context());
             });
 
             // state
@@ -726,18 +773,50 @@ impl App {
             }
 
             match self.operation_response_rx.try_recv() {
-                Ok(response) => match response {
-                    OperationResponse::Succeeded { name } => {
-                        log::info!("Operation Success: {name}");
-                        state.need_viewport_update = true;
+                Ok(response) => {
+                    match response {
+                        OperationResponse::Succeeded { name } => {
+                            log::info!("Operation Success: {name}");
+                            self.toasts.add(
+                                Toast::new()
+                                    .kind(egui_toast::ToastKind::Success)
+                                    .text(format!("Operation Succeeded: {name}"))
+                                    .options(
+                                        ToastOptions::default()
+                                            .duration(Duration::from_secs(1))
+                                            .show_icon(true),
+                                    ),
+                            );
+                        }
+                        OperationResponse::Failed { name, error, .. } => {
+                            log::info!("Operation Failed: {name} with error {error:?}");
+                            self.toasts.add(
+                                Toast::new()
+                                    .kind(egui_toast::ToastKind::Error)
+                                    .text(format!("Operation Failed: {name}"))
+                                    .options(
+                                        ToastOptions::default()
+                                            .duration(Duration::from_secs(3))
+                                            .show_icon(true),
+                                    ),
+                            );
+                        }
+                        OperationResponse::Aborted { name, .. } => {
+                            log::info!("Operation Cancelled: {name}");
+                            self.toasts.add(
+                                Toast::new()
+                                    .kind(egui_toast::ToastKind::Warning)
+                                    .text(format!("Operation Cancelled: {name}"))
+                                    .options(
+                                        ToastOptions::default()
+                                            .duration(Duration::from_secs(1))
+                                            .show_icon(true),
+                                    ),
+                            );
+                        }
                     }
-                    OperationResponse::Failed { name, error, .. } => {
-                        log::info!("Operation Failed: {name} with error {error:?}");
-                    }
-                    OperationResponse::Aborted { name, .. } => {
-                        log::info!("Operation Cancelled: {name}");
-                    }
-                },
+                    state.need_viewport_update = true;
+                }
                 Err(err) => match err {
                     TryRecvError::Empty => {}
                     TryRecvError::Closed => panic!("Operation Manager is killed!!"),
@@ -756,18 +835,18 @@ impl App {
                 },
             }
 
-            if let Some(message) = &state.operation_error_message {
-                match popup_dialog::error_modal_dialog(
+            if let Some(message) = &state.operation_error_message
+                && popup_dialog::error_modal_dialog(
                     state.egui_renderer.context(),
                     egui::Id::new("operation_error_modal"),
                     message,
-                ) {
-                    DialogResponse::Ok => {
-                        state.operation_error_message = None;
-                    }
-                    _ => {}
-                }
+                ) == DialogResponse::Ok
+            {
+                state.operation_error_message = None;
             }
+
+            self.dialog_service
+                .update_and_show_dialogs(state.egui_renderer.context());
 
             state.egui_renderer.end_frame_and_draw(
                 &state.device,
