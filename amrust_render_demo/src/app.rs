@@ -21,7 +21,6 @@ use crate::db_view_model::{
 use crate::egui_tools::EguiRenderer;
 use crate::features::{clear_db, load_3mf, save_3mf, unload, unzoom_scene};
 use crate::ui::part_list::PartList;
-use crate::ui::popup_dialog::{self, DialogResponse};
 use crate::ui::toolsheets::Toolsheets;
 use crate::ui::tree_item_viewer::TreeItemViewer;
 use crate::ui::viewport::Viewport3D;
@@ -38,7 +37,6 @@ use smol::channel::{Receiver, Sender, TryRecvError};
 use smol::lock::RwLock;
 use smol::{Executor, channel};
 use std::sync::Arc;
-use std::sync::mpsc::channel;
 use std::time::Duration;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
@@ -69,7 +67,6 @@ struct AppState {
     pub render_message_tx: Sender<RenderServiceRequest>,
     pub render_response_rx: Receiver<RenderServiceResponse>,
     pub render_db: Arc<RwLock<RenderDb>>,
-    pub operation_error_message: Option<String>,
     pub db_view_model: DbViewModel,
     pub current_view_projection: Mat4,
 }
@@ -207,7 +204,6 @@ impl AppState {
             render_message_tx,
             render_response_rx,
             render_db,
-            operation_error_message: None,
             db_view_model: DbViewModel::new(),
             current_view_projection: Mat4::IDENTITY,
         }
@@ -454,13 +450,18 @@ impl App {
 
                                 #[cfg(debug_assertions)]
                                 if ui.button("Show error dialog").clicked() {
-                                    state.operation_error_message =
-                                        Some("Custom Error".to_string());
+                                    let _ = self.dialog_request_tx.send_blocking(DialogServiceRequest::Error("Custom Error dialog", "You made a grave error!"));
+                                }
+
+                                #[cfg(debug_assertions)]
+                                if ui.button("Show info dialog").clicked() {
+                                    let _ = self.dialog_request_tx.send_blocking(DialogServiceRequest::Info("Custom Info dialog", "You wanted to see some info!"));
                                 }
 
                                 #[cfg(debug_assertions)]
                                 if ui.button("Show operation dialog").clicked() {
-                                    self.dialog_request_tx.send_blocking(
+                                    let ctx = state.egui_renderer.context().clone();
+                                    let _ = self.dialog_request_tx.send_blocking(
                                         DialogServiceRequest::SemiModalDialog(
                                             "Test Operation Dialog",
                                             Box::new( move || {
@@ -469,7 +470,7 @@ impl App {
                                                 let mut result = DialogStateInNextFrame::Show;
 
                                                 egui::Window::new("Test Operation Dialog").show(
-                                                    state.egui_renderer.context(),
+                                                    &ctx,
                                                     |ui| {
                                                         ui.label("This is a new dialog");
 
@@ -826,23 +827,14 @@ impl App {
             match self.operation_error_rx.try_recv() {
                 Ok(error) => match error {
                     OperationServiceError::ModalOpImmediateFailed(message) => {
-                        state.operation_error_message = Some(message);
+                        self.dialog_service
+                            .add_error_dialog("Operation Service Error", message);
                     }
                 },
                 Err(err) => match err {
                     TryRecvError::Empty => {}
                     TryRecvError::Closed => panic!("Operation error channel closed!!"),
                 },
-            }
-
-            if let Some(message) = &state.operation_error_message
-                && popup_dialog::error_modal_dialog(
-                    state.egui_renderer.context(),
-                    egui::Id::new("operation_error_modal"),
-                    message,
-                ) == DialogResponse::Ok
-            {
-                state.operation_error_message = None;
             }
 
             self.dialog_service

@@ -47,19 +47,41 @@ impl DialogService {
         }
     }
 
+    pub fn add_error_dialog(&mut self, title: &'static str, message: &'static str) {
+        self.dialog_queue.push_front(DialogData {
+            kind: DialogKind::Error,
+            title,
+            message,
+            id: self.next_dialog_id,
+            content: None,
+        });
+
+        self.next_dialog_id += 1;
+    }
+
     pub fn update_and_show_dialogs(&mut self, ctx: &egui::Context) {
         let mut dialogs_to_keep = vec![];
         for dialog in &mut self.dialog_queue {
             match dialog.kind {
                 DialogKind::Error => {
-                    match error_modal_dialog(ctx, egui::Id::new(dialog.id), dialog.message) {
+                    match error_modal_dialog(
+                        ctx,
+                        egui::Id::new(dialog.id),
+                        dialog.title,
+                        dialog.message,
+                    ) {
                         DialogResponse::Ok | DialogResponse::Cancel | DialogResponse::Continue => {}
                         DialogResponse::IsShowing => {
                             dialogs_to_keep.push(dialog.id);
                         }
                     }
                 }
-                DialogKind::Info => match info_modal_dialog(ctx, egui::Id::new(dialog.id)) {
+                DialogKind::Info => match info_modal_dialog(
+                    ctx,
+                    egui::Id::new(dialog.id),
+                    dialog.title,
+                    dialog.message,
+                ) {
                     DialogResponse::Ok | DialogResponse::Cancel | DialogResponse::Continue => {}
                     DialogResponse::IsShowing => {
                         dialogs_to_keep.push(dialog.id);

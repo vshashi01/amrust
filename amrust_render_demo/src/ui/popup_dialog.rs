@@ -88,7 +88,12 @@ fn show_modal_message_dialog(
     response
 }
 
-pub fn error_modal_dialog(ctx: &egui::Context, id: egui::Id, message: &str) -> DialogResponse {
+pub fn error_modal_dialog(
+    ctx: &egui::Context,
+    id: egui::Id,
+    title: &str,
+    message: &str,
+) -> DialogResponse {
     let style = DialogStyle {
         banner_color: egui::Color32::RED,
         icon: "❌".to_string(),
@@ -98,7 +103,7 @@ pub fn error_modal_dialog(ctx: &egui::Context, id: egui::Id, message: &str) -> D
         ctx,
         id,
         &style,
-        "Error",
+        title,
         |ui| {
             ui.colored_label(egui::Color32::RED, "An unexpected error occurred!");
             ui.label(message);
@@ -110,7 +115,12 @@ pub fn error_modal_dialog(ctx: &egui::Context, id: egui::Id, message: &str) -> D
     )
 }
 
-pub fn info_modal_dialog(ctx: &egui::Context, id: egui::Id) -> DialogResponse {
+pub fn info_modal_dialog(
+    ctx: &egui::Context,
+    id: egui::Id,
+    title: &str,
+    message: &str,
+) -> DialogResponse {
     let style = DialogStyle {
         banner_color: egui::Color32::from_rgb(0, 120, 255),
         icon: "ℹ️".to_string(),
@@ -120,10 +130,9 @@ pub fn info_modal_dialog(ctx: &egui::Context, id: egui::Id) -> DialogResponse {
         ctx,
         id,
         &style,
-        "Error",
+        title,
         |ui| {
-            ui.colored_label(egui::Color32::RED, "An unexpected error occurred!");
-            ui.label("Please contact support or try again later.");
+            ui.label(message);
 
             ui.add_space(12.0);
         },

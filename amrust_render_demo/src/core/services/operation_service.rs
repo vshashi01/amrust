@@ -18,7 +18,7 @@ use std::{collections::VecDeque, sync::Arc};
 
 #[derive(Debug, Clone)]
 pub enum OperationServiceError {
-    ModalOpImmediateFailed(String),
+    ModalOpImmediateFailed(&'static str),
 }
 
 /// Defines the Mode to run the Operation in
@@ -176,8 +176,7 @@ impl OperationService {
                         if !self.running_tasks.is_empty() {
                             let _ = self.error_tx.send_blocking(
                                 OperationServiceError::ModalOpImmediateFailed(
-                                    "Cannot run Immediate Modal Operation because there are other Operations running."
-                                        .to_string(),
+                                    "Cannot run Immediate Modal Operation because there are other Operations running.",
                                 ),
                             );
                         } else {
