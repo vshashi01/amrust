@@ -14,6 +14,7 @@ use crate::core::amrust_db::{Db, DbError, Scene};
 use crate::core::interfaces::command::{Command, CommandCategory, CommandContext};
 use crate::core::interfaces::operation::{Operation, OperationNature, OperationResponse};
 use crate::core::services::command_service::CommandService;
+use crate::core::services::file_dialog_service::FileDialogRequest;
 use crate::core::services::operation_service::OperationServiceRequest;
 use crate::core::types::db_context::DbContext;
 use crate::core::types::mesh::Mesh;
@@ -300,23 +301,47 @@ impl Command for ImportPartCommand {
 
     fn execute(&self, context: &mut CommandContext) {
         // Show file dialog with handler for importing 3MF files
-        context.file_dialog_service.show_load_dialog(
-            "3D Manufacturing Format",
-            vec!["3mf"],
-            |path: PathBuf, ctx: &mut CommandContext| {
-                if let Some(ext) = path.extension()
-                    && ext == "3mf"
-                {
-                    let ops = Load3MFOps { path };
-                    if let Err(err) = ctx
-                        .operation_queue_tx
-                        .send_blocking(OperationServiceRequest::BackgroundOp(Box::new(ops)))
-                    {
-                        log::error!("Failed to queue import operation: {err:?}");
-                    }
-                }
-            },
-        );
+        // context.file_dialog_service_request_tx.show_load_dialog(
+        //     "3D Manufacturing Format",
+        //     vec!["3mf"],
+        //     |path: PathBuf, ctx: &mut CommandContext| {
+        //         if let Some(ext) = path.extension()
+        //             && ext == "3mf"
+        //         {
+        //             let ops = Load3MFOps { path };
+        //             if let Err(err) = ctx
+        //                 .operation_queue_tx
+        //                 .send_blocking(OperationServiceRequest::BackgroundOp(Box::new(ops)))
+        //             {
+        //                 log::error!("Failed to queue import operation: {err:?}");
+        //             }
+        //         }
+        //     },
+        // );
+
+        if let Err(err) =
+            context
+                .file_dialog_service_request_tx
+                .send_blocking(FileDialogRequest::Load {
+                    extension_name: "3D Manufacturing Format",
+                    extensions: vec!["3mf"],
+                    handler: Box::new(|path: PathBuf, ctx: &mut CommandContext| {
+                        if let Some(ext) = path.extension()
+                            && ext == "3mf"
+                        {
+                            let ops = Load3MFOps { path };
+                            if let Err(err) = ctx
+                                .operation_queue_tx
+                                .send_blocking(OperationServiceRequest::BackgroundOp(Box::new(ops)))
+                            {
+                                log::error!("Failed to queue import operation: {err:?}");
+                            }
+                        }
+                    }),
+                })
+        {
+            log::error!("sending file load request failed: {err:?}");
+        }
     }
 }
 

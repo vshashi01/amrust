@@ -4,8 +4,8 @@ use crate::core::{
     app_mode::AppMode,
     interfaces::db_view::DbView,
     services::{
-        FileDialogService, operation_service::OperationServiceRequest,
-        render_service::RenderServiceRequest,
+        FileDialogService, file_dialog_service::FileDialogRequest,
+        operation_service::OperationServiceRequest, render_service::RenderServiceRequest,
     },
 };
 
@@ -52,7 +52,7 @@ pub struct CommandContext<'a> {
     pub operation_queue_tx: Sender<OperationServiceRequest>,
 
     /// File dialog service for showing dialogs
-    pub file_dialog_service: &'a mut FileDialogService,
+    pub file_dialog_service_request_tx: Sender<FileDialogRequest>,
 
     //Channel for queuing render work
     pub render_worker_queue_tx: Sender<RenderServiceRequest>,
@@ -65,14 +65,14 @@ impl<'a> CommandContext<'a> {
         db_view_model: &'a dyn DbView,
         app_mode: AppMode,
         operation_queue_tx: Sender<OperationServiceRequest>,
-        file_dialog_service: &'a mut FileDialogService,
+        file_dialog_service_request_tx: Sender<FileDialogRequest>,
         render_worker_queue_tx: Sender<RenderServiceRequest>,
     ) -> Self {
         Self {
             db_view_model,
             current_app_mode: app_mode,
             operation_queue_tx,
-            file_dialog_service,
+            file_dialog_service_request_tx,
             render_worker_queue_tx,
         }
     }

@@ -6,6 +6,7 @@ use crate::core::render_db::RenderDb;
 use crate::core::services::FileDialogService;
 use crate::core::services::command_service::CommandService;
 use crate::core::services::dialog_service::{DialogService, DialogServiceRequest};
+use crate::core::services::file_dialog_service::FileDialogRequest;
 use crate::core::services::operation_service::{
     OperationService, OperationServiceError, OperationServiceRequest,
 };
@@ -252,6 +253,7 @@ pub struct App {
     window: Option<Arc<Window>>,
     toolsheets_dock_tree: DockState<String>,
     file_dialog_service: FileDialogService,
+    file_dialog_service_request_tx: Sender<FileDialogRequest>,
     command_service: CommandService,
     operation_manager: OperationService,
     operation_queue_tx: Sender<OperationServiceRequest>,
@@ -276,6 +278,9 @@ impl App {
         unzoom_scene::register_commands(&mut command_service);
         unload::register_commands(&mut command_service);
 
+        let (file_dialog_service_request_tx, file_dialog_service_request_rx) = channel::unbounded();
+        let file_dialog_service = FileDialogService::new(file_dialog_service_request_rx);
+
         let (operation_queue_tx, operation_queue_rx) = channel::unbounded();
         let (operation_response_tx, operation_response_rx) = channel::unbounded();
         let (operation_error_tx, operation_error_rx) = channel::unbounded();
@@ -293,7 +298,8 @@ impl App {
             state: None,
             window: None,
             toolsheets_dock_tree,
-            file_dialog_service: FileDialogService::new(),
+            file_dialog_service,
+            file_dialog_service_request_tx,
             command_service,
             operation_manager,
             operation_queue_tx,
@@ -405,7 +411,7 @@ impl App {
                     &state.db_view_model,
                     state.current_app_mode,
                     self.operation_queue_tx.clone(),
-                    &mut self.file_dialog_service,
+                    self.file_dialog_service_request_tx.clone(),
                     state.render_message_tx.clone(),
                 );
 
@@ -425,7 +431,7 @@ impl App {
                             &state.db_view_model,
                             state.current_app_mode,
                             self.operation_queue_tx.clone(),
-                            &mut self.file_dialog_service,
+                            self.file_dialog_service_request_tx.clone(),
                             state.render_message_tx.clone(),
                         );
 

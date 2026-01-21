@@ -616,7 +616,7 @@ impl Command for SaveSceneCommand {
 
     fn execute(&self, context: &mut CommandContext) {
         // Show file dialog with handler for importing 3MF files
-        context.file_dialog_service.show_save_dialog(
+        context.file_dialog_service_request_tx.show_save_dialog(
             "3D Manufacturing Format",
             "3mf",
             |path: PathBuf, ctx: &mut CommandContext| {
@@ -662,7 +662,7 @@ impl Command for SavePartCommand {
     }
 
     fn execute(&self, context: &mut CommandContext) {
-        context.file_dialog_service.show_save_dialog(
+        context.file_dialog_service_request_tx.show_save_dialog(
             "3D Manufacturing Format",
             "3mf",
             |path: PathBuf, ctx: &mut CommandContext| {
