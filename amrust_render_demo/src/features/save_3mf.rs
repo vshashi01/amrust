@@ -1,9 +1,4 @@
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::time::Duration;
-
 use async_trait::async_trait;
-use log::info;
 use smol::Timer;
 use thiserror::Error;
 use threemf2::core::model::Unit;
@@ -22,6 +17,7 @@ use crate::core::interfaces::operation::Operation;
 use crate::core::interfaces::operation::OperationNature;
 use crate::core::interfaces::operation::OperationResponse;
 use crate::core::services::command_service::CommandService;
+use crate::core::services::file_dialog_service::FileDialogRequest;
 use crate::core::services::operation_service::OperationServiceRequest;
 use crate::core::types::db_context::DbContext;
 use crate::core::types::identifiable::Identifiable;
@@ -32,6 +28,10 @@ use crate::core::types::part::PartRep;
 use crate::core::types::part_instance::PartInstance;
 use crate::core::types::part_instance::PartInstanceId;
 use crate::core::types::transformation::Transformation;
+
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::time::Duration;
 
 #[derive(Debug, Error)]
 pub enum DbTo3mfError {
@@ -615,27 +615,32 @@ impl Command for SaveSceneCommand {
     }
 
     fn execute(&self, context: &mut CommandContext) {
-        // Show file dialog with handler for importing 3MF files
-        context.file_dialog_service_request_tx.show_save_dialog(
-            "3D Manufacturing Format",
-            "3mf",
-            |path: PathBuf, ctx: &mut CommandContext| {
-                if let Some(ext) = path.extension()
-                    && ext == "3mf"
-                {
-                    let ops = Save3mfOps {
-                        path,
-                        save_mode: SaveMode::Scene,
-                    };
-                    if let Err(err) = ctx
-                        .operation_queue_tx
-                        .send_blocking(OperationServiceRequest::ModalOpWait(Box::new(ops)))
-                    {
-                        log::error!("Failed to queue import operation: {err:?}");
-                    }
-                }
-            },
-        );
+        if let Err(err) =
+            context
+                .file_dialog_service_request_tx
+                .send_blocking(FileDialogRequest::Save {
+                    extension_name: "3D Manufacturing Format",
+                    extension: "3mf",
+                    handler: Box::new(|path: PathBuf, ctx: &mut CommandContext| {
+                        if let Some(ext) = path.extension()
+                            && ext == "3mf"
+                        {
+                            let ops = Save3mfOps {
+                                path,
+                                save_mode: SaveMode::Scene,
+                            };
+                            if let Err(err) = ctx
+                                .operation_queue_tx
+                                .send_blocking(OperationServiceRequest::ModalOpWait(Box::new(ops)))
+                            {
+                                log::error!("Failed to queue import operation: {err:?}");
+                            }
+                        }
+                    }),
+                })
+        {
+            log::error!("Problem sending the save file dialog request: {err:?}");
+        }
     }
 }
 
@@ -662,60 +667,65 @@ impl Command for SavePartCommand {
     }
 
     fn execute(&self, context: &mut CommandContext) {
-        context.file_dialog_service_request_tx.show_save_dialog(
-            "3D Manufacturing Format",
-            "3mf",
-            |path: PathBuf, ctx: &mut CommandContext| {
-                if let Some(ext) = path.extension()
-                    && ext == "3mf"
-                {
-                    let operable_selected_identifiables =
-                        ctx.db_view_model.get_all_operable_selected_identifiables();
-                    let ops_msg = {
-                        if !operable_selected_identifiables.is_empty() {
-                            let save_mode = match ctx.current_app_mode {
-                                AppMode::Objects => {
-                                    let parts =
-                                        operable_selected_identifiables.iter().filter_map(|i| {
-                                            match i {
-                                                Identifiable::Part(part_id) => Some(*part_id),
-                                                Identifiable::PartInstance(_) => None,
-                                            }
-                                        });
+        if let Err(err) =
+            context
+                .file_dialog_service_request_tx
+                .send_blocking(FileDialogRequest::Save {
+                    extension_name: "3D Manufacturing Format",
+                    extension: "3mf",
+                    handler: Box::new(|path: PathBuf, ctx: &mut CommandContext| {
+                        if let Some(ext) = path.extension()
+                            && ext == "3mf"
+                        {
+                            let operable_selected_identifiables =
+                                ctx.db_view_model.get_all_operable_selected_identifiables();
+                            let ops_msg = {
+                                if !operable_selected_identifiables.is_empty() {
+                                    let save_mode = match ctx.current_app_mode {
+                                        AppMode::Objects => {
+                                            let parts = operable_selected_identifiables
+                                                .iter()
+                                                .filter_map(|i| match i {
+                                                    Identifiable::Part(part_id) => Some(*part_id),
+                                                    Identifiable::PartInstance(_) => None,
+                                                });
 
-                                    SaveMode::PartsOnly(parts.collect())
-                                }
-                                AppMode::Build => {
-                                    let part_instances = operable_selected_identifiables
-                                        .iter()
-                                        .filter_map(|i| match i {
-                                            Identifiable::Part(_) => None,
+                                            SaveMode::PartsOnly(parts.collect())
+                                        }
+                                        AppMode::Build => {
+                                            let part_instances = operable_selected_identifiables
+                                                .iter()
+                                                .filter_map(|i| match i {
+                                                    Identifiable::Part(_) => None,
 
-                                            Identifiable::PartInstance(part_instance_id) => {
-                                                Some(*part_instance_id)
-                                            }
-                                        });
+                                                    Identifiable::PartInstance(
+                                                        part_instance_id,
+                                                    ) => Some(*part_instance_id),
+                                                });
 
-                                    SaveMode::PartInstances(part_instances.collect())
+                                            SaveMode::PartInstances(part_instances.collect())
+                                        }
+                                    };
+                                    OperationServiceRequest::BackgroundOp(Box::new(Save3mfOps {
+                                        path,
+                                        save_mode,
+                                    }))
+                                } else {
+                                    OperationServiceRequest::ModalOp(Box::new(Save3mfOps {
+                                        path,
+                                        save_mode: SaveMode::Scene,
+                                    }))
                                 }
                             };
-                            OperationServiceRequest::BackgroundOp(Box::new(Save3mfOps {
-                                path,
-                                save_mode,
-                            }))
-                        } else {
-                            OperationServiceRequest::ModalOp(Box::new(Save3mfOps {
-                                path,
-                                save_mode: SaveMode::Scene,
-                            }))
+                            if let Err(err) = ctx.operation_queue_tx.send_blocking(ops_msg) {
+                                log::error!("Failed to queue save part operation: {err:?}");
+                            }
                         }
-                    };
-                    if let Err(err) = ctx.operation_queue_tx.send_blocking(ops_msg) {
-                        log::error!("Failed to queue save part operation: {err:?}");
-                    }
-                }
-            },
-        );
+                    }),
+                })
+        {
+            log::error!("Problem sending file save request: {err:?}");
+        }
     }
 }
 

@@ -1,14 +1,12 @@
 use async_trait::async_trait;
 use glam::Vec3;
-use log::info;
 // use smol::Timer;
-use thiserror::Error;
-use threemf2::io::query::{self};
-
 use amrust_render::transformation::Transformation;
+use thiserror::Error;
 use threemf2::core::mesh::{Triangle, Vertex};
 use threemf2::core::transform::Transform;
 use threemf2::io::ThreemfPackage;
+use threemf2::io::query::{self};
 
 use crate::core::amrust_db::{Db, DbError, Scene};
 use crate::core::interfaces::command::{Command, CommandCategory, CommandContext};

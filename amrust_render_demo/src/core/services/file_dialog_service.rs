@@ -1,10 +1,11 @@
 use egui_file_dialog::FileDialog;
 use smol::channel::{Receiver, TryRecvError};
-use std::path::PathBuf;
 
 use crate::core::interfaces::command::CommandContext;
 
-pub type FileDialogHandlerCallback = Box<dyn FnOnce(PathBuf, &mut CommandContext)>;
+use std::path::PathBuf;
+
+pub type FileDialogHandlerCallback = Box<dyn FnOnce(PathBuf, &mut CommandContext) + 'static>;
 
 pub struct FileDialogHandler {
     r#type: DialogType,
@@ -34,12 +35,12 @@ pub enum FileDialogRequest {
     Load {
         extension_name: &'static str,
         extensions: Vec<&'static str>,
-        handler: Box<dyn FnOnce(PathBuf, &mut CommandContext) + 'static>,
+        handler: FileDialogHandlerCallback,
     },
     Save {
         extension_name: &'static str,
         extension: &'static str,
-        handler: Box<dyn FnOnce(PathBuf, &mut CommandContext) + 'static>,
+        handler: FileDialogHandlerCallback,
     },
 }
 
@@ -56,50 +57,6 @@ impl FileDialogService {
             pending_handlers: Vec::new(),
         }
     }
-
-    // /// Show a load dialog with a one-shot handler that will be called when a file is picked
-    // pub fn show_load_dialog(
-    //     &mut self,
-    //     extension_name: &str,
-    //     extensions: Vec<&'static str>,
-    //     handler: impl FnOnce(PathBuf, &mut CommandContext) + 'static,
-    // ) {
-    //     let mut dialog = FileDialog::new()
-    //         .add_file_filter_extensions(extension_name, extensions)
-    //         .default_file_filter(extension_name);
-
-    //     dialog.pick_file();
-
-    //     let dialog_handler = FileDialogHandler {
-    //         r#type: DialogType::Load,
-    //         dialog,
-    //         callback: Box::new(handler),
-    //     };
-
-    //     self.pending_handlers.push(dialog_handler);
-    // }
-
-    // /// Show a save dialog with a one-shot handler that will be called when a file is picked
-    // pub fn show_save_dialog(
-    //     &mut self,
-    //     extension_name: &'static str,
-    //     extension: &'static str,
-    //     handler: impl FnOnce(PathBuf, &mut CommandContext) + 'static,
-    // ) {
-    //     let mut dialog = FileDialog::new()
-    //         .add_save_extension(extension_name, extension)
-    //         .default_save_extension(extension_name);
-
-    //     dialog.save_file();
-
-    //     let dialog_handler = FileDialogHandler {
-    //         r#type: DialogType::Save,
-    //         dialog,
-    //         callback: Box::new(handler),
-    //     };
-
-    //     self.pending_handlers.push(dialog_handler);
-    // }
 
     /// Update all file dialogs and returns the first picked file dialog handler
     pub fn update_and_return_first_picked(

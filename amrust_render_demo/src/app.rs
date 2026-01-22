@@ -3,10 +3,10 @@ use crate::core::app_mode::AppMode;
 use crate::core::interfaces::command::CommandContext;
 use crate::core::interfaces::operation::OperationResponse;
 use crate::core::render_db::RenderDb;
-use crate::core::services::FileDialogService;
 use crate::core::services::command_service::CommandService;
 use crate::core::services::dialog_service::{DialogService, DialogServiceRequest};
 use crate::core::services::file_dialog_service::FileDialogRequest;
+use crate::core::services::file_dialog_service::FileDialogService;
 use crate::core::services::operation_service::{
     OperationService, OperationServiceError, OperationServiceRequest,
 };

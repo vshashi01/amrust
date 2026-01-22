@@ -1,7 +1,4 @@
-use std::time::Duration;
-
 use async_trait::async_trait;
-use log::info;
 use smol::Timer;
 
 use crate::core::{
@@ -12,6 +9,8 @@ use crate::core::{
     services::{command_service::CommandService, operation_service::OperationServiceRequest},
     types::db_context::DbContext,
 };
+
+use std::time::Duration;
 
 pub struct ClearDbOps;
 

@@ -2,7 +2,6 @@ use crate::core::amrust_db::Db;
 use crate::core::app_mode::AppMode;
 use crate::core::types::identifiable::Identifiable;
 use amrust_render::bounding_box::BoundingBox;
-use amrust_render::camera::{CameraData, OrthographicCameraData};
 use glam::{Mat4, Vec2, Vec3};
 
 #[derive(Debug, Clone)]
@@ -251,7 +250,6 @@ mod tests {
     use super::*;
     use crate::core::amrust_db::Db;
     use crate::core::app_mode::AppMode;
-    use amrust_render::camera::OrthographicCameraData;
 
     #[test]
     fn test_pick_empty_db() {

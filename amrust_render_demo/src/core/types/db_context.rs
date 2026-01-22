@@ -7,7 +7,6 @@ use crate::core::{
     interfaces::{
         db_reader::DbReader,
         db_reader_writer::DbReaderWriter,
-        db_writer::DbWriter,
         operation::{Operation, OperationNature, OperationResponse},
     },
     types::identifiable::Identifiable,

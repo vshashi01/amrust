@@ -4,8 +4,8 @@ use crate::core::{
     app_mode::AppMode,
     interfaces::db_view::DbView,
     services::{
-        FileDialogService, file_dialog_service::FileDialogRequest,
-        operation_service::OperationServiceRequest, render_service::RenderServiceRequest,
+        file_dialog_service::FileDialogRequest, operation_service::OperationServiceRequest,
+        render_service::RenderServiceRequest,
     },
 };
 
