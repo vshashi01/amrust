@@ -83,6 +83,10 @@ impl RenderService {
         }
     }
 
+    pub fn get_texture_view(&self) -> wgpu::TextureView {
+        self.render_texture_data.texture_view.clone()
+    }
+
     pub async fn run(&mut self) {
         //send this message at least once.
         if let Err(err) = self
@@ -126,7 +130,7 @@ impl RenderService {
                     RenderServiceRequest::Render => {
                         let render_db = self.render_db.read().await;
                         let render_data = render_db.get_renderables().collect::<Vec<_>>();
-                        log::debug!("Render data count: {:?}", render_data.len());
+                        // log::debug!("Render data count: {:?}", render_data.len());
                         match self
                             .renderer
                             .render_to_texture(&render_data, &self.render_texture_data)

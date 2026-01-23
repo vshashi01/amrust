@@ -1,3 +1,5 @@
+use core::f32;
+
 use crate::core::amrust_db::Db;
 use crate::core::app_mode::AppMode;
 use crate::core::types::identifiable::Identifiable;
@@ -48,8 +50,12 @@ impl PickerService {
                             let local_ray = transform_ray_to_local(&ray, &instance.transform);
                             let intersections = intersect_ray_mesh(&local_ray, mesh);
                             for intersection in intersections {
-                                let distance = distance_point_to_ray(&intersection, &ray);
-                                if distance <= radius {
+                                // let world_intersection =
+                                //     instance.transform.0.transform_point3(intersection);
+
+                                let perp_dist = distance_point_to_ray(&intersection, &ray);
+                                if perp_dist <= radius {
+                                    let distance = distance_along_ray(&intersection, &ray);
                                     results.push(PickedEntity {
                                         entity: Identifiable::PartInstance(instance_id),
                                         intersection,
@@ -70,13 +76,16 @@ impl PickerService {
                         }
                         let intersections = intersect_ray_mesh(&ray, mesh);
                         for intersection in intersections {
-                            let distance = distance_point_to_ray(&intersection, &ray);
-                            if distance <= radius {
-                                results.push(PickedEntity {
-                                    entity: Identifiable::Part(part_id),
-                                    intersection,
-                                    distance,
-                                });
+                            let perp_distance = distance_point_to_ray(&intersection, &ray);
+                            if perp_distance <= radius {
+                                let distance = distance_along_ray(&intersection, &ray);
+                                if distance <= radius {
+                                    results.push(PickedEntity {
+                                        entity: Identifiable::Part(part_id),
+                                        intersection,
+                                        distance,
+                                    });
+                                }
                             }
                         }
                     }
@@ -97,13 +106,21 @@ impl PickerService {
                                 let local_ray = transform_ray_to_local(&ray, &combined_transform);
                                 let intersections = intersect_ray_mesh(&local_ray, child_mesh);
                                 for intersection in intersections {
-                                    let distance = distance_point_to_ray(&intersection, &ray);
-                                    if distance <= radius {
-                                        results.push(PickedEntity {
-                                            entity: Identifiable::PartInstance(child_instance_id),
-                                            intersection,
-                                            distance,
-                                        });
+                                    // let world_intersection =
+                                    //     combined_transform.0.transform_point3(intersection);
+
+                                    let perp_distance = distance_point_to_ray(&intersection, &ray);
+                                    if perp_distance <= radius {
+                                        let distance = distance_along_ray(&intersection, &ray);
+                                        if distance <= radius {
+                                            results.push(PickedEntity {
+                                                entity: Identifiable::PartInstance(
+                                                    child_instance_id,
+                                                ),
+                                                intersection,
+                                                distance,
+                                            });
+                                        }
                                     }
                                 }
                             }
@@ -139,27 +156,63 @@ fn screen_to_ray(screen_point: Vec2, viewport_size: Vec2, view_proj: Mat4) -> Ra
     }
 }
 
+// fn ray_bbox_intersect(ray: &Ray, bbox: &BoundingBox) -> bool {
+//     let min = bbox.min;
+//     let max = bbox.max;
+
+//     let inv_dir = Vec3::new(
+//         1.0 / ray.direction.x,
+//         1.0 / ray.direction.y,
+//         1.0 / ray.direction.z,
+//     );
+
+//     let t1 = (min.x - ray.origin.x) * inv_dir.x;
+//     let t2 = (max.x - ray.origin.x) * inv_dir.x;
+//     let t3 = (min.y - ray.origin.y) * inv_dir.y;
+//     let t4 = (max.y - ray.origin.y) * inv_dir.y;
+//     let t5 = (min.z - ray.origin.z) * inv_dir.z;
+//     let t6 = (max.z - ray.origin.z) * inv_dir.z;
+
+//     let tmin = t1.min(t2).max(t3.min(t4)).max(t5.min(t6));
+//     let tmax = t1.max(t2).min(t3.max(t4)).min(t5.max(t6));
+
+//     tmax >= tmin && tmax >= 0.0
+// }
+
 fn ray_bbox_intersect(ray: &Ray, bbox: &BoundingBox) -> bool {
     let min = bbox.min;
     let max = bbox.max;
 
-    let inv_dir = Vec3::new(
-        1.0 / ray.direction.x,
-        1.0 / ray.direction.y,
-        1.0 / ray.direction.z,
-    );
+    let mut tmin = f32::NEG_INFINITY;
+    let mut tmax = f32::INFINITY;
 
-    let t1 = (min.x - ray.origin.x) * inv_dir.x;
-    let t2 = (max.x - ray.origin.x) * inv_dir.x;
-    let t3 = (min.y - ray.origin.y) * inv_dir.y;
-    let t4 = (max.y - ray.origin.y) * inv_dir.y;
-    let t5 = (min.z - ray.origin.z) * inv_dir.z;
-    let t6 = (max.z - ray.origin.z) * inv_dir.z;
+    for i in 0..3 {
+        let origin = ray.origin[i];
+        let dir = ray.direction[i];
 
-    let tmin = t1.min(t2).max(t3.min(t4)).max(t5.min(t6));
-    let tmax = t1.max(t2).min(t3.max(t4)).min(t5.max(t6));
+        if dir.abs() < 1e-8 {
+            if origin < min[i] || origin > max[i] {
+                return false;
+            }
+        } else {
+            let inv_dir = 1.0 / dir;
+            let mut t1 = (min[i] - origin) * inv_dir;
+            let mut t2 = (max[i] - origin) * inv_dir;
 
-    tmax >= tmin && tmax >= 0.0
+            if t1 > t2 {
+                std::mem::swap(&mut t1, &mut t2);
+            }
+
+            tmin = tmin.max(t1);
+            tmax = tmax.min(t2);
+
+            if tmax < tmin {
+                return false;
+            }
+        }
+    }
+
+    tmax >= 0.0
 }
 
 fn intersect_ray_mesh(ray: &Ray, mesh: &crate::core::types::mesh::Mesh) -> Vec<Vec3> {
@@ -209,6 +262,10 @@ fn distance_point_to_ray(point: &Vec3, ray: &Ray) -> f32 {
     let proj = to_point.dot(ray.direction);
     let closest = ray.origin + ray.direction * proj;
     (*point - closest).length()
+}
+
+fn distance_along_ray(point: &Vec3, ray: &Ray) -> f32 {
+    (point - ray.origin).dot(ray.direction)
 }
 
 fn compute_mesh_bbox(mesh: &crate::core::types::mesh::Mesh) -> BoundingBox {

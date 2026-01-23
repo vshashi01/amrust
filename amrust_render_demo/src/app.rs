@@ -126,7 +126,7 @@ impl AppState {
 
         surface.configure(&device, &surface_config);
 
-        let egui_renderer = EguiRenderer::new(&device, surface_config.format, None, 1, window);
+        let mut egui_renderer = EguiRenderer::new(&device, surface_config.format, None, 1, window);
 
         let camera_data = get_camera_data();
 
@@ -167,23 +167,27 @@ impl AppState {
             initial_camera_data: camera_data.clone(),
         };
 
-        {
-            let internal_render_db = render_db.clone();
-            executor
-                .spawn(async {
-                    log::debug!("Attempted to println in separate thread");
-                    let mut render_worker = RenderService::new(
-                        renderer_settings,
-                        internal_render_db,
-                        render_message_rx,
-                        render_response_tx,
-                    )
-                    .await;
+        let mut render_worker = RenderService::new(
+            renderer_settings,
+            render_db.clone(),
+            render_message_rx,
+            render_response_tx.clone(),
+        )
+        .await;
 
+        let texture_view = render_worker.get_texture_view();
+        let texture_id = egui_renderer.register_texture(&device, &texture_view);
+
+        {
+            executor
+                .spawn(async move {
+                    log::debug!("Attempted to println in separate thread");
                     render_worker.run().await;
                 })
                 .detach();
         }
+
+        let viewport_3d = Viewport3D::new(width, height);
 
         Self {
             device: Arc::new(device),
@@ -192,11 +196,11 @@ impl AppState {
             surface_config,
             dpi_factor,
             egui_renderer,
-            texture_id: None,
+            texture_id: Some(texture_id),
             // dropped_files: dropped_files_widget,
             db: Arc::new(RwLock::new(Db::new())),
             toolsheets: None,
-            viewport_3d: Viewport3D {},
+            viewport_3d,
             picker_service: PickerService,
             current_app_mode: AppMode::Build,
             current_render_mode: AppMode::Build,
@@ -214,11 +218,6 @@ impl AppState {
         self.surface_config.width = width;
         self.surface_config.height = height;
         self.surface.configure(&self.device, &self.surface_config);
-
-        // resize the viewport.
-        self.render_message_tx
-            .send_blocking(RenderServiceRequest::ResizeViewport(width, height))
-            .unwrap();
     }
 
     fn handle_redraw(&mut self) {
@@ -507,28 +506,6 @@ impl App {
                     });
             }
 
-            egui::CentralPanel::default().show(state.egui_renderer.context(), |ui| {
-                match state.texture_id {
-                    Some(id) => {
-                        state.viewport_3d.ui(
-                            ui,
-                            id,
-                            &state.render_message_tx,
-                            bbox,
-                            &state.db,
-                            &state.current_app_mode,
-                            &state.picker_service,
-                            state.current_view_projection,
-                        );
-                    }
-                    None => {
-                        ui.label("Rendering Texture ID is missing!!");
-                    }
-                }
-
-                self.toasts.show(state.egui_renderer.context());
-            });
-
             // state
             //     .dropped_files
             //     .run(state.egui_renderer.context(), &|test| false);
@@ -778,6 +755,28 @@ impl App {
                         })
                     });
             }
+
+            egui::CentralPanel::default().show(state.egui_renderer.context(), |ui| {
+                match state.texture_id {
+                    Some(id) => {
+                        state.viewport_3d.ui(
+                            ui,
+                            id,
+                            &state.render_message_tx,
+                            bbox,
+                            &state.db,
+                            &state.current_app_mode,
+                            &state.picker_service,
+                            state.current_view_projection,
+                        );
+                    }
+                    None => {
+                        ui.label("Rendering Texture ID is missing!!");
+                    }
+                }
+
+                self.toasts.show(state.egui_renderer.context());
+            });
 
             match self.operation_response_rx.try_recv() {
                 Ok(response) => {
