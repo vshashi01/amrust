@@ -171,7 +171,7 @@ impl RenderService {
     async fn update_camera(&mut self) {
         self.renderer.update_camera(&self.camera);
 
-        let view_proj = self.camera.get_view_matrix() * self.camera.get_projection_matrix();
+        let view_proj = self.camera.get_projection_matrix() * self.camera.get_view_matrix();
         if let Err(err) = self
             .sender
             .send(RenderServiceResponse::NewView(view_proj))
