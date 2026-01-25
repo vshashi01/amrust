@@ -63,7 +63,7 @@ impl PickerService {
                                 let distance = distance_along_ray(&world_intersection, &ray);
                                 results.push(PickedEntity {
                                     entity: Identifiable::PartInstance(*instance_id),
-                                    intersection,
+                                    intersection: world_intersection,
                                     distance,
                                 });
 
