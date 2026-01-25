@@ -55,23 +55,41 @@ impl PickerService {
                         }
                         let local_ray = transform_ray_to_local(&ray, &combined_transform);
                         let intersections = intersect_ray_mesh(&local_ray, mesh);
+
+                        let mut closest_hit: Option<(f32, Vec3)> = None;
+                        let mut intermediate_results = vec![];
                         for intersection in intersections {
                             let world_intersection =
                                 combined_transform.0.transform_point3(intersection);
                             let perp_dist = distance_point_to_ray(&world_intersection, &ray);
                             if perp_dist <= config.snap_radius {
                                 let distance = distance_along_ray(&world_intersection, &ray);
-                                results.push(PickedEntity {
+                                intermediate_results.push(PickedEntity {
                                     entity: Identifiable::PartInstance(*instance_id),
                                     intersection: world_intersection,
                                     distance,
                                 });
 
-                                if !config.return_all_intersections {
-                                    //no need to analyze all other intersections
-                                    break;
+                                if let Some(prev_hit) = closest_hit.take() {
+                                    if distance < prev_hit.0 {
+                                        let _ = closest_hit.insert((distance, world_intersection));
+                                    } else {
+                                        let _ = closest_hit.insert(prev_hit);
+                                    }
+                                } else {
+                                    let _ = closest_hit.insert((distance, world_intersection));
                                 }
                             }
+                        }
+
+                        if !intermediate_results.is_empty() && config.return_all_intersections {
+                            results.append(&mut intermediate_results);
+                        } else if let Some(closest_hit) = closest_hit {
+                            results.push(PickedEntity {
+                                entity: Identifiable::PartInstance(*instance_id),
+                                intersection: closest_hit.1,
+                                distance: closest_hit.0,
+                            });
                         }
                     }
                     PartRep::ComposedPart(part_instance_ids) => {
@@ -121,20 +139,39 @@ impl PickerService {
                             continue;
                         }
                         let intersections = intersect_ray_mesh(&ray, mesh);
+
+                        let mut closest_hit: Option<(f32, Vec3)> = None;
+                        let mut intermediate_results = vec![];
                         for intersection in intersections {
                             let perp_dist = distance_point_to_ray(&intersection, &ray);
                             if perp_dist <= config.snap_radius {
                                 let distance = distance_along_ray(&intersection, &ray);
-                                results.push(PickedEntity {
+                                intermediate_results.push(PickedEntity {
                                     entity: Identifiable::Part(*part_id),
                                     intersection,
                                     distance,
                                 });
 
-                                if !config.return_all_intersections {
-                                    break;
+                                if let Some(prev_hit) = closest_hit.take() {
+                                    if distance < prev_hit.0 {
+                                        let _ = closest_hit.insert((distance, intersection));
+                                    } else {
+                                        let _ = closest_hit.insert(prev_hit);
+                                    }
+                                } else {
+                                    let _ = closest_hit.insert((distance, intersection));
                                 }
                             }
+                        }
+
+                        if !intermediate_results.is_empty() && config.return_all_intersections {
+                            results.append(&mut intermediate_results);
+                        } else if let Some(closest_hit) = closest_hit {
+                            results.push(PickedEntity {
+                                entity: Identifiable::Part(*part_id),
+                                intersection: closest_hit.1,
+                                distance: closest_hit.0,
+                            });
                         }
                     }
                     PartRep::ComposedPart(part_instance_ids) => {
