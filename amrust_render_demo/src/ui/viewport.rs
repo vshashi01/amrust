@@ -6,8 +6,10 @@ use smol::lock::RwLock;
 
 use crate::core::amrust_db::Db;
 use crate::core::app_mode::AppMode;
-use crate::core::services::picker_service::PickerService;
+use crate::core::services::picker_service::{PickerConfig, PickerService};
 use crate::core::services::render_service::RenderServiceRequest;
+use crate::core::types::transformation::Transformation;
+use crate::db_view_model::DbViewModel;
 
 use std::sync::Arc;
 use std::time::{self, Duration};
@@ -34,6 +36,7 @@ impl Viewport3D {
         render_service_request_sender: &Sender<RenderServiceRequest>,
         bbox: &BoundingBox,
         db: &Arc<RwLock<Db>>,
+        db_view_model: &DbViewModel,
         app_mode: &AppMode,
         picker_service: &PickerService,
         current_view_proj: Mat4,
@@ -108,19 +111,49 @@ impl Viewport3D {
             let relative_pos = pos - rect.min;
             log::debug!("Clicked at position: {relative_pos:?} ");
 
-            let screen_point = glam::Vec2::new(relative_pos.x, relative_pos.y);
+            let screen_pt = glam::Vec2::new(relative_pos.x, relative_pos.y);
             let viewport_size = glam::Vec2::new(size_we_want_to_use.x, size_we_want_to_use.y);
 
             let radius = 0.1; // example radius
-            let picks = picker_service.pick(
-                &db_read,
-                app_mode,
-                screen_point,
-                viewport_size,
-                current_view_proj,
-                radius,
-            );
-            log::info!("Picked entities: {:?}", picks);
+            match app_mode {
+                AppMode::Objects => {
+                    let picked = picker_service.pick_only_parts(
+                        &PickerConfig {
+                            screen_pt,
+                            viewport_size,
+                            view_proj: current_view_proj,
+                            snap_radius: radius,
+                        },
+                        &db_read,
+                        &db_view_model.get_all_parts_id(),
+                    );
+
+                    log::info!("Picked entities: {:?}", picked);
+                }
+                AppMode::Build => {
+                    let picked = picker_service.pick_only_instances(
+                        &PickerConfig {
+                            screen_pt,
+                            viewport_size,
+                            view_proj: current_view_proj,
+                            snap_radius: radius,
+                        },
+                        &db_read,
+                        db_view_model.get_instance_on_scene(),
+                        Transformation(Mat4::IDENTITY),
+                    );
+
+                    log::info!("Picked entities: {:?}", picked);
+                }
+            }
+            // let picks = picker_service.pick(
+            //     &db_read,
+            //     app_mode,
+            //     screen_point,
+            //     viewport_size,
+            //     current_view_proj,
+            //     radius,
+            // );
         }
 
         if !transforms.is_empty()

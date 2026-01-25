@@ -1,8 +1,11 @@
 use core::f32;
 
-use crate::core::amrust_db::Db;
 use crate::core::app_mode::AppMode;
 use crate::core::types::identifiable::Identifiable;
+use crate::core::types::part::{PartId, PartRep};
+use crate::core::types::transformation::Transformation;
+use crate::core::{amrust_db::Db, types::part_instance::PartInstanceId};
+use crate::db_view_model::DbViewModel;
 use amrust_render::bounding_box::BoundingBox;
 use glam::{Mat4, Vec2, Vec3};
 
@@ -19,111 +22,244 @@ pub struct Ray {
     pub direction: Vec3,
 }
 
+pub struct PickerConfig {
+    pub screen_pt: glam::Vec2,
+    pub viewport_size: glam::Vec2,
+    pub view_proj: glam::Mat4,
+    pub snap_radius: f32,
+}
+
 pub struct PickerService;
 
 impl PickerService {
-    pub fn pick(
+    // pub fn pick(
+    //     &self,
+    //     db: &Db,
+    //     app_mode: &AppMode,
+    //     screen_point: Vec2,
+    //     viewport_size: Vec2,
+    //     view_proj: Mat4,
+    //     radius: f32,
+    // ) -> Vec<PickedEntity> {
+    //     let ray = screen_to_ray(screen_point, viewport_size, view_proj);
+    //     let mut results = Vec::new();
+
+    //     match app_mode {
+    //         AppMode::Build => {
+    //             if let Ok(scene) = db.get_scene() {
+    //                 for &instance_id in &scene.instances {
+    //                     if let Ok(instance) = db.get_part_instance_data(&instance_id)
+    //                         && let Ok(part) = db.get_part_data(&instance.part_id)
+    //                         && let Some(mesh) = part.get_rep().as_mesh()
+    //                     {
+    //                         let transformed_bbox =
+    //                             compute_transformed_bbox(mesh, &instance.transform);
+    //                         if !ray_bbox_intersect(&ray, &transformed_bbox) {
+    //                             continue;
+    //                         }
+    //                         let local_ray = transform_ray_to_local(&ray, &instance.transform);
+    //                         let intersections = intersect_ray_mesh(&local_ray, mesh);
+    //                         for intersection in intersections {
+    //                             // let world_intersection =
+    //                             //     instance.transform.0.transform_point3(intersection);
+
+    //                             let perp_dist = distance_point_to_ray(&intersection, &ray);
+    //                             if perp_dist <= radius {
+    //                                 let distance = distance_along_ray(&intersection, &ray);
+    //                                 results.push(PickedEntity {
+    //                                     entity: Identifiable::PartInstance(instance_id),
+    //                                     intersection,
+    //                                     distance,
+    //                                 });
+    //                             }
+    //                         }
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //         AppMode::Objects => {
+    //             for (part_id, part) in db.get_parts() {
+    //                 if let Some(mesh) = part.get_rep().as_mesh() {
+    //                     let bbox = compute_mesh_bbox(mesh);
+    //                     if !ray_bbox_intersect(&ray, &bbox) {
+    //                         continue;
+    //                     }
+    //                     let intersections = intersect_ray_mesh(&ray, mesh);
+    //                     for intersection in intersections {
+    //                         let perp_distance = distance_point_to_ray(&intersection, &ray);
+    //                         if perp_distance <= radius {
+    //                             let distance = distance_along_ray(&intersection, &ray);
+    //                             if distance <= radius {
+    //                                 results.push(PickedEntity {
+    //                                     entity: Identifiable::Part(part_id),
+    //                                     intersection,
+    //                                     distance,
+    //                                 });
+    //                             }
+    //                         }
+    //                     }
+    //                 }
+    //                 // For composed parts, recurse on instances
+    //                 if let Some(composed) = part.get_rep().as_composed_part() {
+    //                     for &child_instance_id in composed {
+    //                         if let Ok(child_instance) =
+    //                             db.get_part_instance_data(&child_instance_id)
+    //                             && let Ok(child_part) = db.get_part_data(&child_instance.part_id)
+    //                             && let Some(child_mesh) = child_part.get_rep().as_mesh()
+    //                         {
+    //                             let combined_transform = child_instance.transform; // Assuming no parent transform here
+    //                             let transformed_bbox =
+    //                                 compute_transformed_bbox(child_mesh, &combined_transform);
+    //                             if !ray_bbox_intersect(&ray, &transformed_bbox) {
+    //                                 continue;
+    //                             }
+    //                             let local_ray = transform_ray_to_local(&ray, &combined_transform);
+    //                             let intersections = intersect_ray_mesh(&local_ray, child_mesh);
+    //                             for intersection in intersections {
+    //                                 // let world_intersection =
+    //                                 //     combined_transform.0.transform_point3(intersection);
+
+    //                                 let perp_distance = distance_point_to_ray(&intersection, &ray);
+    //                                 if perp_distance <= radius {
+    //                                     let distance = distance_along_ray(&intersection, &ray);
+    //                                     if distance <= radius {
+    //                                         results.push(PickedEntity {
+    //                                             entity: Identifiable::PartInstance(
+    //                                                 child_instance_id,
+    //                                             ),
+    //                                             intersection,
+    //                                             distance,
+    //                                         });
+    //                                     }
+    //                                 }
+    //                             }
+    //                         }
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
+
+    //     results.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+    //     results
+    // }
+
+    pub fn pick_only_instances(
         &self,
+        config: &PickerConfig,
         db: &Db,
-        app_mode: &AppMode,
-        screen_point: Vec2,
-        viewport_size: Vec2,
-        view_proj: Mat4,
-        radius: f32,
+        instances_can_be_picked: &[PartInstanceId],
+        parent_transform: Transformation,
     ) -> Vec<PickedEntity> {
-        let ray = screen_to_ray(screen_point, viewport_size, view_proj);
+        let ray = screen_to_ray(config.screen_pt, config.viewport_size, config.view_proj);
         let mut results = Vec::new();
 
-        match app_mode {
-            AppMode::Build => {
-                if let Ok(scene) = db.get_scene() {
-                    for &instance_id in &scene.instances {
-                        if let Ok(instance) = db.get_part_instance_data(&instance_id)
-                            && let Ok(part) = db.get_part_data(&instance.part_id)
-                            && let Some(mesh) = part.get_rep().as_mesh()
-                        {
-                            let transformed_bbox =
-                                compute_transformed_bbox(mesh, &instance.transform);
-                            if !ray_bbox_intersect(&ray, &transformed_bbox) {
-                                continue;
-                            }
-                            let local_ray = transform_ray_to_local(&ray, &instance.transform);
-                            let intersections = intersect_ray_mesh(&local_ray, mesh);
-                            for intersection in intersections {
-                                // let world_intersection =
-                                //     instance.transform.0.transform_point3(intersection);
+        for instance_id in instances_can_be_picked {
+            if let Ok(instance) = db.get_part_instance_data(instance_id)
+                && let Ok(part) = db.get_part_data(&instance.part_id)
+            {
+                let combined_transform = Transformation(parent_transform.0 * instance.transform.0);
 
-                                let perp_dist = distance_point_to_ray(&intersection, &ray);
-                                if perp_dist <= radius {
-                                    let distance = distance_along_ray(&intersection, &ray);
-                                    results.push(PickedEntity {
-                                        entity: Identifiable::PartInstance(instance_id),
-                                        intersection,
-                                        distance,
-                                    });
-                                }
+                match part.get_rep() {
+                    PartRep::Mesh(mesh) => {
+                        let transformed_bbox = compute_transformed_bbox(mesh, &combined_transform);
+                        if !ray_bbox_intersect(&ray, &transformed_bbox) {
+                            continue;
+                        }
+                        let local_ray = transform_ray_to_local(&ray, &combined_transform);
+                        let intersections = intersect_ray_mesh(&local_ray, mesh);
+                        for intersection in intersections {
+                            let perp_dist = distance_point_to_ray(&intersection, &ray);
+                            if perp_dist <= config.snap_radius {
+                                let distance = distance_along_ray(&intersection, &ray);
+                                results.push(PickedEntity {
+                                    entity: Identifiable::PartInstance(*instance_id),
+                                    intersection,
+                                    distance,
+                                });
                             }
+                        }
+                    }
+                    PartRep::ComposedPart(part_instance_ids) => {
+                        let mut picked_instances = self.pick_only_instances(
+                            config,
+                            db,
+                            part_instance_ids,
+                            combined_transform,
+                        );
+
+                        //ToDo:: Replace this with something more sensical
+                        if !picked_instances.is_empty() {
+                            if let Some(picked) = picked_instances.first() {
+                                results.push(PickedEntity {
+                                    entity: Identifiable::PartInstance(*instance_id),
+                                    intersection: picked.intersection,
+                                    distance: picked.distance,
+                                });
+                            }
+
+                            results.append(&mut picked_instances);
                         }
                     }
                 }
             }
-            AppMode::Objects => {
-                for (part_id, part) in db.get_parts() {
-                    if let Some(mesh) = part.get_rep().as_mesh() {
-                        let bbox = compute_mesh_bbox(mesh);
-                        if !ray_bbox_intersect(&ray, &bbox) {
+        }
+
+        results.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+        results
+    }
+
+    pub fn pick_only_parts(
+        &self,
+        config: &PickerConfig,
+        db: &Db,
+        parts_can_be_picked: &[PartId],
+    ) -> Vec<PickedEntity> {
+        let ray = screen_to_ray(config.screen_pt, config.viewport_size, config.view_proj);
+        let mut results = Vec::new();
+
+        for part_id in parts_can_be_picked {
+            if let Ok(part) = db.get_part_data(part_id) {
+                match part.get_rep() {
+                    PartRep::Mesh(mesh) => {
+                        let transformed_bbox =
+                            compute_transformed_bbox(mesh, &Transformation(Mat4::IDENTITY));
+                        if !ray_bbox_intersect(&ray, &transformed_bbox) {
                             continue;
                         }
+                        // let local_ray = transform_ray_to_local(&ray, &combined_transform);
                         let intersections = intersect_ray_mesh(&ray, mesh);
                         for intersection in intersections {
-                            let perp_distance = distance_point_to_ray(&intersection, &ray);
-                            if perp_distance <= radius {
+                            let perp_dist = distance_point_to_ray(&intersection, &ray);
+                            if perp_dist <= config.snap_radius {
                                 let distance = distance_along_ray(&intersection, &ray);
-                                if distance <= radius {
-                                    results.push(PickedEntity {
-                                        entity: Identifiable::Part(part_id),
-                                        intersection,
-                                        distance,
-                                    });
-                                }
+                                results.push(PickedEntity {
+                                    entity: Identifiable::Part(*part_id),
+                                    intersection,
+                                    distance,
+                                });
                             }
                         }
                     }
-                    // For composed parts, recurse on instances
-                    if let Some(composed) = part.get_rep().as_composed_part() {
-                        for &child_instance_id in composed {
-                            if let Ok(child_instance) =
-                                db.get_part_instance_data(&child_instance_id)
-                                && let Ok(child_part) = db.get_part_data(&child_instance.part_id)
-                                && let Some(child_mesh) = child_part.get_rep().as_mesh()
-                            {
-                                let combined_transform = child_instance.transform; // Assuming no parent transform here
-                                let transformed_bbox =
-                                    compute_transformed_bbox(child_mesh, &combined_transform);
-                                if !ray_bbox_intersect(&ray, &transformed_bbox) {
-                                    continue;
-                                }
-                                let local_ray = transform_ray_to_local(&ray, &combined_transform);
-                                let intersections = intersect_ray_mesh(&local_ray, child_mesh);
-                                for intersection in intersections {
-                                    // let world_intersection =
-                                    //     combined_transform.0.transform_point3(intersection);
+                    PartRep::ComposedPart(part_instance_ids) => {
+                        let mut picked_instances = self.pick_only_instances(
+                            config,
+                            db,
+                            part_instance_ids,
+                            Transformation(Mat4::IDENTITY),
+                        );
 
-                                    let perp_distance = distance_point_to_ray(&intersection, &ray);
-                                    if perp_distance <= radius {
-                                        let distance = distance_along_ray(&intersection, &ray);
-                                        if distance <= radius {
-                                            results.push(PickedEntity {
-                                                entity: Identifiable::PartInstance(
-                                                    child_instance_id,
-                                                ),
-                                                intersection,
-                                                distance,
-                                            });
-                                        }
-                                    }
-                                }
+                        //ToDo:: Replace this with something more sensical
+                        if !picked_instances.is_empty() {
+                            if let Some(picked) = picked_instances.first() {
+                                results.push(PickedEntity {
+                                    entity: Identifiable::Part(*part_id),
+                                    intersection: picked.intersection,
+                                    distance: picked.distance,
+                                });
                             }
+
+                            results.append(&mut picked_instances);
                         }
                     }
                 }
@@ -308,25 +444,25 @@ mod tests {
     use crate::core::amrust_db::Db;
     use crate::core::app_mode::AppMode;
 
-    #[test]
-    fn test_pick_empty_db() {
-        let picker = PickerService;
-        let db = Db::new();
-        let app_mode = AppMode::Build;
-        let screen_point = glam::Vec2::new(0.0, 0.0);
-        let viewport_size = glam::Vec2::new(800.0, 600.0);
-        let radius = 0.1;
+    // #[test]
+    // fn test_pick_empty_db() {
+    //     let picker = PickerService;
+    //     let db = Db::new();
+    //     let app_mode = AppMode::Build;
+    //     let screen_point = glam::Vec2::new(0.0, 0.0);
+    //     let viewport_size = glam::Vec2::new(800.0, 600.0);
+    //     let radius = 0.1;
 
-        let results = picker.pick(
-            &db,
-            &app_mode,
-            screen_point,
-            viewport_size,
-            Mat4::IDENTITY,
-            radius,
-        );
-        assert!(results.is_empty());
-    }
+    //     let results = picker.pick(
+    //         &db,
+    //         &app_mode,
+    //         screen_point,
+    //         viewport_size,
+    //         Mat4::IDENTITY,
+    //         radius,
+    //     );
+    //     assert!(results.is_empty());
+    // }
 
     #[test]
     fn test_screen_to_ray() {

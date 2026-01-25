@@ -766,6 +766,7 @@ impl App {
                             &state.render_message_tx,
                             bbox,
                             &state.db,
+                            &state.db_view_model,
                             &state.current_app_mode,
                             &state.picker_service,
                             state.current_view_projection,

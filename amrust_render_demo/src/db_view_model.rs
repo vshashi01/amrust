@@ -1,5 +1,6 @@
 use anyhow::Result;
 use glam::{Mat4, Vec3};
+use slotmap::basic::Keys;
 use smol::lock::RwLock;
 
 use amrust_render::{
@@ -127,6 +128,14 @@ impl DbViewModel {
 
     pub fn set_scene_data(&mut self, instances: Vec<PartInstanceId>) {
         self.scene_data = instances;
+    }
+
+    pub fn get_instance_on_scene(&self) -> &Vec<PartInstanceId> {
+        &self.scene_data
+    }
+
+    pub fn get_all_parts_id(&self) -> Vec<PartId> {
+        self.parts_data.keys().cloned().collect::<Vec<_>>()
     }
 
     pub fn add_selected_identifiable(&mut self, identifiable: Identifiable) {
