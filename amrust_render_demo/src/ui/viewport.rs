@@ -1,19 +1,20 @@
 use amrust_render::{bounding_box::BoundingBox, camera::CameraTransform};
-use egui::{Image, TextureId, UiBuilder, Vec2, epaint};
+use egui::{Image, UiBuilder, Vec2, epaint};
 use glam::Mat4;
-use rkyv::rend;
-use smol::channel::{Receiver, Sender};
+use smol::channel::Sender;
 use smol::lock::RwLock;
-use std::sync::Arc;
 
 use crate::core::amrust_db::Db;
 use crate::core::app_mode::AppMode;
 use crate::core::services::picker_service::PickerService;
 use crate::core::services::render_service::RenderServiceRequest;
-use crate::egui_tools::EguiRenderer;
+
+use std::sync::Arc;
+use std::time::{self, Duration};
 
 pub struct Viewport3D {
     prev_frame_size: egui::Vec2,
+    last_request_for_resize: time::Instant,
 }
 
 impl Viewport3D {
@@ -23,6 +24,7 @@ impl Viewport3D {
                 x: initial_width as f32,
                 y: initial_height as f32,
             },
+            last_request_for_resize: time::Instant::now(),
         }
     }
     pub fn ui(
@@ -36,8 +38,10 @@ impl Viewport3D {
         picker_service: &PickerService,
         current_view_proj: Mat4,
     ) {
-        let size_we_want_to_use = ui.available_size() - Vec2::splat(10.0);
-        if size_we_want_to_use != self.prev_frame_size {
+        let size_we_want_to_use = ui.available_size();
+        if size_we_want_to_use != self.prev_frame_size
+            && (time::Instant::now() - self.last_request_for_resize) > Duration::from_millis(100)
+        {
             if let Err(err) =
                 render_service_request_sender.send_blocking(RenderServiceRequest::ResizeViewport(
                     size_we_want_to_use.x as u32,
@@ -47,6 +51,7 @@ impl Viewport3D {
                 log::error!("Unable to send a resize viewport request: {err:?}");
             } else {
                 self.prev_frame_size = size_we_want_to_use;
+                self.last_request_for_resize = time::Instant::now();
             }
         }
 

@@ -235,6 +235,7 @@ impl AppState {
                 }
                 RenderServiceResponse::NewView(view_proj) => {
                     self.current_view_projection = view_proj;
+                    log::debug!("New view projection: {view_proj:?}");
                 }
                 RenderServiceResponse::RenderComplete => {}
             },

@@ -126,6 +126,9 @@ impl RenderService {
                         {
                             log::error!("{err:?}");
                         }
+
+                        self.camera.set_viewport_size(width as f32, height as f32);
+                        self.update_camera();
                     }
                     RenderServiceRequest::Render => {
                         let render_db = self.render_db.read().await;
