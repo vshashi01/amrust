@@ -1,13 +1,11 @@
-use core::f32;
-
-use crate::core::app_mode::AppMode;
 use crate::core::types::identifiable::Identifiable;
 use crate::core::types::part::{PartId, PartRep};
 use crate::core::types::transformation::Transformation;
 use crate::core::{amrust_db::Db, types::part_instance::PartInstanceId};
-use crate::db_view_model::DbViewModel;
 use amrust_render::bounding_box::BoundingBox;
 use glam::{Mat4, Vec2, Vec3};
+
+use core::f32;
 
 #[derive(Debug, Clone)]
 pub struct PickedEntity {
@@ -27,123 +25,12 @@ pub struct PickerConfig {
     pub viewport_size: glam::Vec2,
     pub view_proj: glam::Mat4,
     pub snap_radius: f32,
+    pub return_all_intersections: bool,
 }
 
 pub struct PickerService;
 
 impl PickerService {
-    // pub fn pick(
-    //     &self,
-    //     db: &Db,
-    //     app_mode: &AppMode,
-    //     screen_point: Vec2,
-    //     viewport_size: Vec2,
-    //     view_proj: Mat4,
-    //     radius: f32,
-    // ) -> Vec<PickedEntity> {
-    //     let ray = screen_to_ray(screen_point, viewport_size, view_proj);
-    //     let mut results = Vec::new();
-
-    //     match app_mode {
-    //         AppMode::Build => {
-    //             if let Ok(scene) = db.get_scene() {
-    //                 for &instance_id in &scene.instances {
-    //                     if let Ok(instance) = db.get_part_instance_data(&instance_id)
-    //                         && let Ok(part) = db.get_part_data(&instance.part_id)
-    //                         && let Some(mesh) = part.get_rep().as_mesh()
-    //                     {
-    //                         let transformed_bbox =
-    //                             compute_transformed_bbox(mesh, &instance.transform);
-    //                         if !ray_bbox_intersect(&ray, &transformed_bbox) {
-    //                             continue;
-    //                         }
-    //                         let local_ray = transform_ray_to_local(&ray, &instance.transform);
-    //                         let intersections = intersect_ray_mesh(&local_ray, mesh);
-    //                         for intersection in intersections {
-    //                             // let world_intersection =
-    //                             //     instance.transform.0.transform_point3(intersection);
-
-    //                             let perp_dist = distance_point_to_ray(&intersection, &ray);
-    //                             if perp_dist <= radius {
-    //                                 let distance = distance_along_ray(&intersection, &ray);
-    //                                 results.push(PickedEntity {
-    //                                     entity: Identifiable::PartInstance(instance_id),
-    //                                     intersection,
-    //                                     distance,
-    //                                 });
-    //                             }
-    //                         }
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //         AppMode::Objects => {
-    //             for (part_id, part) in db.get_parts() {
-    //                 if let Some(mesh) = part.get_rep().as_mesh() {
-    //                     let bbox = compute_mesh_bbox(mesh);
-    //                     if !ray_bbox_intersect(&ray, &bbox) {
-    //                         continue;
-    //                     }
-    //                     let intersections = intersect_ray_mesh(&ray, mesh);
-    //                     for intersection in intersections {
-    //                         let perp_distance = distance_point_to_ray(&intersection, &ray);
-    //                         if perp_distance <= radius {
-    //                             let distance = distance_along_ray(&intersection, &ray);
-    //                             if distance <= radius {
-    //                                 results.push(PickedEntity {
-    //                                     entity: Identifiable::Part(part_id),
-    //                                     intersection,
-    //                                     distance,
-    //                                 });
-    //                             }
-    //                         }
-    //                     }
-    //                 }
-    //                 // For composed parts, recurse on instances
-    //                 if let Some(composed) = part.get_rep().as_composed_part() {
-    //                     for &child_instance_id in composed {
-    //                         if let Ok(child_instance) =
-    //                             db.get_part_instance_data(&child_instance_id)
-    //                             && let Ok(child_part) = db.get_part_data(&child_instance.part_id)
-    //                             && let Some(child_mesh) = child_part.get_rep().as_mesh()
-    //                         {
-    //                             let combined_transform = child_instance.transform; // Assuming no parent transform here
-    //                             let transformed_bbox =
-    //                                 compute_transformed_bbox(child_mesh, &combined_transform);
-    //                             if !ray_bbox_intersect(&ray, &transformed_bbox) {
-    //                                 continue;
-    //                             }
-    //                             let local_ray = transform_ray_to_local(&ray, &combined_transform);
-    //                             let intersections = intersect_ray_mesh(&local_ray, child_mesh);
-    //                             for intersection in intersections {
-    //                                 // let world_intersection =
-    //                                 //     combined_transform.0.transform_point3(intersection);
-
-    //                                 let perp_distance = distance_point_to_ray(&intersection, &ray);
-    //                                 if perp_distance <= radius {
-    //                                     let distance = distance_along_ray(&intersection, &ray);
-    //                                     if distance <= radius {
-    //                                         results.push(PickedEntity {
-    //                                             entity: Identifiable::PartInstance(
-    //                                                 child_instance_id,
-    //                                             ),
-    //                                             intersection,
-    //                                             distance,
-    //                                         });
-    //                                     }
-    //                                 }
-    //                             }
-    //                         }
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //     }
-
-    //     results.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
-    //     results
-    // }
-
     pub fn pick_only_instances(
         &self,
         config: &PickerConfig,
@@ -169,14 +56,21 @@ impl PickerService {
                         let local_ray = transform_ray_to_local(&ray, &combined_transform);
                         let intersections = intersect_ray_mesh(&local_ray, mesh);
                         for intersection in intersections {
-                            let perp_dist = distance_point_to_ray(&intersection, &ray);
+                            let world_intersection =
+                                combined_transform.0.transform_point3(intersection);
+                            let perp_dist = distance_point_to_ray(&world_intersection, &ray);
                             if perp_dist <= config.snap_radius {
-                                let distance = distance_along_ray(&intersection, &ray);
+                                let distance = distance_along_ray(&world_intersection, &ray);
                                 results.push(PickedEntity {
                                     entity: Identifiable::PartInstance(*instance_id),
                                     intersection,
                                     distance,
                                 });
+
+                                if !config.return_all_intersections {
+                                    //no need to analyze all other intersections
+                                    break;
+                                }
                             }
                         }
                     }
@@ -222,12 +116,10 @@ impl PickerService {
             if let Ok(part) = db.get_part_data(part_id) {
                 match part.get_rep() {
                     PartRep::Mesh(mesh) => {
-                        let transformed_bbox =
-                            compute_transformed_bbox(mesh, &Transformation(Mat4::IDENTITY));
-                        if !ray_bbox_intersect(&ray, &transformed_bbox) {
+                        let bbox = compute_mesh_bbox(mesh);
+                        if !ray_bbox_intersect(&ray, &bbox) {
                             continue;
                         }
-                        // let local_ray = transform_ray_to_local(&ray, &combined_transform);
                         let intersections = intersect_ray_mesh(&ray, mesh);
                         for intersection in intersections {
                             let perp_dist = distance_point_to_ray(&intersection, &ray);
@@ -238,6 +130,10 @@ impl PickerService {
                                     intersection,
                                     distance,
                                 });
+
+                                if !config.return_all_intersections {
+                                    break;
+                                }
                             }
                         }
                     }
@@ -291,29 +187,6 @@ fn screen_to_ray(screen_point: Vec2, viewport_size: Vec2, view_proj: Mat4) -> Ra
         direction: (far_world - near_world).normalize(),
     }
 }
-
-// fn ray_bbox_intersect(ray: &Ray, bbox: &BoundingBox) -> bool {
-//     let min = bbox.min;
-//     let max = bbox.max;
-
-//     let inv_dir = Vec3::new(
-//         1.0 / ray.direction.x,
-//         1.0 / ray.direction.y,
-//         1.0 / ray.direction.z,
-//     );
-
-//     let t1 = (min.x - ray.origin.x) * inv_dir.x;
-//     let t2 = (max.x - ray.origin.x) * inv_dir.x;
-//     let t3 = (min.y - ray.origin.y) * inv_dir.y;
-//     let t4 = (max.y - ray.origin.y) * inv_dir.y;
-//     let t5 = (min.z - ray.origin.z) * inv_dir.z;
-//     let t6 = (max.z - ray.origin.z) * inv_dir.z;
-
-//     let tmin = t1.min(t2).max(t3.min(t4)).max(t5.min(t6));
-//     let tmax = t1.max(t2).min(t3.max(t4)).min(t5.max(t6));
-
-//     tmax >= tmin && tmax >= 0.0
-// }
 
 fn ray_bbox_intersect(ray: &Ray, bbox: &BoundingBox) -> bool {
     let min = bbox.min;
@@ -441,8 +314,6 @@ fn transform_ray_to_local(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::amrust_db::Db;
-    use crate::core::app_mode::AppMode;
 
     // #[test]
     // fn test_pick_empty_db() {

@@ -128,7 +128,7 @@ impl RenderService {
                         }
 
                         self.camera.set_viewport_size(width as f32, height as f32);
-                        self.update_camera();
+                        self.update_camera().await;
                     }
                     RenderServiceRequest::Render => {
                         let render_db = self.render_db.read().await;
@@ -171,7 +171,7 @@ impl RenderService {
     async fn update_camera(&mut self) {
         self.renderer.update_camera(&self.camera);
 
-        let view_proj = self.camera.get_projection_matrix() * self.camera.get_view_matrix();
+        let view_proj = self.camera.get_view_projection();
         if let Err(err) = self
             .sender
             .send(RenderServiceResponse::NewView(view_proj))

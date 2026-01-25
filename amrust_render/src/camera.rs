@@ -12,6 +12,7 @@ pub struct CameraUniform {
 pub trait CameraData {
     fn get_view_matrix(&self) -> Mat4;
     fn get_projection_matrix(&self) -> Mat4;
+    fn get_view_projection(&self) -> Mat4;
 
     fn transform(&mut self, transform: CameraTransform) -> &mut Self;
 
@@ -189,6 +190,10 @@ impl CameraData for OrthographicCameraData {
     fn get_projection_matrix(&self) -> Mat4 {
         let (left, right, bottom, top) = get_bounds_from_zoom(self.zoom, self.aspect_ratio);
         Mat4::orthographic_rh(left, right, bottom, top, self.near, self.far)
+    }
+
+    fn get_view_projection(&self) -> Mat4 {
+        self.get_projection_matrix() * self.get_view_matrix()
     }
 
     fn transform(&mut self, transform: CameraTransform) -> &mut Self {
