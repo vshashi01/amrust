@@ -132,6 +132,10 @@ pub struct OrthographicCameraData {
 
 pub enum CameraTransform {
     Zoom(f32),
+    ZoomTowards {
+        target: Vec3,
+        amount: f32,
+    },
     Pan(Vec3),
     Rotate {
         pivot: Vec3,
@@ -204,6 +208,21 @@ impl CameraData for OrthographicCameraData {
                 if self.zoom < 0.0 {
                     self.zoom = 0.0001;
                 }
+            }
+            CameraTransform::ZoomTowards { target, amount } => {
+                let old_zoom = self.zoom;
+
+                self.zoom += amount;
+                if self.zoom < 0.0 {
+                    self.zoom = 0.0001;
+                }
+
+                let zoom_ratio = self.zoom / old_zoom;
+                let to_target_eye = target - self.eye_position;
+                let to_target_target = target - self.target_position;
+
+                self.eye_position = target - to_target_eye * zoom_ratio;
+                self.target_position = target - to_target_target * zoom_ratio;
             }
             CameraTransform::Pan(value) => {
                 self.eye_position += value;
