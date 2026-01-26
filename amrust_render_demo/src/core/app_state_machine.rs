@@ -171,21 +171,6 @@ impl OperationDialogDescriptor {
     }
 }
 
-#[derive(Default)]
-pub struct EventDispatcher;
-
-impl EventDispatcher {
-    pub fn dispatch_to_active_dialog(
-        &mut self,
-        _dialog: &mut OperationDialogDescriptor,
-        _event: &InteractionEvent,
-    ) -> bool {
-        // The detailed implementation will route events to the dialog and
-        // return whether the event was consumed.
-        todo!("event dispatching will be implemented alongside dialog integration");
-    }
-}
-
 pub struct DispatchContext<'a> {
     pub db_view_model: Option<&'a mut crate::db_view_model::DbViewModel>,
     pub render_sender: Option<
@@ -229,8 +214,7 @@ impl AppStateMachine {
     }
 
     pub fn handle_event(&mut self, event: InteractionEvent, ctx: &mut DispatchContext<'_>) {
-        let _ = (event, ctx);
-        todo!("central event routing will be implemented during integration phase");
+        let _ = self.event_dispatcher.dispatch(self, event, ctx);
     }
 
     pub fn push_dialog(&mut self, mut descriptor: OperationDialogDescriptor) {
@@ -276,5 +260,26 @@ impl AppStateMachine {
 
     pub fn is_dialog_active(&self) -> bool {
         !self.dialog_stack.is_empty()
+    }
+}
+
+#[derive(Default)]
+pub struct EventDispatcher;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventDispatchOutcome {
+    Consumed,
+    Ignored,
+}
+
+impl EventDispatcher {
+    pub fn dispatch(
+        &mut self,
+        app_machine: &mut AppStateMachine,
+        event: InteractionEvent,
+        ctx: &mut DispatchContext<'_>,
+    ) -> EventDispatchOutcome {
+        let _ = (app_machine, event, ctx);
+        todo!("event dispatching will be implemented during integration phase");
     }
 }
