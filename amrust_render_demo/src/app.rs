@@ -21,6 +21,7 @@ use crate::db_view_model::{
 use crate::egui_tools::EguiRenderer;
 use crate::features::{clear_db, load_3mf, save_3mf, unload, unzoom_scene};
 use crate::ui::part_list::PartList;
+use crate::ui::standard_mouse::StandardMouse;
 use crate::ui::toolsheets::Toolsheets;
 use crate::ui::tree_item_viewer::TreeItemViewer;
 use crate::ui::viewport::Viewport3D;
@@ -68,6 +69,7 @@ struct AppState {
     pub render_db: Arc<RwLock<RenderDb>>,
     pub db_view_model: DbViewModel,
     pub current_view_projection: Mat4,
+    pub standard_mouse: StandardMouse,
 }
 
 impl AppState {
@@ -208,6 +210,7 @@ impl AppState {
             render_db,
             db_view_model: DbViewModel::new(),
             current_view_projection: Mat4::IDENTITY,
+            standard_mouse: StandardMouse::new(),
         }
     }
 
@@ -504,6 +507,17 @@ impl App {
                     });
             }
 
+            egui::Window::new("Log Window")
+                .resizable(true)
+                .anchor(Align2::RIGHT_BOTTOM, (10.0, 10.0))
+                .collapsible(true)
+                .default_open(false)
+                .show(state.egui_renderer.context(), |ui| {
+                    egui::ScrollArea::both().max_height(250.0).show(ui, |ui| {
+                        egui_logger::LoggerUi::default().show(ui);
+                    });
+                });
+
             // state
             //     .dropped_files
             //     .run(state.egui_renderer.context(), &|test| false);
@@ -720,10 +734,6 @@ impl App {
                     .resizable(true)
                     .max_height(300.0)
                     .show(state.egui_renderer.context(), |ui| {
-                        egui::ScrollArea::both().max_height(250.0).show(ui, |ui| {
-                            egui_logger::LoggerUi::default().show(ui);
-                        });
-
                         ui.vertical(|ui| {
                             if background_ops.is_empty() {
                                 ui.label("No background operations running");
@@ -757,15 +767,18 @@ impl App {
             egui::CentralPanel::default().show(state.egui_renderer.context(), |ui| {
                 match state.texture_id {
                     Some(id) => {
-                        state.viewport_3d.ui(
-                            ui,
-                            id,
-                            &state.render_message_tx,
+                        let response = state.viewport_3d.ui(ui, id, &state.render_message_tx);
+
+                        state.standard_mouse.run(
+                            &response.response,
+                            state.egui_renderer.context(),
                             bbox,
                             &state.db,
                             &state.db_view_model,
-                            &state.current_app_mode,
+                            state.current_app_mode,
                             state.current_view_projection,
+                            &state.render_message_tx,
+                            response.viewport_size,
                         );
                     }
                     None => {

@@ -1,21 +1,18 @@
-use amrust_render::bounding_box::BoundingBox;
 use egui::{Image, UiBuilder, Vec2, epaint};
-use glam::Mat4;
 use smol::channel::Sender;
-use smol::lock::RwLock;
 
-use crate::core::amrust_db::Db;
-use crate::core::app_mode::AppMode;
 use crate::core::services::render_service::RenderServiceRequest;
-use crate::db_view_model::DbViewModel;
-use crate::ui::standard_mouse::StandardMouse;
 
-use std::sync::Arc;
 use std::time::{self, Duration};
 
 pub struct Viewport3D {
     prev_frame_size: egui::Vec2,
     last_request_for_resize: time::Instant,
+}
+
+pub struct ViewportResponse {
+    pub response: egui::Response,
+    pub viewport_size: glam::Vec2,
 }
 
 impl Viewport3D {
@@ -33,15 +30,10 @@ impl Viewport3D {
         ui: &mut egui::Ui,
         texture_id: epaint::TextureId,
         render_service_request_sender: &Sender<RenderServiceRequest>,
-        bbox: &BoundingBox,
-        db: &Arc<RwLock<Db>>,
-        db_view_model: &DbViewModel,
-        app_mode: &AppMode,
-        current_view_proj: Mat4,
-    ) {
+    ) -> ViewportResponse {
         let size_we_want_to_use = ui.available_size();
         if size_we_want_to_use != self.prev_frame_size
-            && (time::Instant::now() - self.last_request_for_resize) > Duration::from_millis(100)
+            && (time::Instant::now() - self.last_request_for_resize) > Duration::from_millis(500)
         {
             if let Err(err) =
                 render_service_request_sender.send_blocking(RenderServiceRequest::ResizeViewport(
@@ -63,19 +55,12 @@ impl Viewport3D {
             })
         });
 
-        StandardMouse::run(
-            &ui_response.inner.inner,
-            ui.ctx(),
-            bbox,
-            db,
-            db_view_model,
-            *app_mode,
-            current_view_proj,
-            render_service_request_sender,
-            glam::Vec2 {
+        ViewportResponse {
+            response: ui_response.inner.inner,
+            viewport_size: glam::Vec2 {
                 x: size_we_want_to_use.x,
                 y: size_we_want_to_use.y,
             },
-        );
+        }
     }
 }
