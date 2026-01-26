@@ -15,7 +15,7 @@ pub struct PickedEntity {
 }
 
 #[derive(Debug, Clone)]
-pub struct Ray {
+struct Ray {
     pub origin: Vec3,
     pub direction: Vec3,
 }
@@ -28,14 +28,15 @@ pub struct PickerConfig {
     pub return_all_intersections: bool,
 }
 
-pub struct PickerService;
+pub struct Picker;
 
-impl PickerService {
-    pub fn pick_only_instances(
+impl Picker {
+    pub fn pick_from_instances(
         &self,
         config: &PickerConfig,
         db: &Db,
         instances_can_be_picked: &[PartInstanceId],
+        skip_child_instances: bool,
         parent_transform: Transformation,
     ) -> Vec<PickedEntity> {
         let ray = screen_to_ray(config.screen_pt, config.viewport_size, config.view_proj);
@@ -93,10 +94,11 @@ impl PickerService {
                         }
                     }
                     PartRep::ComposedPart(part_instance_ids) => {
-                        let mut picked_instances = self.pick_only_instances(
+                        let mut picked_instances = self.pick_from_instances(
                             config,
                             db,
                             part_instance_ids,
+                            skip_child_instances,
                             combined_transform,
                         );
 
@@ -110,7 +112,9 @@ impl PickerService {
                                 });
                             }
 
-                            results.append(&mut picked_instances);
+                            if !skip_child_instances {
+                                results.append(&mut picked_instances);
+                            }
                         }
                     }
                 }
@@ -121,11 +125,12 @@ impl PickerService {
         results
     }
 
-    pub fn pick_only_parts(
+    pub fn pick_from_parts(
         &self,
         config: &PickerConfig,
         db: &Db,
         parts_can_be_picked: &[PartId],
+        skip_child_instances: bool,
     ) -> Vec<PickedEntity> {
         let ray = screen_to_ray(config.screen_pt, config.viewport_size, config.view_proj);
         let mut results = Vec::new();
@@ -175,10 +180,11 @@ impl PickerService {
                         }
                     }
                     PartRep::ComposedPart(part_instance_ids) => {
-                        let mut picked_instances = self.pick_only_instances(
+                        let mut picked_instances = self.pick_from_instances(
                             config,
                             db,
                             part_instance_ids,
+                            false,
                             Transformation(Mat4::IDENTITY),
                         );
 
@@ -192,7 +198,9 @@ impl PickerService {
                                 });
                             }
 
-                            results.append(&mut picked_instances);
+                            if !skip_child_instances {
+                                results.append(&mut picked_instances);
+                            }
                         }
                     }
                 }

@@ -10,7 +10,6 @@ use crate::core::services::file_dialog_service::FileDialogService;
 use crate::core::services::operation_service::{
     OperationService, OperationServiceError, OperationServiceRequest,
 };
-use crate::core::services::picker_service::PickerService;
 use crate::core::services::render_service::{
     RenderService, RenderServiceRequest, RenderServiceResponse, RendererSettings,
 };
@@ -59,7 +58,6 @@ struct AppState {
     pub db: Arc<RwLock<Db>>,
     pub toolsheets: Option<Toolsheets>,
     pub viewport_3d: Viewport3D,
-    pub picker_service: PickerService,
     pub current_app_mode: AppMode,
     pub current_render_mode: AppMode,
     pub need_viewport_update: bool,
@@ -201,7 +199,6 @@ impl AppState {
             db: Arc::new(RwLock::new(Db::new())),
             toolsheets: None,
             viewport_3d,
-            picker_service: PickerService,
             current_app_mode: AppMode::Build,
             current_render_mode: AppMode::Build,
             need_viewport_update: false,
@@ -768,7 +765,6 @@ impl App {
                             &state.db,
                             &state.db_view_model,
                             &state.current_app_mode,
-                            &state.picker_service,
                             state.current_view_projection,
                         );
                     }
