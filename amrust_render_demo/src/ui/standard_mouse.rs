@@ -22,6 +22,43 @@ pub struct StandardMouse {
     rotation_start_pt: Option<glam::Vec2>,
 }
 
+struct InputContext<'a> {
+    ctx: &'a egui::Context,
+    response: &'a egui::Response,
+    pivot: glam::Vec3,
+    right: glam::Vec3,
+    up: glam::Vec3,
+    camera_pos: glam::Vec3,
+    distance: f32,
+    view_proj: Mat4,
+    viewport_rect: egui::Rect,
+    scene_bbox: &'a BoundingBox,
+    db: &'a Arc<RwLock<Db>>,
+    db_view_model: &'a DbViewModel,
+    app_mode: AppMode,
+}
+
+impl<'a> InputContext<'a> {
+    fn get_viewport_size(&self) -> glam::Vec2 {
+        let rect_size = self.viewport_rect.max - self.viewport_rect.min;
+        glam::Vec2 {
+            x: rect_size.x,
+            y: rect_size.y,
+        }
+    }
+
+    fn pick_entities(&self, screen_pt: glam::Vec2) -> Vec<PickedEntity> {
+        pick_entities(
+            self.app_mode,
+            screen_pt,
+            self.get_viewport_size(),
+            self.view_proj,
+            self.db,
+            self.db_view_model,
+        )
+    }
+}
+
 impl StandardMouse {
     pub fn new() -> Self {
         Self {
@@ -41,39 +78,48 @@ impl StandardMouse {
         app_mode: AppMode,
         view_proj: Mat4,
         render_service_request_sender: &Sender<RenderServiceRequest>,
-        viewport_size: glam::Vec2,
     ) {
         let mut transforms: Vec<CameraTransform> = vec![];
+
+        let pivot = self.rotation_center.unwrap_or(bbox.center());
+        let (right, up, camera_pos, distance) = get_camera_vectors(view_proj, pivot);
+        let input_context = InputContext {
+            ctx,
+            response,
+            pivot,
+            right,
+            up,
+            camera_pos,
+            distance,
+            view_proj,
+            viewport_rect: response.rect,
+            scene_bbox: bbox,
+            db,
+            db_view_model,
+            app_mode,
+        };
 
         //zooming
         if response.hovered()
             && ctx.input(|i| i.raw_scroll_delta.y.abs() > 0.0)
             && let Some(pos) = response.hover_pos()
         {
-            let zoom_transform = self.zoom_towards_pointer(
-                ctx,
-                response.rect,
-                pos,
-                view_proj,
-                db,
-                db_view_model,
-                viewport_size,
-                app_mode,
-                bbox,
-            );
+            let zoom_transform = self.zoom_towards_pointer(&input_context, pos);
 
             transforms.push(zoom_transform);
         }
 
         //rotation
-        if response.dragged_by(egui::PointerButton::Secondary) {
-            let rotate_transforms = self.handle_rotate(ctx, response, view_proj, bbox);
+        if response.dragged_by(egui::PointerButton::Secondary)
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            let rotate_transforms = self.handle_rotate(&input_context, response.drag_delta(), pos);
             transforms.extend(rotate_transforms);
         }
 
         //panning
         if response.dragged_by(egui::PointerButton::Middle) {
-            let pan_transform = self.handle_panning(response, bbox, view_proj);
+            let pan_transform = self.handle_panning(&input_context, response.drag_delta());
             transforms.push(pan_transform);
         }
 
@@ -83,17 +129,7 @@ impl StandardMouse {
             && response.hovered()
             && let Some(pos) = response.interact_pointer_pos()
         {
-            self.handle_capture_pivot(
-                ctx,
-                response.rect,
-                pos,
-                view_proj,
-                db,
-                db_view_model,
-                viewport_size,
-                app_mode,
-                bbox,
-            );
+            self.handle_capture_pivot(&input_context, pos);
         }
 
         // clear internal states
@@ -115,48 +151,21 @@ impl StandardMouse {
         if response.clicked()
             && let Some(pos) = response.interact_pointer_pos()
         {
-            self.handle_pick_entity(
-                response.rect,
-                pos,
-                view_proj,
-                db,
-                db_view_model,
-                viewport_size,
-                app_mode,
-            );
+            self.handle_pick_entity(&input_context, pos);
         }
     }
 
-    fn zoom_towards_pointer(
-        &self,
-        ctx: &egui::Context,
-        viewport_rect: egui::Rect,
-        pos: egui::Pos2,
-        view_proj: Mat4,
-        db: &Arc<RwLock<Db>>,
-        db_view_model: &DbViewModel,
-        viewport_size: glam::Vec2,
-        app_mode: AppMode,
-        bbox: &BoundingBox,
-    ) -> CameraTransform {
-        let screen_pt = to_screen_pt(viewport_rect, pos);
-
-        let entities = pick_entities(
-            app_mode,
-            screen_pt,
-            viewport_size,
-            view_proj,
-            db,
-            db_view_model,
-        );
+    fn zoom_towards_pointer(&self, ctx: &InputContext, pos: egui::Pos2) -> CameraTransform {
+        let screen_pt = to_screen_pt(ctx.viewport_rect, pos);
+        let entities = ctx.pick_entities(screen_pt);
 
         let zoom_target = if let Some(first) = entities.first() {
             first.intersection
         } else {
-            self.rotation_center.unwrap_or(bbox.center())
+            self.rotation_center.unwrap_or(ctx.scene_bbox.center())
         };
 
-        let scroll_delta = ctx.input(|i| i.raw_scroll_delta.y);
+        let scroll_delta = ctx.ctx.input(|i| i.raw_scroll_delta.y);
         CameraTransform::ZoomTowards {
             target: zoom_target,
             amount: scroll_delta * 0.0001,
@@ -165,52 +174,42 @@ impl StandardMouse {
 
     fn handle_rotate(
         &mut self,
-        ctx: &egui::Context,
-        response: &egui::Response,
-        view_proj: Mat4,
-        bbox: &BoundingBox,
+        ctx: &InputContext,
+        delta: egui::Vec2,
+        pos: egui::Pos2,
     ) -> Vec<CameraTransform> {
-        let pivot = self.rotation_center.unwrap_or(bbox.center());
-
-        let delta = response.drag_delta();
-
-        let (right, up, _, distance) = get_camera_vectors(view_proj, pivot);
-
         let base_sensitivity = 0.0003;
         let scale_factor = 0.2;
-        let drag_sensitivity = base_sensitivity * ((distance * scale_factor).clamp(0.5, 3.0));
+        let drag_sensitivity = zoom_aware_sensitivity(base_sensitivity, ctx.distance, scale_factor);
 
-        let alt_held = ctx.input(|i| i.key_down(Key::Num5));
+        let alt_held = ctx.ctx.input(|i| i.key_down(Key::Num5));
 
         if alt_held {
             if self.rotation_lock_axis.is_none()
                 && let Some(start_pt) = self.rotation_start_pt
-                && let Some(pos) = response.interact_pointer_pos()
             {
-                let rect = response.rect;
-                let relative_pos = pos - rect.min;
-                let current_screen_pt = glam::Vec2::new(relative_pos.x, relative_pos.y);
+                let current_screen_pt = to_screen_pt(ctx.viewport_rect, pos);
 
                 let displacement = current_screen_pt - start_pt;
                 let lock_threshold = 2.0; //px
                 if displacement.length() >= lock_threshold {
                     if displacement.x.abs() > displacement.y.abs() {
-                        self.rotation_lock_axis = Some(up);
+                        self.rotation_lock_axis = Some(ctx.up);
                     } else {
-                        self.rotation_lock_axis = Some(right);
+                        self.rotation_lock_axis = Some(ctx.right);
                     }
                 }
             }
 
             if let Some(axis) = self.rotation_lock_axis {
-                let angle = if axis == up {
+                let angle = if axis == ctx.up {
                     -delta.x * drag_sensitivity
                 } else {
                     delta.y * drag_sensitivity
                 };
 
                 vec![CameraTransform::Rotate {
-                    pivot,
+                    pivot: ctx.pivot,
                     rotation_axis: axis,
                     angle,
                 }]
@@ -220,35 +219,25 @@ impl StandardMouse {
         } else {
             vec![
                 CameraTransform::Rotate {
-                    pivot,
-                    rotation_axis: up,
+                    pivot: ctx.pivot,
+                    rotation_axis: ctx.up,
                     angle: -delta.x * drag_sensitivity,
                 },
                 CameraTransform::Rotate {
-                    pivot,
-                    rotation_axis: right,
+                    pivot: ctx.pivot,
+                    rotation_axis: ctx.right,
                     angle: -delta.y * drag_sensitivity,
                 },
             ]
         }
     }
 
-    fn handle_panning(
-        &self,
-        response: &egui::Response,
-        bbox: &BoundingBox,
-        view_proj: Mat4,
-    ) -> CameraTransform {
-        let pivot = self.rotation_center.unwrap_or(bbox.center());
-        let delta = response.drag_delta();
-
-        let (right, up, _, distance) = get_camera_vectors(view_proj, pivot);
-
+    fn handle_panning(&self, ctx: &InputContext, delta: egui::Vec2) -> CameraTransform {
         let base_sensitivity = 0.001;
         let scale_factor = 0.2;
-        let pan_sensitivity = base_sensitivity * ((distance * scale_factor).clamp(0.5, 3.0));
+        let pan_sensitivity = zoom_aware_sensitivity(base_sensitivity, ctx.distance, scale_factor);
 
-        let movement = (right * -delta.x + up * delta.y) * pan_sensitivity;
+        let movement = (ctx.right * -delta.x + ctx.up * delta.y) * pan_sensitivity;
         CameraTransform::Pan(movement)
     }
 
@@ -258,57 +247,21 @@ impl StandardMouse {
         self.rotation_start_pt = None;
     }
 
-    fn handle_capture_pivot(
-        &mut self,
-        ctx: &egui::Context,
-        viewport_rect: egui::Rect,
-        pos: egui::Pos2,
-        view_proj: Mat4,
-        db: &Arc<RwLock<Db>>,
-        db_view_model: &DbViewModel,
-        viewport_size: glam::Vec2,
-        app_mode: AppMode,
-        bbox: &BoundingBox,
-    ) {
-        let screen_pt = to_screen_pt(viewport_rect, pos);
-
-        let entities = pick_entities(
-            app_mode,
-            screen_pt,
-            viewport_size,
-            view_proj,
-            db,
-            db_view_model,
-        );
-
+    fn handle_capture_pivot(&mut self, ctx: &InputContext, pos: egui::Pos2) {
+        let screen_pt = to_screen_pt(ctx.viewport_rect, pos);
+        let entities = ctx.pick_entities(screen_pt);
         log::info!("Entities found on drag: {entities:?}");
 
         self.rotation_start_pt = Some(screen_pt);
         self.rotation_center = entities
             .first()
             .map(|e| e.intersection)
-            .or_else(|| Some(bbox.center()));
+            .or_else(|| Some(ctx.scene_bbox.center()));
     }
 
-    fn handle_pick_entity(
-        &self,
-        viewport_rect: egui::Rect,
-        pos: egui::Pos2,
-        view_proj: Mat4,
-        db: &Arc<RwLock<Db>>,
-        db_view_model: &DbViewModel,
-        viewport_size: glam::Vec2,
-        app_mode: AppMode,
-    ) {
-        let screen_pt = to_screen_pt(viewport_rect, pos);
-        let entities = pick_entities(
-            app_mode,
-            screen_pt,
-            viewport_size,
-            view_proj,
-            db,
-            db_view_model,
-        );
+    fn handle_pick_entity(&self, ctx: &InputContext, pos: egui::Pos2) {
+        let screen_pt = to_screen_pt(ctx.viewport_rect, pos);
+        let entities = ctx.pick_entities(screen_pt);
 
         log::info!("Picked entities: {entities:?}");
     }
@@ -355,6 +308,10 @@ fn pick_entities(
     } else {
         vec![]
     }
+}
+
+fn zoom_aware_sensitivity(base_sensitivity: f32, distance: f32, scale_factor: f32) -> f32 {
+    base_sensitivity * ((distance * scale_factor).clamp(0.5, 3.0))
 }
 
 #[inline]

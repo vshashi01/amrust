@@ -778,7 +778,6 @@ impl App {
                             state.current_app_mode,
                             state.current_view_projection,
                             &state.render_message_tx,
-                            response.viewport_size,
                         );
                     }
                     None => {
