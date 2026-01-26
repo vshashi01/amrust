@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use amrust_render::{bounding_box::BoundingBox, camera::CameraTransform};
 use egui::Key;
 use glam::Mat4;
@@ -15,6 +13,8 @@ use crate::{
     },
     db_view_model::DbViewModel,
 };
+
+use std::sync::Arc;
 
 pub struct StandardMouse {
     rotation_center: Option<glam::Vec3>,

@@ -10,11 +10,6 @@ pub struct Viewport3D {
     last_request_for_resize: time::Instant,
 }
 
-pub struct ViewportResponse {
-    pub response: egui::Response,
-    pub viewport_size: glam::Vec2,
-}
-
 impl Viewport3D {
     pub fn new(initial_width: u32, initial_height: u32) -> Self {
         Self {
@@ -30,7 +25,7 @@ impl Viewport3D {
         ui: &mut egui::Ui,
         texture_id: epaint::TextureId,
         render_service_request_sender: &Sender<RenderServiceRequest>,
-    ) -> ViewportResponse {
+    ) -> egui::Response {
         let size_we_want_to_use = ui.available_size();
         if size_we_want_to_use != self.prev_frame_size
             && (time::Instant::now() - self.last_request_for_resize) > Duration::from_millis(500)
@@ -55,12 +50,6 @@ impl Viewport3D {
             })
         });
 
-        ViewportResponse {
-            response: ui_response.inner.inner,
-            viewport_size: glam::Vec2 {
-                x: size_we_want_to_use.x,
-                y: size_we_want_to_use.y,
-            },
-        }
+        ui_response.inner.inner
     }
 }

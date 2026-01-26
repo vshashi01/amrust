@@ -770,7 +770,7 @@ impl App {
                         let response = state.viewport_3d.ui(ui, id, &state.render_message_tx);
 
                         state.standard_mouse.run(
-                            &response.response,
+                            &response,
                             state.egui_renderer.context(),
                             bbox,
                             &state.db,
