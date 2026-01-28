@@ -86,7 +86,6 @@ pub enum DialogActionKind {
     Refresh,
 }
 
-#[derive(Debug)]
 pub struct ShortcutOverride {
     pub shortcut: ShortcutId,
     pub handler: ShortcutHandler,
@@ -145,7 +144,7 @@ impl ShortcutContext {
 #[derive(Debug, Default)]
 pub struct DialogState {
     pub owned_points: Vec<Vec3>,
-    pub captured_identifiables: Vec<IdentifiableProxy>,
+    pub captured_identifiables: Vec<Identifiable>,
     pub is_dirty: bool,
 }
 
