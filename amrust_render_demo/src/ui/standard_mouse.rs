@@ -8,12 +8,15 @@ use statig::{
     state_machine,
 };
 
-use crate::core::{
-    amrust_db::Db,
-    app_mode::AppMode,
-    services::render_service::RenderServiceRequest,
-    types::{part::PartId, part_instance::PartInstanceId, transformation::Transformation},
-    utils::picker::{PickedEntity, Picker, PickerConfig},
+use crate::{
+    core::{
+        amrust_db::Db,
+        app_mode::AppMode,
+        services::render_service::RenderServiceRequest,
+        types::{part::PartId, part_instance::PartInstanceId, transformation::Transformation},
+        utils::picker::{PickedEntity, Picker, PickerConfig},
+    },
+    ui::{app_mouse_manager::AppMouseManager, mouse_selection_sm::MouseSelectionSM},
 };
 
 use std::sync::Arc;
@@ -21,9 +24,10 @@ use std::sync::Arc;
 pub struct StandardMouse {
     db: Arc<RwLock<Db>>,
     render_request_tx: Sender<RenderServiceRequest>,
-    init_machine: InitializedStateMachine<StandardViewportMouse>,
+    mouse_manager: AppMouseManager,
 }
 
+#[derive(Debug, Clone)]
 pub struct FrameContext {
     pub viewport_rect: egui::Rect,
     pub view_proj: Mat4,
@@ -39,17 +43,30 @@ impl StandardMouse {
         db: Arc<RwLock<Db>>,
         render_request_tx: Sender<RenderServiceRequest>,
     ) -> Self {
-        let init_machine = StandardViewportMouse::default()
+        let mut mouse_manager = AppMouseManager::new();
+        let init_machine = MouseCameraSM::default()
             .uninitialized_state_machine()
             .init_with_context(&mut InputContext::new_from_frame_context(
-                context,
+                context.clone(),
                 &db,
                 &render_request_tx,
             ));
+
+        let selection_mouse = MouseSelectionSM::default()
+            .uninitialized_state_machine()
+            .init_with_context(&mut InputContext::new_from_frame_context(
+                context.clone(),
+                &db,
+                &render_request_tx,
+            ));
+
+        mouse_manager.push(Box::new(init_machine));
+        mouse_manager.push(Box::new(selection_mouse));
+
         Self {
             db,
             render_request_tx,
-            init_machine,
+            mouse_manager,
         }
     }
 
@@ -57,114 +74,155 @@ impl StandardMouse {
         let mut input_context =
             InputContext::new_from_frame_context(context, &self.db, &self.render_request_tx);
 
-        if !response.hovered() {
-            self.init_machine
-                .handle_with_context(&MouseEvt::NotHovered(), &mut input_context);
-            return;
+        let events = gather_mouse_events(response, ctx);
+        for evt in events {
+            self.mouse_manager.handle_event(&evt, &mut input_context);
         }
+    }
+}
 
-        if response.hovered()
-            && let Some(pos) = response.hover_pos()
-        {
-            self.init_machine.handle_with_context(
-                &MouseEvt::Hovered(pos, ctx.input(|i| i.clone())),
-                &mut input_context,
-            );
+/// Collect all mouse-related events for this frame from egui context + response.
+fn gather_mouse_events(response: &egui::Response, ctx: &egui::Context) -> Vec<MouseEvt> {
+    let mut events = Vec::new();
+    let input_state = ctx.input(|i| i.clone());
+
+    if response.hovered() {
+        if let Some(pos) = response.hover_pos() {
+            events.push(MouseEvt::Hovered(pos, input_state.clone()));
         }
+    } else {
+        events.push(MouseEvt::NotHovered());
+        return events;
+    }
 
-        if ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary))
-            && let Some(pos) = response.interact_pointer_pos()
-        {
-            self.init_machine.handle_with_context(
-                &MouseEvt::PrimaryBtnDown(pos, ctx.input(|i| i.clone())),
-                &mut input_context,
-            );
+    // Button down events
+    check_button_down(
+        &mut events,
+        &input_state,
+        &response,
+        egui::PointerButton::Primary,
+        MouseEvt::PrimaryBtnDown,
+    );
+    check_button_down(
+        &mut events,
+        &input_state,
+        &response,
+        egui::PointerButton::Secondary,
+        MouseEvt::SecondaryBtnDown,
+    );
+    check_button_down(
+        &mut events,
+        &input_state,
+        &response,
+        egui::PointerButton::Middle,
+        MouseEvt::MiddleBtnDown,
+    );
+
+    // Button up events
+    check_button_up(
+        &mut events,
+        &input_state,
+        &response,
+        egui::PointerButton::Primary,
+        MouseEvt::PrimaryBtnUp,
+    );
+    check_button_up(
+        &mut events,
+        &input_state,
+        &response,
+        egui::PointerButton::Secondary,
+        MouseEvt::SecondaryBtnUp,
+    );
+    check_button_up(
+        &mut events,
+        &input_state,
+        &response,
+        egui::PointerButton::Middle,
+        MouseEvt::MiddleBtnUp,
+    );
+
+    // Drag events
+    check_button_drag(
+        &mut events,
+        &input_state,
+        &response,
+        egui::PointerButton::Primary,
+        MouseEvt::PrimaryBtnDrag,
+    );
+    check_button_drag(
+        &mut events,
+        &input_state,
+        &response,
+        egui::PointerButton::Secondary,
+        MouseEvt::SecondaryBtnDrag,
+    );
+    check_button_drag(
+        &mut events,
+        &input_state,
+        &response,
+        egui::PointerButton::Middle,
+        MouseEvt::MiddleBtnDrag,
+    );
+
+    // Scroll events (MiddleBtnScroll - we treat as from middle)
+    if response.hovered() && input_state.raw_scroll_delta.y.abs() > 0.0 {
+        if let Some(pos) = response.hover_pos() {
+            events.push(MouseEvt::MiddleBtnScroll(
+                input_state.raw_scroll_delta,
+                pos,
+                input_state.clone(),
+            ));
         }
+    }
 
-        if ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Secondary))
-            && let Some(pos) = response.interact_pointer_pos()
-        {
-            self.init_machine.handle_with_context(
-                &MouseEvt::SecondaryBtnDown(pos, ctx.input(|i| i.clone())),
-                &mut input_context,
-            );
+    events
+}
+
+/// Helper functions to reduce duplication
+fn check_button_down<F>(
+    events: &mut Vec<MouseEvt>,
+    input_state: &egui::InputState,
+    response: &egui::Response,
+    button: egui::PointerButton,
+    make_evt: F,
+) where
+    F: Fn(egui::Pos2, egui::InputState) -> MouseEvt,
+{
+    if input_state.pointer.button_pressed(button) {
+        if let Some(pos) = response.interact_pointer_pos() {
+            events.push(make_evt(pos, input_state.clone()));
         }
+    }
+}
 
-        if ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Middle))
-            && let Some(pos) = response.interact_pointer_pos()
-        {
-            self.init_machine.handle_with_context(
-                &MouseEvt::MiddleBtnDown(pos, ctx.input(|i| i.clone())),
-                &mut input_context,
-            );
+fn check_button_up<F>(
+    events: &mut Vec<MouseEvt>,
+    input_state: &egui::InputState,
+    response: &egui::Response,
+    button: egui::PointerButton,
+    make_evt: F,
+) where
+    F: Fn(egui::Pos2, egui::InputState) -> MouseEvt,
+{
+    if input_state.pointer.button_released(button) {
+        if let Some(pos) = response.interact_pointer_pos() {
+            events.push(make_evt(pos, input_state.clone()));
         }
+    }
+}
 
-        if ctx.input(|i| i.pointer.button_released(egui::PointerButton::Primary))
-            && let Some(pos) = response.interact_pointer_pos()
-        {
-            self.init_machine.handle_with_context(
-                &MouseEvt::PrimaryBtnUp(pos, ctx.input(|i| i.clone())),
-                &mut input_context,
-            );
-        }
-
-        if ctx.input(|i| i.pointer.button_released(egui::PointerButton::Secondary))
-            && let Some(pos) = response.interact_pointer_pos()
-        {
-            self.init_machine.handle_with_context(
-                &MouseEvt::SecondaryBtnUp(pos, ctx.input(|i| i.clone())),
-                &mut input_context,
-            );
-        }
-
-        if ctx.input(|i| i.pointer.button_released(egui::PointerButton::Middle))
-            && let Some(pos) = response.interact_pointer_pos()
-        {
-            self.init_machine.handle_with_context(
-                &MouseEvt::MiddleBtnUp(pos, ctx.input(|i| i.clone())),
-                &mut input_context,
-            );
-        }
-
-        if response.dragged_by(egui::PointerButton::Primary)
-            && let Some(pos) = response.interact_pointer_pos()
-        {
-            self.init_machine.handle_with_context(
-                &MouseEvt::PrimaryBtnDrag(response.drag_delta(), pos, ctx.input(|i| i.clone())),
-                &mut input_context,
-            );
-        }
-
-        if response.dragged_by(egui::PointerButton::Secondary)
-            && let Some(pos) = response.interact_pointer_pos()
-        {
-            self.init_machine.handle_with_context(
-                &MouseEvt::SecondaryBtnDrag(response.drag_delta(), pos, ctx.input(|i| i.clone())),
-                &mut input_context,
-            );
-        }
-
-        if response.dragged_by(egui::PointerButton::Middle)
-            && let Some(pos) = response.interact_pointer_pos()
-        {
-            self.init_machine.handle_with_context(
-                &MouseEvt::MiddleBtnDrag(response.drag_delta(), pos, ctx.input(|i| i.clone())),
-                &mut input_context,
-            );
-        }
-
-        if response.hovered()
-            && ctx.input(|i| i.raw_scroll_delta.y.abs() > 0.0)
-            && let Some(pos) = response.hover_pos()
-        {
-            self.init_machine.handle_with_context(
-                &MouseEvt::MiddleBtnScroll(
-                    ctx.input(|i| i.raw_scroll_delta),
-                    pos,
-                    ctx.input(|i| i.clone()),
-                ),
-                &mut input_context,
-            );
+fn check_button_drag<F>(
+    events: &mut Vec<MouseEvt>,
+    input_state: &egui::InputState,
+    response: &egui::Response,
+    button: egui::PointerButton,
+    make_evt: F,
+) where
+    F: Fn(egui::Vec2, egui::Pos2, egui::InputState) -> MouseEvt,
+{
+    if response.dragged_by(button) {
+        if let Some(pos) = response.interact_pointer_pos() {
+            events.push(make_evt(response.drag_delta(), pos, input_state.clone()));
         }
     }
 }
@@ -231,11 +289,11 @@ fn get_camera_vectors(
     (right, up, camera_pos, distance)
 }
 
-#[inline]
-fn to_screen_pt(viewport_rect: egui::Rect, pos: egui::Pos2) -> glam::Vec2 {
-    let relative_pos = pos - viewport_rect.min;
-    glam::Vec2::new(relative_pos.x, relative_pos.y)
-}
+// #[inline]
+// pub(crate) fn to_screen_pt(viewport_rect: egui::Rect, pos: egui::Pos2) -> glam::Vec2 {
+//     let relative_pos = pos - viewport_rect.min;
+//     glam::Vec2::new(relative_pos.x, relative_pos.y)
+// }
 
 // ToDo currently all Pos2, are in the global egui coordinate and not the local coordinate
 // within the response region.
@@ -256,7 +314,7 @@ pub enum MouseEvt {
 }
 
 #[derive(Debug, Default)]
-struct StandardViewportMouse {}
+struct MouseCameraSM {}
 
 const BASE_ROTATE_SENSITIVITY: f32 = 0.0003;
 const ROTATE_SENSITIVITY_FACTOR: f32 = 0.2; //used to scale the sensitivity based on zoom levels
@@ -264,7 +322,7 @@ const BASE_PAN_SENSITIVITY: f32 = 0.001;
 const PAN_SENSITIVITY_FACTOR: f32 = 0.2; // used to scale the sensitivity based on zoom levels
 
 #[state_machine(initial = "State::idle()")]
-impl StandardViewportMouse {
+impl MouseCameraSM {
     #[state]
     fn idle(event: &MouseEvt) -> Outcome<State> {
         match event {
@@ -275,9 +333,9 @@ impl StandardViewportMouse {
     }
 
     #[state]
-    fn hovered(context: &mut InputContext<'_>, event: &MouseEvt) -> Outcome<State> {
+    fn hovered(context: &mut InputContext, event: &MouseEvt) -> Outcome<State> {
         match event {
-            MouseEvt::PrimaryBtnDown(..) => Transition(State::Selection {}),
+            //MouseEvt::PrimaryBtnDown(..) => Transition(State::Selection {}),
             MouseEvt::SecondaryBtnDown(pos, _) => {
                 //rotate
                 let (pivot, screen_pt) = get_pivot_and_screen_pt(context, *pos);
@@ -339,13 +397,13 @@ impl StandardViewportMouse {
         right: &glam::Vec3,
         initial_screen_pt: &glam::Vec2,
         drag_sensitivity: &f32,
-        context: &mut InputContext<'_>,
+        context: &mut InputContext,
         event: &MouseEvt,
     ) -> Outcome<State> {
         match event {
             MouseEvt::SecondaryBtnDrag(_, pos, input_state) => {
                 if input_state.key_down(Key::Num5) {
-                    let current_screen_pt = to_screen_pt(context.viewport_rect, *pos);
+                    let current_screen_pt = context.to_screen_pt(*pos);
 
                     let displacement = current_screen_pt - initial_screen_pt;
                     let lock_threshold = 2.0; //px
@@ -384,7 +442,7 @@ impl StandardViewportMouse {
         right: &glam::Vec3,
         locked_rotation_axis: &glam::Vec3,
         drag_sensitivity: &f32,
-        context: &mut InputContext<'_>,
+        context: &mut InputContext,
         event: &MouseEvt,
     ) -> Outcome<State> {
         match event {
@@ -431,7 +489,7 @@ impl StandardViewportMouse {
         up: &glam::Vec3,
         right: &glam::Vec3,
         drag_sensitivity: &f32,
-        context: &mut InputContext<'_>,
+        context: &mut InputContext,
         event: &MouseEvt,
     ) -> Outcome<State> {
         match event {
@@ -463,27 +521,27 @@ impl StandardViewportMouse {
         }
     }
 
-    #[state]
-    fn selection(context: &mut InputContext<'_>, event: &MouseEvt) -> Outcome<State> {
-        match event {
-            MouseEvt::PrimaryBtnDrag(..) => todo!("Implement drag selection"),
-            MouseEvt::PrimaryBtnUp(pos, _) => {
-                let screen_pt = to_screen_pt(context.viewport_rect, *pos);
-                let entities = context.pick_entities(&screen_pt);
-                log::info!("Picked entities: {entities:?}");
+    // #[state]
+    // fn selection(context: &mut InputContext<'_>, event: &MouseEvt) -> Outcome<State> {
+    //     match event {
+    //         MouseEvt::PrimaryBtnDrag(..) => todo!("Implement drag selection"),
+    //         MouseEvt::PrimaryBtnUp(pos, _) => {
+    //             let screen_pt = context.to_screen_pt(*pos);
+    //             let entities = context.pick_entities(&screen_pt);
+    //             log::info!("Picked entities: {entities:?}");
 
-                Transition(State::Idle {})
-            }
-            _ => Handled,
-        }
-    }
+    //             Transition(State::Idle {})
+    //         }
+    //         _ => Handled,
+    //     }
+    // }
 
     #[state]
     fn pan_camera(
         pan_sensitivity: &f32,
         up: &glam::Vec3,
         right: &glam::Vec3,
-        context: &mut InputContext<'_>,
+        context: &mut InputContext,
         event: &MouseEvt,
     ) -> Outcome<State> {
         match event {
@@ -508,11 +566,38 @@ impl StandardViewportMouse {
     }
 }
 
+impl Mouse3DStateMachine for InitializedStateMachine<MouseCameraSM> {
+    fn can_handle(&self, _event: &MouseEvt, _context: &mut InputContext) -> bool {
+        matches!(
+            _event,
+            MouseEvt::Hovered(..)
+                | MouseEvt::PrimaryBtnDown(..)
+                | MouseEvt::PrimaryBtnUp(..)
+                | MouseEvt::SecondaryBtnDown(..)
+                | MouseEvt::PrimaryBtnDrag(..)
+                | MouseEvt::SecondaryBtnUp(..)
+                | MouseEvt::MiddleBtnDown(..)
+                | MouseEvt::MiddleBtnDrag(..)
+                | MouseEvt::MiddleBtnUp(..)
+                | MouseEvt::MiddleBtnScroll(..)
+                | MouseEvt::NotHovered()
+        )
+    }
+
+    fn is_clean(&self) -> bool {
+        matches!(self.state(), State::Idle {} | State::Hovered {})
+    }
+
+    fn handle_event(&mut self, event: &MouseEvt, context: &mut InputContext) {
+        self.handle_with_context(event, context);
+    }
+}
+
 fn get_pivot_and_screen_pt(
     context: &mut InputContext,
     egui_screen_pos: egui::Pos2,
 ) -> (glam::Vec3, glam::Vec2) {
-    let screen_pt = to_screen_pt(context.viewport_rect, egui_screen_pos);
+    let screen_pt = context.to_screen_pt(egui_screen_pos);
     let entities = context.pick_entities(&screen_pt);
     let pivot = entities
         .first()
@@ -520,36 +605,36 @@ fn get_pivot_and_screen_pt(
     (pivot, screen_pt)
 }
 
-struct InputContext<'a> {
+pub struct InputContext {
     viewport_rect: egui::Rect,
-    render_request_tx: &'a Sender<RenderServiceRequest>,
+    render_request_tx: Sender<RenderServiceRequest>,
     view_proj: Mat4,
     scene_bbox: BoundingBox,
-    db: &'a Arc<RwLock<Db>>,
+    db: Arc<RwLock<Db>>,
     parts_can_be_picked: Vec<PartId>,
     instances_can_be_picked: Vec<PartInstanceId>,
     app_mode: AppMode,
 }
 
-impl<'a> InputContext<'a> {
-    fn new_from_frame_context(
+impl InputContext {
+    pub fn new_from_frame_context(
         frame_context: FrameContext,
-        db: &'a Arc<RwLock<Db>>,
-        render_request_tx: &'a Sender<RenderServiceRequest>,
+        db: &Arc<RwLock<Db>>,
+        render_request_tx: &Sender<RenderServiceRequest>,
     ) -> Self {
         Self {
             viewport_rect: frame_context.viewport_rect,
-            render_request_tx,
+            render_request_tx: render_request_tx.clone(),
             view_proj: frame_context.view_proj,
             scene_bbox: frame_context.scene_bbox,
-            db,
+            db: db.clone(),
             parts_can_be_picked: frame_context.parts_can_be_picked,
             instances_can_be_picked: frame_context.instances_can_be_picked,
             app_mode: frame_context.app_mode,
         }
     }
 
-    fn get_viewport_size(&self) -> glam::Vec2 {
+    pub fn get_viewport_size(&self) -> glam::Vec2 {
         let rect_size = self.viewport_rect.max - self.viewport_rect.min;
         glam::Vec2 {
             x: rect_size.x,
@@ -557,15 +642,34 @@ impl<'a> InputContext<'a> {
         }
     }
 
-    fn pick_entities(&self, screen_pt: &glam::Vec2) -> Vec<PickedEntity> {
+    #[inline]
+    pub fn pick_entities(&self, screen_pt: &glam::Vec2) -> Vec<PickedEntity> {
         pick_entities(
             self.app_mode,
             screen_pt,
             self.get_viewport_size(),
             self.view_proj,
-            self.db,
+            &self.db,
             &self.parts_can_be_picked,
             &self.instances_can_be_picked,
         )
     }
+
+    #[inline]
+    pub fn to_screen_pt(&self, pos: egui::Pos2) -> glam::Vec2 {
+        let relative_pos = pos - self.viewport_rect.min;
+        glam::Vec2::new(relative_pos.x, relative_pos.y)
+    }
+}
+
+pub trait Mouse3DStateMachine {
+    fn can_handle(&self, event: &MouseEvt, context: &mut InputContext) -> bool;
+
+    fn is_clean(&self) -> bool;
+
+    fn can_allow_passthrough(&self, event: &MouseEvt) -> bool {
+        false
+    }
+
+    fn handle_event(&mut self, event: &MouseEvt, context: &mut InputContext);
 }
