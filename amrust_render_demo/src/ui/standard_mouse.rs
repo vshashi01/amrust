@@ -2,278 +2,181 @@ use amrust_render::{bounding_box::BoundingBox, camera::CameraTransform};
 use egui::Key;
 use glam::Mat4;
 use smol::{channel::Sender, lock::RwLock};
+use statig::{
+    Outcome::{self, Handled, Super, Transition},
+    prelude::{InitializedStateMachine, IntoStateMachineExt},
+    state_machine,
+};
 
-use crate::{
-    core::{
-        amrust_db::Db,
-        app_mode::AppMode,
-        services::render_service::RenderServiceRequest,
-        types::transformation::Transformation,
-        utils::picker::{PickedEntity, Picker, PickerConfig},
-    },
-    db_view_model::DbViewModel,
+use crate::core::{
+    amrust_db::Db,
+    app_mode::AppMode,
+    services::render_service::RenderServiceRequest,
+    types::{part::PartId, part_instance::PartInstanceId, transformation::Transformation},
+    utils::picker::{PickedEntity, Picker, PickerConfig},
 };
 
 use std::sync::Arc;
 
 pub struct StandardMouse {
-    rotation_center: Option<glam::Vec3>,
-    rotation_lock_axis: Option<glam::Vec3>,
-    rotation_start_pt: Option<glam::Vec2>,
+    db: Arc<RwLock<Db>>,
+    render_request_tx: Sender<RenderServiceRequest>,
+    init_machine: InitializedStateMachine<StandardViewportMouse>,
 }
 
-struct InputContext<'a> {
-    ctx: &'a egui::Context,
-    response: &'a egui::Response,
-    pivot: glam::Vec3,
-    right: glam::Vec3,
-    up: glam::Vec3,
-    camera_pos: glam::Vec3,
-    distance: f32,
-    view_proj: Mat4,
-    viewport_rect: egui::Rect,
-    scene_bbox: &'a BoundingBox,
-    db: &'a Arc<RwLock<Db>>,
-    db_view_model: &'a DbViewModel,
-    app_mode: AppMode,
-}
-
-impl<'a> InputContext<'a> {
-    fn get_viewport_size(&self) -> glam::Vec2 {
-        let rect_size = self.viewport_rect.max - self.viewport_rect.min;
-        glam::Vec2 {
-            x: rect_size.x,
-            y: rect_size.y,
-        }
-    }
-
-    fn pick_entities(&self, screen_pt: glam::Vec2) -> Vec<PickedEntity> {
-        pick_entities(
-            self.app_mode,
-            screen_pt,
-            self.get_viewport_size(),
-            self.view_proj,
-            self.db,
-            self.db_view_model,
-        )
-    }
+pub struct FrameContext {
+    pub viewport_rect: egui::Rect,
+    pub view_proj: Mat4,
+    pub scene_bbox: BoundingBox,
+    pub parts_can_be_picked: Vec<PartId>,
+    pub instances_can_be_picked: Vec<PartInstanceId>,
+    pub app_mode: AppMode,
 }
 
 impl StandardMouse {
-    pub fn new() -> Self {
+    pub fn new(
+        context: FrameContext,
+        db: Arc<RwLock<Db>>,
+        render_request_tx: Sender<RenderServiceRequest>,
+    ) -> Self {
+        let init_machine = StandardViewportMouse::default()
+            .uninitialized_state_machine()
+            .init_with_context(&mut InputContext::new_from_frame_context(
+                context,
+                &db,
+                &render_request_tx,
+            ));
         Self {
-            rotation_center: None,
-            rotation_lock_axis: None,
-            rotation_start_pt: None,
+            db,
+            render_request_tx,
+            init_machine,
         }
     }
 
-    pub fn run(
-        &mut self,
-        response: &egui::Response,
-        ctx: &egui::Context,
-        bbox: &BoundingBox,
-        db: &Arc<RwLock<Db>>,
-        db_view_model: &DbViewModel,
-        app_mode: AppMode,
-        view_proj: Mat4,
-        render_service_request_sender: &Sender<RenderServiceRequest>,
-    ) {
-        let mut transforms: Vec<CameraTransform> = vec![];
+    pub fn run(&mut self, response: &egui::Response, ctx: &egui::Context, context: FrameContext) {
+        let mut input_context =
+            InputContext::new_from_frame_context(context, &self.db, &self.render_request_tx);
 
-        let pivot = self.rotation_center.unwrap_or(bbox.center());
-        let (right, up, camera_pos, distance) = get_camera_vectors(view_proj, pivot);
-        let input_context = InputContext {
-            ctx,
-            response,
-            pivot,
-            right,
-            up,
-            camera_pos,
-            distance,
-            view_proj,
-            viewport_rect: response.rect,
-            scene_bbox: bbox,
-            db,
-            db_view_model,
-            app_mode,
-        };
+        if !response.hovered() {
+            self.init_machine
+                .handle_with_context(&MouseEvt::NotHovered(), &mut input_context);
+            return;
+        }
 
-        //zooming
+        if response.hovered()
+            && let Some(pos) = response.hover_pos()
+        {
+            self.init_machine.handle_with_context(
+                &MouseEvt::Hovered(pos, ctx.input(|i| i.clone())),
+                &mut input_context,
+            );
+        }
+
+        if ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary))
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            self.init_machine.handle_with_context(
+                &MouseEvt::PrimaryBtnDown(pos, ctx.input(|i| i.clone())),
+                &mut input_context,
+            );
+        }
+
+        if ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Secondary))
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            self.init_machine.handle_with_context(
+                &MouseEvt::SecondaryBtnDown(pos, ctx.input(|i| i.clone())),
+                &mut input_context,
+            );
+        }
+
+        if ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Middle))
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            self.init_machine.handle_with_context(
+                &MouseEvt::MiddleBtnDown(pos, ctx.input(|i| i.clone())),
+                &mut input_context,
+            );
+        }
+
+        if ctx.input(|i| i.pointer.button_released(egui::PointerButton::Primary))
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            self.init_machine.handle_with_context(
+                &MouseEvt::PrimaryBtnUp(pos, ctx.input(|i| i.clone())),
+                &mut input_context,
+            );
+        }
+
+        if ctx.input(|i| i.pointer.button_released(egui::PointerButton::Secondary))
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            self.init_machine.handle_with_context(
+                &MouseEvt::SecondaryBtnUp(pos, ctx.input(|i| i.clone())),
+                &mut input_context,
+            );
+        }
+
+        if ctx.input(|i| i.pointer.button_released(egui::PointerButton::Middle))
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            self.init_machine.handle_with_context(
+                &MouseEvt::MiddleBtnUp(pos, ctx.input(|i| i.clone())),
+                &mut input_context,
+            );
+        }
+
+        if response.dragged_by(egui::PointerButton::Primary)
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            self.init_machine.handle_with_context(
+                &MouseEvt::PrimaryBtnDrag(response.drag_delta(), pos, ctx.input(|i| i.clone())),
+                &mut input_context,
+            );
+        }
+
+        if response.dragged_by(egui::PointerButton::Secondary)
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            self.init_machine.handle_with_context(
+                &MouseEvt::SecondaryBtnDrag(response.drag_delta(), pos, ctx.input(|i| i.clone())),
+                &mut input_context,
+            );
+        }
+
+        if response.dragged_by(egui::PointerButton::Middle)
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            self.init_machine.handle_with_context(
+                &MouseEvt::MiddleBtnDrag(response.drag_delta(), pos, ctx.input(|i| i.clone())),
+                &mut input_context,
+            );
+        }
+
         if response.hovered()
             && ctx.input(|i| i.raw_scroll_delta.y.abs() > 0.0)
             && let Some(pos) = response.hover_pos()
         {
-            let zoom_transform = self.zoom_towards_pointer(&input_context, pos);
-
-            transforms.push(zoom_transform);
+            self.init_machine.handle_with_context(
+                &MouseEvt::MiddleBtnScroll(
+                    ctx.input(|i| i.raw_scroll_delta),
+                    pos,
+                    ctx.input(|i| i.clone()),
+                ),
+                &mut input_context,
+            );
         }
-
-        //rotation
-        if response.dragged_by(egui::PointerButton::Secondary)
-            && let Some(pos) = response.interact_pointer_pos()
-        {
-            let rotate_transforms = self.handle_rotate(&input_context, response.drag_delta(), pos);
-            transforms.extend(rotate_transforms);
-        }
-
-        //panning
-        if response.dragged_by(egui::PointerButton::Middle) {
-            let pan_transform = self.handle_panning(&input_context, response.drag_delta());
-            transforms.push(pan_transform);
-        }
-
-        //capturing the necessary points for movements
-        if (ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Secondary))
-            || ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Middle)))
-            && response.hovered()
-            && let Some(pos) = response.interact_pointer_pos()
-        {
-            self.handle_capture_pivot(&input_context, pos);
-        }
-
-        // clear internal states
-        if response.drag_stopped_by(egui::PointerButton::Secondary)
-            || response.drag_stopped_by(egui::PointerButton::Middle)
-        {
-            self.handle_drag_end();
-        }
-
-        // send transform data
-        if !transforms.is_empty()
-            && let Err(err) = render_service_request_sender
-                .send_blocking(RenderServiceRequest::TransformCamera(transforms))
-        {
-            log::error!("Error sending camera transform from Viewport: {err:?}");
-        }
-
-        // entity picking
-        if response.clicked()
-            && let Some(pos) = response.interact_pointer_pos()
-        {
-            self.handle_pick_entity(&input_context, pos);
-        }
-    }
-
-    fn zoom_towards_pointer(&self, ctx: &InputContext, pos: egui::Pos2) -> CameraTransform {
-        let screen_pt = to_screen_pt(ctx.viewport_rect, pos);
-        let entities = ctx.pick_entities(screen_pt);
-
-        let zoom_target = if let Some(first) = entities.first() {
-            first.intersection
-        } else {
-            self.rotation_center.unwrap_or(ctx.scene_bbox.center())
-        };
-
-        let scroll_delta = ctx.ctx.input(|i| i.raw_scroll_delta.y);
-        CameraTransform::ZoomTowards {
-            target: zoom_target,
-            amount: scroll_delta * 0.0001,
-        }
-    }
-
-    fn handle_rotate(
-        &mut self,
-        ctx: &InputContext,
-        delta: egui::Vec2,
-        pos: egui::Pos2,
-    ) -> Vec<CameraTransform> {
-        let base_sensitivity = 0.0003;
-        let scale_factor = 0.2;
-        let drag_sensitivity = zoom_aware_sensitivity(base_sensitivity, ctx.distance, scale_factor);
-
-        let alt_held = ctx.ctx.input(|i| i.key_down(Key::Num5));
-
-        if alt_held {
-            if self.rotation_lock_axis.is_none()
-                && let Some(start_pt) = self.rotation_start_pt
-            {
-                let current_screen_pt = to_screen_pt(ctx.viewport_rect, pos);
-
-                let displacement = current_screen_pt - start_pt;
-                let lock_threshold = 2.0; //px
-                if displacement.length() >= lock_threshold {
-                    if displacement.x.abs() > displacement.y.abs() {
-                        self.rotation_lock_axis = Some(ctx.up);
-                    } else {
-                        self.rotation_lock_axis = Some(ctx.right);
-                    }
-                }
-            }
-
-            if let Some(axis) = self.rotation_lock_axis {
-                let angle = if axis == ctx.up {
-                    -delta.x * drag_sensitivity
-                } else {
-                    delta.y * drag_sensitivity
-                };
-
-                vec![CameraTransform::Rotate {
-                    pivot: ctx.pivot,
-                    rotation_axis: axis,
-                    angle,
-                }]
-            } else {
-                vec![]
-            }
-        } else {
-            vec![
-                CameraTransform::Rotate {
-                    pivot: ctx.pivot,
-                    rotation_axis: ctx.up,
-                    angle: -delta.x * drag_sensitivity,
-                },
-                CameraTransform::Rotate {
-                    pivot: ctx.pivot,
-                    rotation_axis: ctx.right,
-                    angle: -delta.y * drag_sensitivity,
-                },
-            ]
-        }
-    }
-
-    fn handle_panning(&self, ctx: &InputContext, delta: egui::Vec2) -> CameraTransform {
-        let base_sensitivity = 0.001;
-        let scale_factor = 0.2;
-        let pan_sensitivity = zoom_aware_sensitivity(base_sensitivity, ctx.distance, scale_factor);
-
-        let movement = (ctx.right * -delta.x + ctx.up * delta.y) * pan_sensitivity;
-        CameraTransform::Pan(movement)
-    }
-
-    fn handle_drag_end(&mut self) {
-        self.rotation_center = None;
-        self.rotation_lock_axis = None;
-        self.rotation_start_pt = None;
-    }
-
-    fn handle_capture_pivot(&mut self, ctx: &InputContext, pos: egui::Pos2) {
-        let screen_pt = to_screen_pt(ctx.viewport_rect, pos);
-        let entities = ctx.pick_entities(screen_pt);
-        log::info!("Entities found on drag: {entities:?}");
-
-        self.rotation_start_pt = Some(screen_pt);
-        self.rotation_center = entities
-            .first()
-            .map(|e| e.intersection)
-            .or_else(|| Some(ctx.scene_bbox.center()));
-    }
-
-    fn handle_pick_entity(&self, ctx: &InputContext, pos: egui::Pos2) {
-        let screen_pt = to_screen_pt(ctx.viewport_rect, pos);
-        let entities = ctx.pick_entities(screen_pt);
-
-        log::info!("Picked entities: {entities:?}");
     }
 }
 
 fn pick_entities(
     app_mode: AppMode,
-    screen_pt: glam::Vec2,
+    screen_pt: &glam::Vec2,
     viewport_size: glam::Vec2,
     view_proj: Mat4,
     db: &Arc<RwLock<Db>>,
-    db_view_model: &DbViewModel,
+    parts_can_be_picked: &[PartId],
+    instance_can_be_picked: &[PartInstanceId],
 ) -> Vec<PickedEntity> {
     let radius = 0.1; // example radius
 
@@ -281,26 +184,26 @@ fn pick_entities(
         match app_mode {
             AppMode::Objects => Picker.pick_from_parts(
                 &PickerConfig {
-                    screen_pt,
+                    screen_pt: *screen_pt,
                     viewport_size,
                     view_proj,
                     snap_radius: radius,
                     return_all_intersections: false,
                 },
                 &read_db,
-                &db_view_model.get_all_parts_id(),
+                parts_can_be_picked,
                 true,
             ),
             AppMode::Build => Picker.pick_from_instances(
                 &PickerConfig {
-                    screen_pt,
+                    screen_pt: *screen_pt,
                     viewport_size,
                     view_proj,
                     snap_radius: radius,
                     return_all_intersections: false,
                 },
                 &read_db,
-                db_view_model.get_instance_on_scene(),
+                instance_can_be_picked,
                 true,
                 Transformation(Mat4::IDENTITY),
             ),
@@ -332,4 +235,337 @@ fn get_camera_vectors(
 fn to_screen_pt(viewport_rect: egui::Rect, pos: egui::Pos2) -> glam::Vec2 {
     let relative_pos = pos - viewport_rect.min;
     glam::Vec2::new(relative_pos.x, relative_pos.y)
+}
+
+// ToDo currently all Pos2, are in the global egui coordinate and not the local coordinate
+// within the response region.
+#[allow(dead_code)]
+pub enum MouseEvt {
+    PrimaryBtnDown(egui::Pos2, egui::InputState),
+    PrimaryBtnUp(egui::Pos2, egui::InputState),
+    PrimaryBtnDrag(egui::Vec2, egui::Pos2, egui::InputState),
+    SecondaryBtnDown(egui::Pos2, egui::InputState),
+    SecondaryBtnUp(egui::Pos2, egui::InputState),
+    SecondaryBtnDrag(egui::Vec2, egui::Pos2, egui::InputState),
+    MiddleBtnDown(egui::Pos2, egui::InputState),
+    MiddleBtnUp(egui::Pos2, egui::InputState),
+    MiddleBtnDrag(egui::Vec2, egui::Pos2, egui::InputState),
+    MiddleBtnScroll(egui::Vec2, egui::Pos2, egui::InputState),
+    Hovered(egui::Pos2, egui::InputState),
+    NotHovered(),
+}
+
+#[derive(Debug, Default)]
+struct StandardViewportMouse {}
+
+const BASE_ROTATE_SENSITIVITY: f32 = 0.0003;
+const ROTATE_SENSITIVITY_FACTOR: f32 = 0.2; //used to scale the sensitivity based on zoom levels
+const BASE_PAN_SENSITIVITY: f32 = 0.001;
+const PAN_SENSITIVITY_FACTOR: f32 = 0.2; // used to scale the sensitivity based on zoom levels
+
+#[state_machine(initial = "State::idle()")]
+impl StandardViewportMouse {
+    #[state]
+    fn idle(event: &MouseEvt) -> Outcome<State> {
+        match event {
+            MouseEvt::Hovered(_, _) => Transition(State::Hovered {}),
+            MouseEvt::NotHovered() => Handled,
+            _ => Handled,
+        }
+    }
+
+    #[state]
+    fn hovered(context: &mut InputContext<'_>, event: &MouseEvt) -> Outcome<State> {
+        match event {
+            MouseEvt::PrimaryBtnDown(..) => Transition(State::Selection {}),
+            MouseEvt::SecondaryBtnDown(pos, _) => {
+                //rotate
+                let (pivot, screen_pt) = get_pivot_and_screen_pt(context, *pos);
+                let (right, up, _, distance) = get_camera_vectors(context.view_proj, pivot);
+                let drag_sensitivity = zoom_aware_sensitivity(
+                    BASE_ROTATE_SENSITIVITY,
+                    distance,
+                    ROTATE_SENSITIVITY_FACTOR,
+                );
+
+                Transition(State::RotateStarted {
+                    pivot,
+                    up,
+                    right,
+                    initial_screen_pt: screen_pt,
+                    drag_sensitivity,
+                })
+            }
+            MouseEvt::MiddleBtnDown(pos, _) => {
+                //pan
+                let (pivot, _) = get_pivot_and_screen_pt(context, *pos);
+                let (right, up, _, distance) = get_camera_vectors(context.view_proj, pivot);
+                let pan_sensitivity =
+                    zoom_aware_sensitivity(BASE_PAN_SENSITIVITY, distance, PAN_SENSITIVITY_FACTOR);
+
+                Transition(State::PanCamera {
+                    pan_sensitivity,
+                    up,
+                    right,
+                })
+            }
+            MouseEvt::MiddleBtnScroll(scroll_delta, pos, _) => {
+                let (target, _) = get_pivot_and_screen_pt(context, *pos);
+
+                if let Err(err) =
+                    context
+                        .render_request_tx
+                        .try_send(RenderServiceRequest::TransformCamera(vec![
+                            CameraTransform::ZoomTowards {
+                                target,
+                                amount: scroll_delta.y * 0.0001,
+                            },
+                        ]))
+                {
+                    log::error!("Unable to send transform: {err:?}");
+                }
+
+                Handled
+            }
+            MouseEvt::NotHovered() => Transition(State::Idle {}),
+            _ => Super,
+        }
+    }
+
+    #[state]
+    fn rotate_started(
+        pivot: &glam::Vec3,
+        up: &glam::Vec3,
+        right: &glam::Vec3,
+        initial_screen_pt: &glam::Vec2,
+        drag_sensitivity: &f32,
+        context: &mut InputContext<'_>,
+        event: &MouseEvt,
+    ) -> Outcome<State> {
+        match event {
+            MouseEvt::SecondaryBtnDrag(_, pos, input_state) => {
+                if input_state.key_down(Key::Num5) {
+                    let current_screen_pt = to_screen_pt(context.viewport_rect, *pos);
+
+                    let displacement = current_screen_pt - initial_screen_pt;
+                    let lock_threshold = 2.0; //px
+                    if displacement.length() >= lock_threshold {
+                        let rotation_axis = if displacement.x.abs() > displacement.y.abs() {
+                            up
+                        } else {
+                            right
+                        };
+
+                        return Transition(State::RotateLockedCamera {
+                            pivot: *pivot,
+                            up: *up,
+                            right: *right,
+                            locked_rotation_axis: *rotation_axis,
+                            drag_sensitivity: *drag_sensitivity,
+                        });
+                    }
+                }
+                Transition(State::RotateCameraFree {
+                    pivot: *pivot,
+                    up: *up,
+                    right: *right,
+                    drag_sensitivity: *drag_sensitivity,
+                })
+            }
+            MouseEvt::SecondaryBtnUp(_, _) => Transition(State::Idle {}),
+            _ => Super,
+        }
+    }
+
+    #[state]
+    fn rotate_locked_camera(
+        pivot: &glam::Vec3,
+        up: &glam::Vec3,
+        right: &glam::Vec3,
+        locked_rotation_axis: &glam::Vec3,
+        drag_sensitivity: &f32,
+        context: &mut InputContext<'_>,
+        event: &MouseEvt,
+    ) -> Outcome<State> {
+        match event {
+            MouseEvt::SecondaryBtnDrag(delta, _, input_state) => {
+                if input_state.key_down(Key::Num5) {
+                    let angle = if locked_rotation_axis == up {
+                        -delta.x * drag_sensitivity
+                    } else {
+                        delta.y * drag_sensitivity
+                    };
+
+                    if let Err(err) =
+                        context
+                            .render_request_tx
+                            .try_send(RenderServiceRequest::TransformCamera(vec![
+                                CameraTransform::Rotate {
+                                    pivot: *pivot,
+                                    rotation_axis: *locked_rotation_axis,
+                                    angle,
+                                },
+                            ]))
+                    {
+                        log::error!("Unable to send transform: {err:?}")
+                    }
+
+                    Handled
+                } else {
+                    Transition(State::RotateCameraFree {
+                        pivot: *pivot,
+                        up: *up,
+                        right: *right,
+                        drag_sensitivity: *drag_sensitivity,
+                    })
+                }
+            }
+            MouseEvt::SecondaryBtnUp(_, _) => Transition(State::Idle {}),
+            _ => Super,
+        }
+    }
+
+    #[state]
+    fn rotate_camera_free(
+        pivot: &glam::Vec3,
+        up: &glam::Vec3,
+        right: &glam::Vec3,
+        drag_sensitivity: &f32,
+        context: &mut InputContext<'_>,
+        event: &MouseEvt,
+    ) -> Outcome<State> {
+        match event {
+            MouseEvt::SecondaryBtnDrag(delta, _, _) => {
+                let transforms = vec![
+                    CameraTransform::Rotate {
+                        pivot: *pivot,
+                        rotation_axis: *up,
+                        angle: -delta.x * drag_sensitivity,
+                    },
+                    CameraTransform::Rotate {
+                        pivot: *pivot,
+                        rotation_axis: *right,
+                        angle: -delta.y * drag_sensitivity,
+                    },
+                ];
+
+                if let Err(err) = context
+                    .render_request_tx
+                    .try_send(RenderServiceRequest::TransformCamera(transforms))
+                {
+                    log::error!("Unable to send transform: {err:?}")
+                }
+
+                Handled
+            }
+            MouseEvt::SecondaryBtnUp(_, _) => Transition(State::Idle {}),
+            _ => Super,
+        }
+    }
+
+    #[state]
+    fn selection(context: &mut InputContext<'_>, event: &MouseEvt) -> Outcome<State> {
+        match event {
+            MouseEvt::PrimaryBtnDrag(..) => todo!("Implement drag selection"),
+            MouseEvt::PrimaryBtnUp(pos, _) => {
+                let screen_pt = to_screen_pt(context.viewport_rect, *pos);
+                let entities = context.pick_entities(&screen_pt);
+                log::info!("Picked entities: {entities:?}");
+
+                Transition(State::Idle {})
+            }
+            _ => Handled,
+        }
+    }
+
+    #[state]
+    fn pan_camera(
+        pan_sensitivity: &f32,
+        up: &glam::Vec3,
+        right: &glam::Vec3,
+        context: &mut InputContext<'_>,
+        event: &MouseEvt,
+    ) -> Outcome<State> {
+        match event {
+            MouseEvt::MiddleBtnDrag(delta, _, _) => {
+                let movement = (right * -delta.x + up * delta.y) * pan_sensitivity;
+
+                if let Err(err) =
+                    context
+                        .render_request_tx
+                        .try_send(RenderServiceRequest::TransformCamera(vec![
+                            CameraTransform::Pan(movement),
+                        ]))
+                {
+                    log::error!("Unable to send transform: {err:?}");
+                }
+
+                Handled
+            }
+            MouseEvt::MiddleBtnUp(..) => Transition(State::Idle {}),
+            _ => Super,
+        }
+    }
+}
+
+fn get_pivot_and_screen_pt(
+    context: &mut InputContext,
+    egui_screen_pos: egui::Pos2,
+) -> (glam::Vec3, glam::Vec2) {
+    let screen_pt = to_screen_pt(context.viewport_rect, egui_screen_pos);
+    let entities = context.pick_entities(&screen_pt);
+    let pivot = entities
+        .first()
+        .map_or(context.scene_bbox.center(), |p| p.intersection);
+    (pivot, screen_pt)
+}
+
+struct InputContext<'a> {
+    viewport_rect: egui::Rect,
+    render_request_tx: &'a Sender<RenderServiceRequest>,
+    view_proj: Mat4,
+    scene_bbox: BoundingBox,
+    db: &'a Arc<RwLock<Db>>,
+    parts_can_be_picked: Vec<PartId>,
+    instances_can_be_picked: Vec<PartInstanceId>,
+    app_mode: AppMode,
+}
+
+impl<'a> InputContext<'a> {
+    fn new_from_frame_context(
+        frame_context: FrameContext,
+        db: &'a Arc<RwLock<Db>>,
+        render_request_tx: &'a Sender<RenderServiceRequest>,
+    ) -> Self {
+        Self {
+            viewport_rect: frame_context.viewport_rect,
+            render_request_tx,
+            view_proj: frame_context.view_proj,
+            scene_bbox: frame_context.scene_bbox,
+            db,
+            parts_can_be_picked: frame_context.parts_can_be_picked,
+            instances_can_be_picked: frame_context.instances_can_be_picked,
+            app_mode: frame_context.app_mode,
+        }
+    }
+
+    fn get_viewport_size(&self) -> glam::Vec2 {
+        let rect_size = self.viewport_rect.max - self.viewport_rect.min;
+        glam::Vec2 {
+            x: rect_size.x,
+            y: rect_size.y,
+        }
+    }
+
+    fn pick_entities(&self, screen_pt: &glam::Vec2) -> Vec<PickedEntity> {
+        pick_entities(
+            self.app_mode,
+            screen_pt,
+            self.get_viewport_size(),
+            self.view_proj,
+            self.db,
+            &self.parts_can_be_picked,
+            &self.instances_can_be_picked,
+        )
+    }
 }

@@ -130,8 +130,8 @@ impl DbViewModel {
         self.scene_data = instances;
     }
 
-    pub fn get_instance_on_scene(&self) -> &Vec<PartInstanceId> {
-        &self.scene_data
+    pub fn get_instance_on_scene(&self) -> Vec<PartInstanceId> {
+        self.scene_data.clone()
     }
 
     pub fn get_all_parts_id(&self) -> Vec<PartId> {

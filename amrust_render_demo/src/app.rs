@@ -21,10 +21,11 @@ use crate::db_view_model::{
 use crate::egui_tools::EguiRenderer;
 use crate::features::{clear_db, load_3mf, save_3mf, unload, unzoom_scene};
 use crate::ui::part_list::PartList;
-use crate::ui::standard_mouse::StandardMouse;
+use crate::ui::standard_mouse::{FrameContext, StandardMouse};
 use crate::ui::toolsheets::Toolsheets;
 use crate::ui::tree_item_viewer::TreeItemViewer;
 use crate::ui::viewport::Viewport3D;
+use amrust_render::bounding_box::BoundingBox;
 // use amrust_lib::widgets::dropped_files::DroppedFilesWidget;
 use amrust_render::camera::{self, CameraData, OrthographicCameraData};
 // use amrust_render::normalized_box::{ORDERED_POSITIONS, ORDERED_POSITIONS_TRI_EDGE_INDICES};
@@ -39,6 +40,7 @@ use smol::lock::RwLock;
 use smol::{Executor, channel};
 use std::sync::Arc;
 use std::time::Duration;
+use wgpu::TextureView;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
@@ -189,6 +191,22 @@ impl AppState {
 
         let viewport_3d = Viewport3D::new(width, height);
 
+        let db = Arc::new(RwLock::new(Db::new()));
+        let db_view_model = DbViewModel::new();
+
+        let standard_mouse = StandardMouse::new(
+            FrameContext {
+                viewport_rect: egui::Rect::ZERO,
+                view_proj: camera_data.get_view_projection(),
+                scene_bbox: BoundingBox::default(),
+                parts_can_be_picked: db_view_model.get_all_parts_id(),
+                instances_can_be_picked: db_view_model.get_instance_on_scene(),
+                app_mode: AppMode::Build,
+            },
+            db.clone(),
+            render_message_tx.clone(),
+        );
+
         Self {
             device: Arc::new(device),
             queue: Arc::new(queue),
@@ -198,7 +216,7 @@ impl AppState {
             egui_renderer,
             texture_id: Some(texture_id),
             // dropped_files: dropped_files_widget,
-            db: Arc::new(RwLock::new(Db::new())),
+            db,
             toolsheets: None,
             viewport_3d,
             current_app_mode: AppMode::Build,
@@ -209,8 +227,8 @@ impl AppState {
             render_response_rx,
             render_db,
             db_view_model: DbViewModel::new(),
-            current_view_projection: Mat4::IDENTITY,
-            standard_mouse: StandardMouse::new(),
+            current_view_projection: camera_data.get_view_projection(),
+            standard_mouse,
         }
     }
 
@@ -225,24 +243,33 @@ impl AppState {
             .send_blocking(RenderServiceRequest::Render)
             .unwrap();
 
-        match self.render_response_rx.try_recv() {
-            Ok(response) => match response {
-                RenderServiceResponse::NewTextureView(texture_view) => {
-                    let id = self
-                        .egui_renderer
-                        .register_texture(&self.device, &texture_view);
-                    let _ = self.texture_id.insert(id);
-                }
-                RenderServiceResponse::NewView(view_proj) => {
-                    self.current_view_projection = view_proj;
-                    log::debug!("New view projection: {view_proj:?}");
-                }
-                RenderServiceResponse::RenderComplete => {}
-            },
-            Err(err) => match err {
-                TryRecvError::Empty => {}
-                TryRecvError::Closed => panic!("Disconnected"),
-            },
+        let mut new_render_texture: Option<TextureView> = None;
+        loop {
+            match self.render_response_rx.try_recv() {
+                Ok(response) => match response {
+                    RenderServiceResponse::NewTextureView(texture_view) => {
+                        let _ = new_render_texture.insert(texture_view);
+                    }
+                    RenderServiceResponse::NewView(view_proj) => {
+                        self.current_view_projection = view_proj;
+                    }
+                    RenderServiceResponse::RenderComplete => {}
+                },
+                Err(err) => match err {
+                    TryRecvError::Empty => {
+                        break;
+                    }
+                    TryRecvError::Closed => panic!("Disconnected from render service"),
+                },
+            }
+        }
+
+        // register he latest texture view
+        if let Some(texture_view) = new_render_texture.take() {
+            let id = self
+                .egui_renderer
+                .register_texture(&self.device, &texture_view);
+            let _ = self.texture_id.insert(id);
         }
     }
 }
@@ -769,16 +796,17 @@ impl App {
                     Some(id) => {
                         let response = state.viewport_3d.ui(ui, id, &state.render_message_tx);
 
-                        state.standard_mouse.run(
-                            &response,
-                            state.egui_renderer.context(),
-                            bbox,
-                            &state.db,
-                            &state.db_view_model,
-                            state.current_app_mode,
-                            state.current_view_projection,
-                            &state.render_message_tx,
-                        );
+                        let context = FrameContext {
+                            viewport_rect: response.rect,
+                            view_proj: state.current_view_projection,
+                            scene_bbox: *bbox,
+                            parts_can_be_picked: state.db_view_model.get_all_parts_id(),
+                            instances_can_be_picked: state.db_view_model.get_instance_on_scene(),
+                            app_mode: state.current_app_mode,
+                        };
+                        state
+                            .standard_mouse
+                            .run(&response, state.egui_renderer.context(), context);
                     }
                     None => {
                         ui.label("Rendering Texture ID is missing!!");

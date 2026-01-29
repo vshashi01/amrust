@@ -36,6 +36,7 @@ rkyv_derive = { version = "0.8.12", features = ["bytecheck"] }
 bytecheck = { version = "0.8.2" }
 egui_logger = { version = "0.8.0" }
 egui-toast = { version = "0.18.0" }
+statig = { version = "0.4.1", features = ["macro"] }
 
 amrust_render = { workspace = true }
 amrust_lib = { workspace = true }
