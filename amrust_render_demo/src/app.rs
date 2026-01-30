@@ -1,7 +1,6 @@
 use crate::core::amrust_db::Db;
 use crate::core::app_mode::AppMode;
 use crate::core::interfaces::command::CommandContext;
-use crate::core::interfaces::mouse_3d_viewport::Mouse3dContext;
 use crate::core::interfaces::operation::OperationResponse;
 use crate::core::render_db::RenderDb;
 use crate::core::services::command_service::CommandService;
@@ -17,34 +16,28 @@ use crate::core::services::render_service::{
 use crate::core::types::identifiable::Identifiable;
 use crate::db_view_model::{
     self, DbViewModel, create_build_items_list, create_object_tree_from_identifiable,
-    create_objects_list, create_scene_tree_items_by_unique_parts, get_total_bbox_from_cache,
+    create_objects_list, create_scene_tree_items_by_unique_parts,
 };
 use crate::egui_tools::EguiRenderer;
 use crate::features::{clear_db, load_3mf, save_3mf, unload, unzoom_scene};
-use crate::ui::mouse_3d_manager::{Mouse3dFrameContext, Mouse3dManager};
-use crate::ui::mouse_camera_3d::MouseCamera3d;
-use crate::ui::mouse_selection_3d::MouseSelection3d;
 use crate::ui::part_list::PartList;
 use crate::ui::toolsheets::Toolsheets;
 use crate::ui::tree_item_viewer::TreeItemViewer;
 use crate::ui::viewport::Viewport3D;
-use amrust_render::bounding_box::BoundingBox;
 // use amrust_lib::widgets::dropped_files::DroppedFilesWidget;
 use amrust_render::camera::{self, CameraData, OrthographicCameraData};
 // use amrust_render::normalized_box::{ORDERED_POSITIONS, ORDERED_POSITIONS_TRI_EDGE_INDICES};
-use egui::{Align2, Direction, Id, Layout, epaint};
+use egui::{Align2, Direction, Id, Layout};
 use egui_dock::{DockArea, DockState, NodeIndex};
 use egui_toast::{Toast, ToastOptions};
 use egui_wgpu::wgpu::SurfaceError;
 use egui_wgpu::{ScreenDescriptor, wgpu};
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use smol::channel::{Receiver, Sender, TryRecvError};
 use smol::lock::RwLock;
 use smol::{Executor, channel};
-use statig::prelude::IntoStateMachineExt;
 use std::sync::Arc;
 use std::time::Duration;
-use wgpu::TextureView;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
@@ -60,7 +53,6 @@ struct AppState {
     pub surface: wgpu::Surface<'static>,
     pub dpi_factor: f32,
     pub egui_renderer: EguiRenderer,
-    pub texture_id: Option<epaint::TextureId>,
     // pub dropped_files: DroppedFilesWidget,
     pub db: Arc<RwLock<Db>>,
     pub toolsheets: Option<Toolsheets>,
@@ -74,7 +66,7 @@ struct AppState {
     pub render_response_rx: Receiver<RenderServiceResponse>,
     pub render_db: Arc<RwLock<RenderDb>>,
     pub db_view_model: DbViewModel,
-    pub current_view_projection: Mat4,
+    // pub current_view_projection: Mat4,
 }
 
 impl AppState {
@@ -192,23 +184,19 @@ impl AppState {
                 .detach();
         }
 
-        let viewport_3d = Viewport3D::new(width, height);
-
         let db = Arc::new(RwLock::new(Db::new()));
         let db_view_model = DbViewModel::new();
 
-        // let standard_mouse = StandardMouse::new(
-        //     FrameContext {
-        //         viewport_rect: egui::Rect::ZERO,
-        //         view_proj: camera_data.get_view_projection(),
-        //         scene_bbox: BoundingBox::default(),
-        //         parts_can_be_picked: db_view_model.get_all_parts_id(),
-        //         instances_can_be_picked: db_view_model.get_instance_on_scene(),
-        //         app_mode: AppMode::Build,
-        //     },
-        //     db.clone(),
-        //     render_message_tx.clone(),
-        // );
+        let viewport_3d = Viewport3D::new(
+            width,
+            height,
+            db.clone(),
+            &db_view_model,
+            AppMode::Build,
+            camera_data.get_view_projection(),
+            render_response_rx.clone(),
+            render_message_tx.clone(),
+        );
 
         Self {
             device: Arc::new(device),
@@ -217,7 +205,6 @@ impl AppState {
             surface_config,
             dpi_factor,
             egui_renderer,
-            texture_id: Some(texture_id),
             // dropped_files: dropped_files_widget,
             db,
             toolsheets: None,
@@ -229,8 +216,7 @@ impl AppState {
             render_message_tx,
             render_response_rx,
             render_db,
-            db_view_model: DbViewModel::new(),
-            current_view_projection: camera_data.get_view_projection(),
+            db_view_model,
         }
     }
 
@@ -240,40 +226,7 @@ impl AppState {
         self.surface.configure(&self.device, &self.surface_config);
     }
 
-    fn handle_redraw(&mut self) {
-        self.render_message_tx
-            .send_blocking(RenderServiceRequest::Render)
-            .unwrap();
-
-        let mut new_render_texture: Option<TextureView> = None;
-        loop {
-            match self.render_response_rx.try_recv() {
-                Ok(response) => match response {
-                    RenderServiceResponse::NewTextureView(texture_view) => {
-                        let _ = new_render_texture.insert(texture_view);
-                    }
-                    RenderServiceResponse::NewView(view_proj) => {
-                        self.current_view_projection = view_proj;
-                    }
-                    RenderServiceResponse::RenderComplete => {}
-                },
-                Err(err) => match err {
-                    TryRecvError::Empty => {
-                        break;
-                    }
-                    TryRecvError::Closed => panic!("Disconnected from render service"),
-                },
-            }
-        }
-
-        // register he latest texture view
-        if let Some(texture_view) = new_render_texture.take() {
-            let id = self
-                .egui_renderer
-                .register_texture(&self.device, &texture_view);
-            let _ = self.texture_id.insert(id);
-        }
-    }
+    fn handle_redraw(&mut self) {}
 }
 
 pub struct App {
@@ -291,7 +244,6 @@ pub struct App {
     toasts: egui_toast::Toasts,
     dialog_service: DialogService,
     dialog_request_tx: Sender<DialogServiceRequest>,
-    app_mouse_manager: Mouse3dManager,
 }
 
 impl App {
@@ -323,8 +275,6 @@ impl App {
         let (dialog_service_tx, dialog_service_rx) = channel::unbounded();
         let dialog_service = DialogService::new(dialog_service_rx);
 
-        let app_mouse_manager = Mouse3dManager::new();
-
         Self {
             instance,
             state: None,
@@ -342,7 +292,6 @@ impl App {
                 .direction(Direction::TopDown),
             dialog_service,
             dialog_request_tx: dialog_service_tx,
-            app_mouse_manager,
         }
     }
 
@@ -368,28 +317,6 @@ impl App {
             scale_factor as f32,
         )
         .await;
-
-        // initialize the standard mouse here since we have more context info here
-        let frame_context = Mouse3dFrameContext {
-            viewport_rect: egui::Rect::ZERO,
-            view_proj: state.current_view_projection,
-            scene_bbox: BoundingBox::default(),
-            parts_can_be_picked: vec![],
-            instances_can_be_picked: vec![],
-            app_mode: state.current_app_mode,
-        };
-
-        let camera_mouse =
-            MouseCamera3d::get_initialized_sm(&frame_context, &state.db, &state.render_message_tx);
-        self.app_mouse_manager.push(Box::new(camera_mouse));
-
-        // selection mouse is higher on the stack than the camera mouse
-        let selection_mouse = MouseSelection3d::get_initialized_sm(
-            &frame_context,
-            &state.db,
-            &state.render_message_tx,
-        );
-        self.app_mouse_manager.push(Box::new(selection_mouse));
 
         self.window.get_or_insert(window);
         self.state.get_or_insert(state);
@@ -473,7 +400,6 @@ impl App {
                 handler.handle_and_close_dialog(&mut command_context);
             }
 
-            let bbox = &get_total_bbox_from_cache(&state.db_view_model, state.current_app_mode);
             let operable_selected_identifiables = state
                 .db_view_model
                 .get_all_operable_selected_identifiables()
@@ -819,32 +745,21 @@ impl App {
                     });
             }
 
-            egui::CentralPanel::default().show(state.egui_renderer.context(), |ui| {
-                match state.texture_id {
-                    Some(id) => {
-                        let response = state.viewport_3d.ui(ui, id, &state.render_message_tx);
-
-                        let context = Mouse3dFrameContext {
-                            viewport_rect: response.rect,
-                            view_proj: state.current_view_projection,
-                            scene_bbox: *bbox,
-                            parts_can_be_picked: state.db_view_model.get_all_parts_id(),
-                            instances_can_be_picked: state.db_view_model.get_instance_on_scene(),
-                            app_mode: state.current_app_mode,
-                        };
-
-                        self.app_mouse_manager.run(
-                            &response,
-                            state.egui_renderer.context(),
-                            context,
-                            &state.db,
-                            &state.render_message_tx,
-                        );
-                    }
-                    None => {
-                        ui.label("Rendering Texture ID is missing!!");
-                    }
-                }
+            egui::CentralPanel::default().show(&state.egui_renderer.context().clone(), |ui| {
+                // match state.texture_id {
+                //     Some(id) => {
+                state.viewport_3d.ui(
+                    ui,
+                    &state.db_view_model,
+                    state.current_app_mode,
+                    &mut state.egui_renderer,
+                    &state.device,
+                );
+                // }
+                //     None => {
+                //         ui.label("Rendering Texture ID is missing!!");
+                //     }
+                // }
 
                 self.toasts.show(state.egui_renderer.context());
             });
