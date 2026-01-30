@@ -1,6 +1,7 @@
 use crate::core::amrust_db::Db;
 use crate::core::app_mode::AppMode;
 use crate::core::interfaces::command::CommandContext;
+use crate::core::interfaces::mouse_3d_viewport::Mouse3dContext;
 use crate::core::interfaces::operation::OperationResponse;
 use crate::core::render_db::RenderDb;
 use crate::core::services::command_service::CommandService;
@@ -20,8 +21,10 @@ use crate::db_view_model::{
 };
 use crate::egui_tools::EguiRenderer;
 use crate::features::{clear_db, load_3mf, save_3mf, unload, unzoom_scene};
+use crate::ui::mouse_3d_manager::{Mouse3dFrameContext, Mouse3dManager};
+use crate::ui::mouse_camera_3d::MouseCamera3d;
+use crate::ui::mouse_selection_3d::MouseSelection3d;
 use crate::ui::part_list::PartList;
-use crate::ui::standard_mouse::{FrameContext, StandardMouse};
 use crate::ui::toolsheets::Toolsheets;
 use crate::ui::tree_item_viewer::TreeItemViewer;
 use crate::ui::viewport::Viewport3D;
@@ -38,6 +41,7 @@ use glam::{Mat4, Vec3};
 use smol::channel::{Receiver, Sender, TryRecvError};
 use smol::lock::RwLock;
 use smol::{Executor, channel};
+use statig::prelude::IntoStateMachineExt;
 use std::sync::Arc;
 use std::time::Duration;
 use wgpu::TextureView;
@@ -71,7 +75,6 @@ struct AppState {
     pub render_db: Arc<RwLock<RenderDb>>,
     pub db_view_model: DbViewModel,
     pub current_view_projection: Mat4,
-    pub standard_mouse: StandardMouse,
 }
 
 impl AppState {
@@ -194,18 +197,18 @@ impl AppState {
         let db = Arc::new(RwLock::new(Db::new()));
         let db_view_model = DbViewModel::new();
 
-        let standard_mouse = StandardMouse::new(
-            FrameContext {
-                viewport_rect: egui::Rect::ZERO,
-                view_proj: camera_data.get_view_projection(),
-                scene_bbox: BoundingBox::default(),
-                parts_can_be_picked: db_view_model.get_all_parts_id(),
-                instances_can_be_picked: db_view_model.get_instance_on_scene(),
-                app_mode: AppMode::Build,
-            },
-            db.clone(),
-            render_message_tx.clone(),
-        );
+        // let standard_mouse = StandardMouse::new(
+        //     FrameContext {
+        //         viewport_rect: egui::Rect::ZERO,
+        //         view_proj: camera_data.get_view_projection(),
+        //         scene_bbox: BoundingBox::default(),
+        //         parts_can_be_picked: db_view_model.get_all_parts_id(),
+        //         instances_can_be_picked: db_view_model.get_instance_on_scene(),
+        //         app_mode: AppMode::Build,
+        //     },
+        //     db.clone(),
+        //     render_message_tx.clone(),
+        // );
 
         Self {
             device: Arc::new(device),
@@ -228,7 +231,6 @@ impl AppState {
             render_db,
             db_view_model: DbViewModel::new(),
             current_view_projection: camera_data.get_view_projection(),
-            standard_mouse,
         }
     }
 
@@ -289,6 +291,7 @@ pub struct App {
     toasts: egui_toast::Toasts,
     dialog_service: DialogService,
     dialog_request_tx: Sender<DialogServiceRequest>,
+    app_mouse_manager: Mouse3dManager,
 }
 
 impl App {
@@ -320,6 +323,8 @@ impl App {
         let (dialog_service_tx, dialog_service_rx) = channel::unbounded();
         let dialog_service = DialogService::new(dialog_service_rx);
 
+        let app_mouse_manager = Mouse3dManager::new();
+
         Self {
             instance,
             state: None,
@@ -337,6 +342,7 @@ impl App {
                 .direction(Direction::TopDown),
             dialog_service,
             dialog_request_tx: dialog_service_tx,
+            app_mouse_manager,
         }
     }
 
@@ -362,6 +368,28 @@ impl App {
             scale_factor as f32,
         )
         .await;
+
+        // initialize the standard mouse here since we have more context info here
+        let frame_context = Mouse3dFrameContext {
+            viewport_rect: egui::Rect::ZERO,
+            view_proj: state.current_view_projection,
+            scene_bbox: BoundingBox::default(),
+            parts_can_be_picked: vec![],
+            instances_can_be_picked: vec![],
+            app_mode: state.current_app_mode,
+        };
+
+        let camera_mouse =
+            MouseCamera3d::get_initialized_sm(&frame_context, &state.db, &state.render_message_tx);
+        self.app_mouse_manager.push(Box::new(camera_mouse));
+
+        // selection mouse is higher on the stack than the camera mouse
+        let selection_mouse = MouseSelection3d::get_initialized_sm(
+            &frame_context,
+            &state.db,
+            &state.render_message_tx,
+        );
+        self.app_mouse_manager.push(Box::new(selection_mouse));
 
         self.window.get_or_insert(window);
         self.state.get_or_insert(state);
@@ -796,7 +824,7 @@ impl App {
                     Some(id) => {
                         let response = state.viewport_3d.ui(ui, id, &state.render_message_tx);
 
-                        let context = FrameContext {
+                        let context = Mouse3dFrameContext {
                             viewport_rect: response.rect,
                             view_proj: state.current_view_projection,
                             scene_bbox: *bbox,
@@ -804,9 +832,14 @@ impl App {
                             instances_can_be_picked: state.db_view_model.get_instance_on_scene(),
                             app_mode: state.current_app_mode,
                         };
-                        state
-                            .standard_mouse
-                            .run(&response, state.egui_renderer.context(), context);
+
+                        self.app_mouse_manager.run(
+                            &response,
+                            state.egui_renderer.context(),
+                            context,
+                            &state.db,
+                            &state.render_message_tx,
+                        );
                     }
                     None => {
                         ui.label("Rendering Texture ID is missing!!");

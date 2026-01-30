@@ -1,8 +1,8 @@
-pub mod app_mouse_manager;
-pub mod mouse_selection_sm;
+pub mod mouse_3d_manager;
+pub mod mouse_camera_3d;
+pub mod mouse_selection_3d;
 pub mod part_list;
 pub mod popup_dialog;
-pub mod standard_mouse;
 pub mod toolsheets;
 pub mod tree_item_viewer;
 pub mod viewport;

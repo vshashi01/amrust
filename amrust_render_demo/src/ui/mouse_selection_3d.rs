@@ -1,16 +1,47 @@
+use smol::{channel::Sender, lock::RwLock};
+use statig::prelude::*;
 use statig::{
     Outcome::{self, Handled, Transition},
     prelude::InitializedStateMachine,
     state_machine,
 };
 
-use crate::ui::standard_mouse::{InputContext, Mouse3DStateMachine, MouseEvt};
+use crate::{
+    core::{
+        amrust_db::Db,
+        interfaces::mouse_3d_viewport::{Mouse3DViewport, Mouse3dContext, MouseEvt},
+        services::render_service::RenderServiceRequest,
+    },
+    ui::mouse_3d_manager::Mouse3dFrameContext,
+};
+
+use std::sync::Arc;
 
 #[derive(Debug, Default)]
-pub struct MouseSelectionSM;
+pub struct MouseSelection3d;
+
+impl MouseSelection3d {
+    pub fn get_initialized_sm(
+        frame_context: &Mouse3dFrameContext,
+        db: &Arc<RwLock<Db>>,
+        render_request_tx: &Sender<RenderServiceRequest>,
+    ) -> InitializedStateMachine<Self> {
+        Self.uninitialized_state_machine()
+            .init_with_context(&mut Mouse3dContext::new(
+                frame_context.viewport_rect,
+                frame_context.view_proj,
+                frame_context.scene_bbox,
+                frame_context.parts_can_be_picked.clone(),
+                frame_context.instances_can_be_picked.clone(),
+                frame_context.app_mode,
+                db,
+                render_request_tx,
+            ))
+    }
+}
 
 #[state_machine(initial = "State::idle()")]
-impl MouseSelectionSM {
+impl MouseSelection3d {
     #[state]
     fn idle(event: &MouseEvt) -> Outcome<State> {
         match event {
@@ -34,7 +65,7 @@ impl MouseSelectionSM {
     }
 
     #[state]
-    fn pick(event: &MouseEvt, context: &mut InputContext) -> Outcome<State> {
+    fn pick(event: &MouseEvt, context: &mut Mouse3dContext) -> Outcome<State> {
         match event {
             MouseEvt::PrimaryBtnDrag(..) => todo!("Implement drag selection"),
             MouseEvt::PrimaryBtnUp(pos, _) => {
@@ -49,8 +80,8 @@ impl MouseSelectionSM {
     }
 }
 
-impl Mouse3DStateMachine for InitializedStateMachine<MouseSelectionSM> {
-    fn can_handle(&self, event: &MouseEvt, _context: &mut InputContext) -> bool {
+impl Mouse3DViewport for InitializedStateMachine<MouseSelection3d> {
+    fn can_handle(&self, event: &MouseEvt, _context: &mut Mouse3dContext) -> bool {
         matches!(
             event,
             MouseEvt::Hovered(..)
@@ -64,7 +95,7 @@ impl Mouse3DStateMachine for InitializedStateMachine<MouseSelectionSM> {
         matches!(self.state(), State::Idle {} | State::Hovered {})
     }
 
-    fn handle_event(&mut self, event: &MouseEvt, context: &mut InputContext) {
+    fn handle_event(&mut self, event: &MouseEvt, context: &mut Mouse3dContext) {
         self.handle_with_context(event, context);
     }
 
