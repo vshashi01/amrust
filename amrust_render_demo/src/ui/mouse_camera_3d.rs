@@ -18,7 +18,7 @@ use crate::{
 
 use std::sync::Arc;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct MouseCamera3d {}
 
 const BASE_ROTATE_SENSITIVITY: f32 = 0.0003;
@@ -51,7 +51,7 @@ impl MouseCamera3d {
     }
 }
 
-#[state_machine(initial = "State::idle()")]
+#[state_machine(initial = "State::idle()", state(derive(Debug, Clone)))]
 impl MouseCamera3d {
     #[state]
     fn idle(event: &MouseEvt) -> Outcome<State> {

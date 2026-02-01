@@ -48,13 +48,27 @@ impl EguiRenderer {
         }
     }
 
-    pub fn register_texture(
+    pub fn register_new_texture(
         &mut self,
         device: &wgpu::Device,
         texture_view: &wgpu::TextureView,
     ) -> epaint::TextureId {
         self.renderer
             .register_native_texture(device, texture_view, wgpu::FilterMode::Linear)
+    }
+
+    pub fn update_existing_texture(
+        &mut self,
+        texture_id: &epaint::TextureId,
+        device: &wgpu::Device,
+        texture_view: &wgpu::TextureView,
+    ) {
+        self.renderer.update_egui_texture_from_wgpu_texture(
+            device,
+            texture_view,
+            wgpu::FilterMode::Linear,
+            *texture_id,
+        );
     }
 
     pub fn handle_input(&mut self, window: &Window, event: &WindowEvent) {

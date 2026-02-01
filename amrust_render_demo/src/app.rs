@@ -173,7 +173,7 @@ impl AppState {
         .await;
 
         let texture_view = render_worker.get_texture_view();
-        let texture_id = egui_renderer.register_texture(&device, &texture_view);
+        let texture_id = egui_renderer.register_new_texture(&device, &texture_view);
 
         {
             executor

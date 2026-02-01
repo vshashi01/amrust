@@ -1,15 +1,55 @@
 use amrust_render::bounding_box::BoundingBox;
 use smol::{channel::Sender, lock::RwLock};
+use statig::prelude::InitializedStateMachine;
 
-use crate::core::{
-    amrust_db::Db,
-    app_mode::AppMode,
-    interfaces::mouse_3d_viewport::{Mouse3DViewport, Mouse3dContext, MouseEvt},
-    services::render_service::RenderServiceRequest,
-    types::{part::PartId, part_instance::PartInstanceId},
+use crate::{
+    core::{
+        amrust_db::Db,
+        app_mode::AppMode,
+        interfaces::mouse_3d_viewport::{Mouse3DViewport, Mouse3dContext, MouseEvt},
+        services::render_service::RenderServiceRequest,
+        types::{part::PartId, part_instance::PartInstanceId},
+    },
+    ui::{mouse_camera_3d::MouseCamera3d, mouse_selection_3d::MouseSelection3d},
 };
 
 use std::sync::Arc;
+
+#[derive(Debug, Clone)]
+pub enum Mouse3d {
+    Selection(InitializedStateMachine<MouseSelection3d>),
+    Camera(InitializedStateMachine<MouseCamera3d>),
+}
+
+impl Mouse3DViewport for Mouse3d {
+    fn can_handle(&self, event: &MouseEvt, context: &mut Mouse3dContext) -> bool {
+        match self {
+            Mouse3d::Selection(sm) => sm.can_handle(event, context),
+            Mouse3d::Camera(sm) => sm.can_handle(event, context),
+        }
+    }
+
+    fn is_clean(&self) -> bool {
+        match self {
+            Mouse3d::Selection(sm) => sm.is_clean(),
+            Mouse3d::Camera(sm) => sm.is_clean(),
+        }
+    }
+
+    fn can_allow_passthrough(&self, event: &MouseEvt) -> bool {
+        match self {
+            Mouse3d::Selection(sm) => sm.can_allow_passthrough(event),
+            Mouse3d::Camera(sm) => sm.can_allow_passthrough(event),
+        }
+    }
+
+    fn handle_event(&mut self, event: &MouseEvt, context: &mut Mouse3dContext) {
+        match self {
+            Mouse3d::Selection(sm) => sm.handle_event(event, context),
+            Mouse3d::Camera(sm) => sm.handle_event(event, context),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Mouse3dFrameContext {
@@ -22,7 +62,7 @@ pub struct Mouse3dFrameContext {
 }
 
 pub struct Mouse3dManager {
-    pub stack: Vec<Box<dyn Mouse3DViewport>>,
+    pub stack: Vec<Mouse3d>,
     captured_index: Option<usize>, // SM currently owning the gesture
 }
 
@@ -34,8 +74,12 @@ impl Mouse3dManager {
         }
     }
 
-    pub fn push(&mut self, sm: Box<dyn Mouse3DViewport>) {
-        self.stack.push(sm);
+    pub fn push(&mut self, sm: Mouse3d) {
+        self.stack.push(sm.clone());
+    }
+
+    pub fn push_clone(&mut self, sm: &Mouse3d) {
+        self.stack.push(sm.clone());
     }
 
     pub fn pop(&mut self) {

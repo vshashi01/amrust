@@ -17,7 +17,7 @@ use crate::{
 
 use std::sync::Arc;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct MouseSelection3d;
 
 impl MouseSelection3d {
@@ -40,7 +40,7 @@ impl MouseSelection3d {
     }
 }
 
-#[state_machine(initial = "State::idle()")]
+#[state_machine(initial = "State::idle()", state(derive(Debug, Clone)))]
 impl MouseSelection3d {
     #[state]
     fn idle(event: &MouseEvt) -> Outcome<State> {
