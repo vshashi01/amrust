@@ -11,7 +11,7 @@ use crate::core::services::operation_service::{
     OperationService, OperationServiceError, OperationServiceRequest,
 };
 use crate::core::services::render_service::{
-    RenderService, RenderServiceRequest, RenderServiceResponse, RendererSettings,
+    RenderService, RenderServiceRequest, RendererSettings,
 };
 use crate::core::types::identifiable::Identifiable;
 use crate::db_view_model::{
@@ -63,10 +63,8 @@ struct AppState {
 
     pub executor: Arc<Executor<'static>>,
     pub render_message_tx: Sender<RenderServiceRequest>,
-    pub render_response_rx: Receiver<RenderServiceResponse>,
     pub render_db: Arc<RwLock<RenderDb>>,
     pub db_view_model: DbViewModel,
-    // pub current_view_projection: Mat4,
 }
 
 impl AppState {
@@ -123,7 +121,7 @@ impl AppState {
 
         surface.configure(&device, &surface_config);
 
-        let mut egui_renderer = EguiRenderer::new(&device, surface_config.format, None, 1, window);
+        let egui_renderer = EguiRenderer::new(&device, surface_config.format, None, 1, window);
 
         let camera_data = get_camera_data();
 
@@ -172,9 +170,6 @@ impl AppState {
         )
         .await;
 
-        let texture_view = render_worker.get_texture_view();
-        let texture_id = egui_renderer.register_new_texture(&device, &texture_view);
-
         {
             executor
                 .spawn(async move {
@@ -188,14 +183,12 @@ impl AppState {
         let db_view_model = DbViewModel::new();
 
         let viewport_3d = Viewport3D::new(
-            width,
-            height,
+            (width, height),
             db.clone(),
             &db_view_model,
             AppMode::Build,
             camera_data.get_view_projection(),
-            render_response_rx.clone(),
-            render_message_tx.clone(),
+            (render_response_rx.clone(), render_message_tx.clone()),
         );
 
         Self {
@@ -214,7 +207,6 @@ impl AppState {
             need_viewport_update: false,
             executor,
             render_message_tx,
-            render_response_rx,
             render_db,
             db_view_model,
         }

@@ -7,13 +7,12 @@ use statig::{
     state_machine,
 };
 
-use crate::{
-    core::{
-        amrust_db::Db,
-        interfaces::mouse_3d_viewport::{Mouse3DViewport, Mouse3dContext, MouseEvt},
-        services::render_service::RenderServiceRequest,
+use crate::core::{
+    amrust_db::Db,
+    interfaces::mouse_3d_viewport::{
+        Mouse3DViewport, Mouse3dContext, Mouse3dFrameContext, MouseEvt,
     },
-    ui::mouse_3d_manager::Mouse3dFrameContext,
+    services::render_service::RenderServiceRequest,
 };
 
 use std::sync::Arc;
@@ -32,19 +31,14 @@ fn zoom_aware_sensitivity(base_sensitivity: f32, distance: f32, scale_factor: f3
 
 impl MouseCamera3d {
     pub fn get_initialized_sm(
-        frame_context: &Mouse3dFrameContext,
+        frame_context: Mouse3dFrameContext,
         db: &Arc<RwLock<Db>>,
         render_request_tx: &Sender<RenderServiceRequest>,
     ) -> InitializedStateMachine<Self> {
         Self::default()
             .uninitialized_state_machine()
             .init_with_context(&mut Mouse3dContext::new(
-                frame_context.viewport_rect,
-                frame_context.view_proj,
-                frame_context.scene_bbox,
-                frame_context.parts_can_be_picked.clone(),
-                frame_context.instances_can_be_picked.clone(),
-                frame_context.app_mode,
+                frame_context,
                 db,
                 render_request_tx,
             ))

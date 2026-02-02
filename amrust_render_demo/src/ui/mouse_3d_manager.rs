@@ -1,14 +1,13 @@
-use amrust_render::bounding_box::BoundingBox;
 use smol::{channel::Sender, lock::RwLock};
 use statig::prelude::InitializedStateMachine;
 
 use crate::{
     core::{
         amrust_db::Db,
-        app_mode::AppMode,
-        interfaces::mouse_3d_viewport::{Mouse3DViewport, Mouse3dContext, MouseEvt},
+        interfaces::mouse_3d_viewport::{
+            Mouse3DViewport, Mouse3dContext, Mouse3dFrameContext, MouseEvt,
+        },
         services::render_service::RenderServiceRequest,
-        types::{part::PartId, part_instance::PartInstanceId},
     },
     ui::{mouse_camera_3d::MouseCamera3d, mouse_selection_3d::MouseSelection3d},
 };
@@ -19,46 +18,6 @@ use std::sync::Arc;
 pub enum Mouse3d {
     Selection(InitializedStateMachine<MouseSelection3d>),
     Camera(InitializedStateMachine<MouseCamera3d>),
-}
-
-impl Mouse3DViewport for Mouse3d {
-    fn can_handle(&self, event: &MouseEvt, context: &mut Mouse3dContext) -> bool {
-        match self {
-            Mouse3d::Selection(sm) => sm.can_handle(event, context),
-            Mouse3d::Camera(sm) => sm.can_handle(event, context),
-        }
-    }
-
-    fn is_clean(&self) -> bool {
-        match self {
-            Mouse3d::Selection(sm) => sm.is_clean(),
-            Mouse3d::Camera(sm) => sm.is_clean(),
-        }
-    }
-
-    fn can_allow_passthrough(&self, event: &MouseEvt) -> bool {
-        match self {
-            Mouse3d::Selection(sm) => sm.can_allow_passthrough(event),
-            Mouse3d::Camera(sm) => sm.can_allow_passthrough(event),
-        }
-    }
-
-    fn handle_event(&mut self, event: &MouseEvt, context: &mut Mouse3dContext) {
-        match self {
-            Mouse3d::Selection(sm) => sm.handle_event(event, context),
-            Mouse3d::Camera(sm) => sm.handle_event(event, context),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Mouse3dFrameContext {
-    pub viewport_rect: egui::Rect,
-    pub view_proj: glam::Mat4,
-    pub scene_bbox: BoundingBox,
-    pub parts_can_be_picked: Vec<PartId>,
-    pub instances_can_be_picked: Vec<PartInstanceId>,
-    pub app_mode: AppMode,
 }
 
 pub struct Mouse3dManager {
@@ -89,23 +48,14 @@ impl Mouse3dManager {
     pub fn run(
         &mut self,
         response: &egui::Response,
-        ctx: &egui::Context,
-        context: Mouse3dFrameContext,
+        egui_context: &egui::Context,
+        frame_context: Mouse3dFrameContext,
         db: &Arc<RwLock<Db>>,
         render_request_tx: &Sender<RenderServiceRequest>,
     ) {
-        let mut input_context = Mouse3dContext::new(
-            context.viewport_rect,
-            context.view_proj,
-            context.scene_bbox,
-            context.parts_can_be_picked,
-            context.instances_can_be_picked,
-            context.app_mode,
-            db,
-            render_request_tx,
-        );
+        let mut input_context = Mouse3dContext::new(frame_context, db, render_request_tx);
 
-        let events = gather_mouse_events(response, ctx);
+        let events = gather_mouse_events(response, egui_context);
         for evt in events {
             self.handle_event(&evt, &mut input_context);
         }
@@ -140,6 +90,7 @@ impl Mouse3dManager {
 
         // Gesture capture: if this was a button-down event or similar,
         // the last handler gets exclusive control for remainder of gesture
+        // ToDo: Revisit this in the future for more complex mouse interactions
         if is_gesture_starter(evt)
             && let Some(capture_idx) = last_handler_index
             && !self.stack[capture_idx].is_clean()
@@ -149,7 +100,36 @@ impl Mouse3dManager {
     }
 }
 
-/// Define what counts as a "gesture starter"
+impl Mouse3DViewport for Mouse3d {
+    fn can_handle(&self, event: &MouseEvt, context: &mut Mouse3dContext) -> bool {
+        match self {
+            Mouse3d::Selection(sm) => sm.can_handle(event, context),
+            Mouse3d::Camera(sm) => sm.can_handle(event, context),
+        }
+    }
+
+    fn is_clean(&self) -> bool {
+        match self {
+            Mouse3d::Selection(sm) => sm.is_clean(),
+            Mouse3d::Camera(sm) => sm.is_clean(),
+        }
+    }
+
+    fn can_allow_passthrough(&self, event: &MouseEvt) -> bool {
+        match self {
+            Mouse3d::Selection(sm) => sm.can_allow_passthrough(event),
+            Mouse3d::Camera(sm) => sm.can_allow_passthrough(event),
+        }
+    }
+
+    fn handle_event(&mut self, event: &MouseEvt, context: &mut Mouse3dContext) {
+        match self {
+            Mouse3d::Selection(sm) => sm.handle_event(event, context),
+            Mouse3d::Camera(sm) => sm.handle_event(event, context),
+        }
+    }
+}
+
 fn is_gesture_starter(evt: &MouseEvt) -> bool {
     matches!(
         evt,
@@ -157,7 +137,6 @@ fn is_gesture_starter(evt: &MouseEvt) -> bool {
     )
 }
 
-/// Collect all mouse-related events for this frame from egui context + response.
 fn gather_mouse_events(response: &egui::Response, ctx: &egui::Context) -> Vec<MouseEvt> {
     let mut events = Vec::new();
     let input_state = ctx.input(|i| i.clone());
@@ -240,7 +219,7 @@ fn gather_mouse_events(response: &egui::Response, ctx: &egui::Context) -> Vec<Mo
         MouseEvt::MiddleBtnDrag,
     );
 
-    // Scroll events (MiddleBtnScroll - we treat as from middle)
+    // Scroll events (MiddleBtnScroll - and only care about vertical scroll for now)
     if response.hovered()
         && input_state.raw_scroll_delta.y.abs() > 0.0
         && let Some(pos) = response.hover_pos()

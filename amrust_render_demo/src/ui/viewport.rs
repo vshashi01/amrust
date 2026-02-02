@@ -13,13 +13,13 @@ use crate::{
     core::{
         amrust_db::Db,
         app_mode::AppMode,
-        interfaces::db_view::DbView,
+        interfaces::{db_view::DbView, mouse_3d_viewport::Mouse3dFrameContext},
         services::render_service::{RenderServiceRequest, RenderServiceResponse},
     },
     db_view_model::DbViewModel,
     egui_tools::EguiRenderer,
     ui::{
-        mouse_3d_manager::{Mouse3d, Mouse3dFrameContext, Mouse3dManager},
+        mouse_3d_manager::{Mouse3d, Mouse3dManager},
         mouse_camera_3d::MouseCamera3d,
         mouse_selection_3d::MouseSelection3d,
     },
@@ -30,29 +30,27 @@ use std::{
     time::{self, Duration, Instant},
 };
 
-enum ViewportSm {
-    Uninit(UninitializedStateMachine<ViewportStateMachine>),
-    Init(InitializedStateMachine<ViewportStateMachine>),
-}
-
 pub struct Viewport3D {
     sm: Option<ViewportSm>,
 }
 
 impl Viewport3D {
     pub fn new(
-        initial_width: u32,
-        initial_height: u32,
+        initial_size: (u32, u32), //(width, height)
         db: Arc<RwLock<Db>>,
         db_view_model: &DbViewModel,
         app_mode: AppMode,
         initial_view_proj: glam::Mat4,
-        render_service_response_rx: Receiver<RenderServiceResponse>,
-        render_service_request_tx: Sender<RenderServiceRequest>,
+        render_service_channels: (
+            Receiver<RenderServiceResponse>,
+            Sender<RenderServiceRequest>,
+        ),
+        // render_service_response_rx: Receiver<RenderServiceResponse>,
+        // render_service_request_tx: Sender<RenderServiceRequest>,
     ) -> Self {
         let initial_rect = egui::Rect::from_center_size(
             egui::Pos2::ZERO,
-            egui::Vec2::new(initial_width as f32, initial_height as f32),
+            egui::Vec2::new(initial_size.0 as f32, initial_size.1 as f32),
         );
 
         let mut mouse_manager = Mouse3dManager::new();
@@ -66,23 +64,23 @@ impl Viewport3D {
         };
 
         let camera_mouse = MouseCamera3d::get_initialized_sm(
-            &initial_mouse_frame_context,
+            initial_mouse_frame_context.clone(),
             &db,
-            &render_service_request_tx,
+            &render_service_channels.1,
         );
         mouse_manager.push(Mouse3d::Camera(camera_mouse));
 
         let selection_mouse = MouseSelection3d::get_initialized_sm(
-            &initial_mouse_frame_context,
+            initial_mouse_frame_context,
             &db,
-            &render_service_request_tx,
+            &render_service_channels.1,
         );
         mouse_manager.push(Mouse3d::Selection(selection_mouse));
 
         let viewport_sm = ViewportStateMachine::new(
-            egui::Vec2::new(initial_width as f32, initial_height as f32),
-            render_service_request_tx,
-            render_service_response_rx,
+            egui::Vec2::new(initial_size.0 as f32, initial_size.1 as f32),
+            render_service_channels.1,
+            render_service_channels.0,
             initial_view_proj,
             db,
             mouse_manager,
@@ -124,6 +122,12 @@ impl Viewport3D {
             }
         }
     }
+}
+
+// Simple enum for easy maintenance of SM initialization
+enum ViewportSm {
+    Uninit(UninitializedStateMachine<ViewportStateMachine>),
+    Init(InitializedStateMachine<ViewportStateMachine>),
 }
 
 #[allow(unused)]
@@ -346,35 +350,37 @@ impl ViewportStateMachine {
         context: &mut ViewportFrameContext<'_>,
         event: &ViewportEvt,
     ) -> statig::Outcome<State> {
+        let mut received_updated_texture = false;
+        let current_target_size = context.ui.available_size();
         match event {
             ViewportEvt::Frame => {
-                let next_state = if let Some(texture_view) =
+                if let Some(texture_view) =
                     self.data.drain_render_responses_and_return_new_texture()
                 {
-                    let current_target_size = context.ui.available_size();
-                    if *last_requested_frame_size == current_target_size {
-                        context.egui_renderer.update_existing_texture(
-                            texture_id,
-                            context.device,
-                            &texture_view,
-                        );
-                        self.data.prev_frame_size = current_target_size;
-                        Transition(State::Render {
-                            texture_id: *texture_id,
-                        })
-                    } else if *last_requested_frame_size != current_target_size
-                        && (Instant::now() - *last_resize_requested_time)
-                            >= Duration::from_millis(500)
-                    {
-                        self.data.request_resize(current_target_size);
-                        Transition(State::NotSized {
-                            texture_id: *texture_id,
-                            last_requested_frame_size: current_target_size,
-                            last_resize_requested_time: Instant::now(),
-                        })
-                    } else {
-                        Handled
-                    }
+                    context.egui_renderer.update_existing_texture(
+                        texture_id,
+                        context.device,
+                        &texture_view,
+                    );
+                    received_updated_texture = true;
+                }
+
+                let next_state = if received_updated_texture
+                    && *last_requested_frame_size == current_target_size
+                {
+                    self.data.prev_frame_size = current_target_size;
+                    Transition(State::Render {
+                        texture_id: *texture_id,
+                    })
+                } else if *last_requested_frame_size != current_target_size
+                    && (Instant::now() - *last_resize_requested_time) >= Duration::from_millis(500)
+                {
+                    self.data.request_resize(current_target_size);
+                    Transition(State::NotSized {
+                        texture_id: *texture_id,
+                        last_requested_frame_size: current_target_size,
+                        last_resize_requested_time: Instant::now(),
+                    })
                 } else {
                     Handled
                 };

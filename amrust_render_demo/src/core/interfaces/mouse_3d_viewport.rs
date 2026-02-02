@@ -14,6 +14,16 @@ use crate::core::{
 
 use std::sync::Arc;
 
+#[derive(Debug, Clone)]
+pub struct Mouse3dFrameContext {
+    pub viewport_rect: egui::Rect,
+    pub view_proj: glam::Mat4,
+    pub scene_bbox: BoundingBox,
+    pub parts_can_be_picked: Vec<PartId>,
+    pub instances_can_be_picked: Vec<PartInstanceId>,
+    pub app_mode: AppMode,
+}
+
 pub struct Mouse3dContext {
     viewport_rect: egui::Rect,
     render_request_tx: Sender<RenderServiceRequest>,
@@ -27,24 +37,19 @@ pub struct Mouse3dContext {
 
 impl Mouse3dContext {
     pub fn new(
-        viewport_rect: egui::Rect,
-        view_proj: glam::Mat4,
-        scene_bbox: BoundingBox,
-        parts_can_be_picked: Vec<PartId>,
-        instances_can_be_picked: Vec<PartInstanceId>,
-        app_mode: AppMode,
+        frame_context: Mouse3dFrameContext,
         db: &Arc<RwLock<Db>>,
         render_request_tx: &Sender<RenderServiceRequest>,
     ) -> Self {
         Self {
-            viewport_rect,
+            viewport_rect: frame_context.viewport_rect,
+            view_proj: frame_context.view_proj,
+            scene_bbox: frame_context.scene_bbox,
+            parts_can_be_picked: frame_context.parts_can_be_picked,
+            instances_can_be_picked: frame_context.instances_can_be_picked,
+            app_mode: frame_context.app_mode,
             render_request_tx: render_request_tx.clone(),
-            view_proj,
-            scene_bbox,
             db: db.clone(),
-            parts_can_be_picked,
-            instances_can_be_picked,
-            app_mode,
         }
     }
 
