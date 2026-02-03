@@ -38,14 +38,16 @@ pub enum Renderable {
     ArrayTexturedMesh,
     Mesh,
     WireframeMesh,
+    OutlinedMesh { pixels: u8, is_indexed_mesh: bool },
 }
 
-pub type RenderData<'a> = (
-    Renderable,
-    &'a GpuMesh,
-    &'a GpuInstance,
-    Vec<(&'a wgpu::BindGroup, u32)>,
-);
+pub struct RenderData<'a> {
+    pub renderable: Renderable,
+    pub mesh: &'a GpuMesh,
+    pub instance: &'a GpuInstance,
+    pub local_bind_groups: Vec<(&'a wgpu::BindGroup, u32)>,
+    pub layer: u8,
+}
 
 pub trait RenderDatabase {
     fn get_renderables<'a>(&'a self) -> impl Iterator<Item = RenderData<'a>>;
@@ -811,7 +813,13 @@ mod tests {
                     })
                     .collect::<Vec<_>>();
 
-                (r.renderable.clone(), gpu_mesh, &r.instance, local_resources)
+                RenderData {
+                    renderable: r.renderable.clone(),
+                    mesh: gpu_mesh,
+                    instance: &r.instance,
+                    local_bind_groups: local_resources,
+                    layer: 0,
+                }
             })
         }
     }

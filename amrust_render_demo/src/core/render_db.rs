@@ -145,12 +145,13 @@ impl RenderDatabase for RenderDb {
                     })
                     .collect::<Vec<_>>();
 
-                Some((
-                    render_object.renderable.clone(),
-                    gpu_mesh,
-                    &render_object.instance,
-                    local_resources,
-                ))
+                Some(RenderData {
+                    renderable: render_object.renderable.clone(),
+                    mesh: gpu_mesh,
+                    instance: &render_object.instance,
+                    local_bind_groups: local_resources,
+                    layer: 0,
+                })
             } else {
                 None
             }

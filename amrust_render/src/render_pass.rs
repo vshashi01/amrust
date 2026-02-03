@@ -8,9 +8,19 @@ pub fn solid_render_pass<'a>(
     render_pipeline_cache: &HashMap<String, wgpu::RenderPipeline>,
     render_pass: &mut wgpu::RenderPass<'_>,
 ) {
-    let single_textured_objects = renderables.iter().filter_map(|o| match &o.0 {
-        Renderable::TexturedMesh => Some((o.1, o.2, o.3.clone(), "Textured Surface")),
-        Renderable::ArrayTexturedMesh => Some((o.1, o.2, o.3.clone(), "Texture Array Surface")),
+    let single_textured_objects = renderables.iter().filter_map(|o| match o.renderable {
+        Renderable::TexturedMesh => Some((
+            o.mesh,
+            o.instance,
+            o.local_bind_groups.clone(),
+            "Textured Surface",
+        )),
+        Renderable::ArrayTexturedMesh => Some((
+            o.mesh,
+            o.instance,
+            o.local_bind_groups.clone(),
+            "Texture Array Surface",
+        )),
         _ => None,
     });
 
@@ -46,8 +56,8 @@ pub fn solid_render_pass<'a>(
     }
 
     let colored_objects = renderables.iter().filter_map(|o| {
-        if let Renderable::ColoredMesh = &o.0 {
-            Some((o.1, o.2))
+        if let Renderable::ColoredMesh = &o.renderable {
+            Some((o.mesh, o.instance))
         } else {
             None
         }
@@ -77,8 +87,8 @@ pub fn solid_render_pass<'a>(
     }
 
     let simple_objects = renderables.iter().filter_map(|o| {
-        if let Renderable::Mesh = &o.0 {
-            Some((o.1, o.2))
+        if let Renderable::Mesh = &o.renderable {
+            Some((o.mesh, o.instance))
         } else {
             None
         }
@@ -104,8 +114,8 @@ pub fn wireframe_render_pass<'a>(
     render_pass: &mut wgpu::RenderPass<'_>,
 ) {
     let wireframe_objects = renderables.iter().filter_map(|o| {
-        if let Renderable::WireframeMesh = &o.0 {
-            Some((o.1, o.2))
+        if let Renderable::WireframeMesh = &o.renderable {
+            Some((o.mesh, o.instance))
         } else {
             None
         }

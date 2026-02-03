@@ -368,6 +368,7 @@ impl Renderer {
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
+        // standard render pass
         {
             let render_pass_desc = wgpu::RenderPassDescriptor {
                 label: Some("Surface Render Pass"),
@@ -416,6 +417,69 @@ impl Renderer {
                 &self.render_pipeline_cache,
                 &mut render_pass,
             );
+        }
+
+        //mask render pass for selected meshes
+        if render_data
+            .iter()
+            .any(|d| matches!(d.renderable, crate::Renderable::OutlinedMesh { .. }))
+        {
+            let selection_mask_tex = create_texture_data(
+                &self.device,
+                texture_data.texture_size,
+                wgpu::TextureFormat::R8Unorm,
+            );
+            {
+                let render_pass_desc = wgpu::RenderPassDescriptor {
+                    label: Some("Silhoutte Mesh Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &selection_mask_tex.texture_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None, //ToDo: revisit depth later
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                };
+                let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
+
+                render_pass.set_bind_group(0, &self.camera.bind_group, &[]);
+                // set up global bind groups
+                for (i, bind_group) in self.global_bind_groups.iter().enumerate() {
+                    render_pass.set_bind_group((i + 1) as u32, bind_group, &[]);
+                }
+
+                // let renderables = render_db.get_renderables().collect::<Vec<_>>();
+
+                render_pass::silhoutte_pass(
+                    render_data,
+                    &self.render_pipeline_cache,
+                    &mut render_pass,
+                );
+            }
+        }
+
+        // composite of textures
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Outline Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &final_color_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+            });
+
+            pass.set_pipeline(&outline_pipeline);
+            pass.set_bind_group(0, &outline_bind_group, &[]);
+            pass.draw(0..3, 0..1);
         }
 
         if let Some(buffer) = &self.output_buffer {
@@ -489,5 +553,32 @@ impl Renderer {
             }
             None => panic!("Output buffer is not set!"),
         }
+    }
+}
+
+pub fn create_texture_data(
+    device: &wgpu::Device,
+    size: wgpu::Extent3d,
+    format: wgpu::TextureFormat,
+) -> RenderTextureData {
+    let texture_desc = wgpu::TextureDescriptor {
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::COPY_SRC
+            | wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING,
+        label: None,
+        view_formats: &[],
+    };
+    let texture = device.create_texture(&texture_desc);
+    let texture_view = texture.create_view(&Default::default());
+
+    RenderTextureData {
+        texture,
+        texture_view,
+        texture_size: size,
     }
 }
