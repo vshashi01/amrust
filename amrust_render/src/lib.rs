@@ -19,6 +19,7 @@ pub mod vertex;
 
 // internal module
 // mod normalized_box;
+mod composite;
 mod pipeline;
 mod render_pass;
 

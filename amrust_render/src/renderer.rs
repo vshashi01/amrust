@@ -262,6 +262,21 @@ impl Renderer {
             .set_depth_stencil(pipeline::create_depth_stencil_state())
             .build(&device, "Solid Wireframe");
 
+        let basic_vert_source =
+            wgpu::ShaderSource::Wgsl((include_str!("shaders/basic_vert_shader.wgsl")).into());
+        let silhoutte_frag_shader_source = wgpu::ShaderSource::Wgsl(
+            include_str!("shaders/silhoutte_mask_frag_shader.wgsl").into(),
+        );
+        let silhoutte_render_pipeline = pipeline::PipelineBuilder::new()
+            .set_vertex_source(basic_vert_source, None)
+            .set_frag_source(silhoutte_frag_shader_source, None)
+            .set_texture_format(wgpu::TextureFormat::R8Unorm)
+            .add_vertex_buffer_layout(vertex::Position::layout::<0>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_bind_group_layout(&camera_bind_group_layout)
+            .set_depth_stencil(pipeline::create_depth_stencil_state())
+            .build(&device, "Silhoutte Surface");
+
         let mut render_pipeline_cache = HashMap::new();
         render_pipeline_cache.insert(
             "Textured Surface".to_string(),
@@ -277,6 +292,7 @@ impl Renderer {
             "Texture Array Surface".to_owned(),
             texture_array_surface_render_pipeline,
         );
+        render_pipeline_cache.insert("Silhoutte Surface".to_string(), silhoutte_render_pipeline);
 
         let camera = Camera::new(&device);
 
@@ -361,6 +377,8 @@ impl Renderer {
             Some(data) => data,
             None => &self.create_render_texture_data(),
         };
+
+        
         let depth_texture =
             texture::DepthTexture::create_depth_texture(&self.device, self.texture_size);
 
@@ -440,7 +458,14 @@ impl Renderer {
                             store: wgpu::StoreOp::Store,
                         },
                     })],
-                    depth_stencil_attachment: None, //ToDo: revisit depth later
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &depth_texture.view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }), //ToDo: revisit depth later
                     occlusion_query_set: None,
                     timestamp_writes: None,
                 };
@@ -475,6 +500,8 @@ impl Renderer {
                     },
                 })],
                 depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
             });
 
             pass.set_pipeline(&outline_pipeline);

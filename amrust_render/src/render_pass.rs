@@ -142,3 +142,35 @@ pub fn wireframe_render_pass<'a>(
         }
     }
 }
+
+pub fn silhoutte_pass<'a>(
+    renderables: &[RenderData<'a>],
+    render_pipeline_cache: &HashMap<String, wgpu::RenderPipeline>,
+    render_pass: &mut wgpu::RenderPass<'_>,
+) {
+    let silhoutte_objs = renderables.iter().filter_map(|o| {
+        if let Renderable::OutlinedMesh { .. } = &o.renderable {
+            Some((o.mesh, o.instance))
+        } else {
+            None
+        }
+    });
+
+    for (mesh, instance) in silhoutte_objs {
+        render_pass.set_pipeline(render_pipeline_cache.get("Silhoutte Surface").unwrap());
+        let position_buffer = mesh.vertex_slice::<vertex::Position>();
+        let transformation_buffer = instance.vertex_slice::<transformation::TransformationData>();
+
+        render_pass.set_vertex_buffer(0, position_buffer);
+        render_pass.set_vertex_buffer(1, transformation_buffer);
+
+        if let Some(index_stream) = &mesh.mesh_index_stream {
+            let index_buffer = mesh.buffer.slice(index_stream.offset..index_stream.end);
+            render_pass.set_index_buffer(index_buffer, index_stream.format);
+
+            render_pass.draw_indexed(0..index_stream.index_count, 0, 0..instance.instance_count);
+        } else {
+            render_pass.draw(0..mesh.vertex_count, 0..instance.instance_count);
+        }
+    }
+}
