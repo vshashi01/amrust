@@ -105,6 +105,10 @@ impl RenderDb {
         self.objects.insert(object)
     }
 
+    pub fn remove_object(&mut self, id: RenderObjectId) -> Option<RenderObject> {
+        self.objects.remove(id)
+    }
+
     // pub fn clear_objects_to_render(&mut self) {
     //     self.objects_to_render.clear();
     // }

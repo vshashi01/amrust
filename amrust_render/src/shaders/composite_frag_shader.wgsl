@@ -8,33 +8,53 @@ var mask_tex: texture_2d<f32>;
 @group(0) @binding(3)
 var mask_samp: sampler;
 
+struct CompositeFragUniform {
+    highlight_px_size: i32,
+}
+
 @group(0) @binding(4)
-var<uniform> texel_size: vec2<f32>; // (1/width, 1/height)
+var<uniform> frag_uniform: CompositeFragUniform;
+// @group(0) @binding(4)
+// var<uniform> texel_size: vec2<f32>; // (1/width, 1/height)
 
 @fragment
-fn fs_outline(@builtin(position) pos: vec4<f32>)
+fn fs_main(@builtin(position) pos: vec4<f32>)
     -> @location(0) vec4<f32>
 {
-    let uv = pos.xy * texel_size;
+    let dims = vec2<f32>(textureDimensions(mask_tex));
+    let uv = pos.xy / dims;
+    let texel_size = 1.0 / dims;
 
     let center = textureSample(mask_tex, mask_samp, uv).r;
-
-    // Not selected → just show scene
+    
     if (center < 0.5) {
-        return textureSample(scene_tex, scene_samp, uv);
+        let radius = frag_uniform.highlight_px_size;
+        var hit = false;
+        for (var y: i32 = -radius; y <= radius && !hit; y++) {
+            for (var x: i32 = -radius; x <= radius; x++) {
+                let v = textureSample(mask_tex, mask_samp, uv + vec2<f32>(f32(x), f32(y)) * texel_size).r;
+                if (v > 0.5) { hit = true; break; }
+            }
+        }
+        if (hit) { return vec4<f32>(1.0, 0.8, 0.1, 1.0);}
     }
 
-    // Neighbor samples (WGSL-legal)
-    let left  = textureSample(mask_tex, mask_samp, uv + vec2(-texel_size.x, 0.0)).r;
-    let right = textureSample(mask_tex, mask_samp, uv + vec2( texel_size.x, 0.0)).r;
-    let up    = textureSample(mask_tex, mask_samp, uv + vec2(0.0, -texel_size.y)).r;
-    let down  = textureSample(mask_tex, mask_samp, uv + vec2(0.0,  texel_size.y)).r;
+    // // Not selected → just show scene
+    // if (center < 0.5) {
+    //     return textureSample(scene_tex, scene_samp, uv);
+    // }
 
-    // Edge detection
-    if (left < 0.5 || right < 0.5 || up < 0.5 || down < 0.5) {
-        // Outline color
-        return vec4<f32>(1.0, 0.8, 0.1, 1.0);
-    }
+    // // Neighbor samples (WGSL-legal)
+    // let left  = textureSample(mask_tex, mask_samp, uv + vec2(-texel_size.x, 0.0)).r;
+    // let right = textureSample(mask_tex, mask_samp, uv + vec2( texel_size.x, 0.0)).r;
+    // let up    = textureSample(mask_tex, mask_samp, uv + vec2(0.0, -texel_size.y)).r;
+    // let down  = textureSample(mask_tex, mask_samp, uv + vec2(0.0,  texel_size.y)).r;
+
+    // // Edge detection
+    // if (left < 0.5 || right < 0.5 || up < 0.5 || down < 0.5) {
+    //     // Outline color
+    //     return vec4<f32>(1.0, 0.8, 0.1, 1.0);
+    // }
 
     // Interior pixel
     return textureSample(scene_tex, scene_samp, uv);

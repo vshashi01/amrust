@@ -1,5 +1,5 @@
 @vertex
-fn vs_fullscreen(@builtin(vertex_index) i: u32)
+fn vs_main(@builtin(vertex_index) i: u32)
     -> @builtin(position) vec4<f32>
 {
     var pos: vec2<f32>;

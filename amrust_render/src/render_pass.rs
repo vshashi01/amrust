@@ -149,15 +149,16 @@ pub fn silhoutte_pass<'a>(
     render_pass: &mut wgpu::RenderPass<'_>,
 ) {
     let silhoutte_objs = renderables.iter().filter_map(|o| {
-        if let Renderable::OutlinedMesh { .. } = &o.renderable {
+        if let Renderable::SilhouetteMesh = &o.renderable {
             Some((o.mesh, o.instance))
         } else {
             None
         }
     });
 
+    render_pass.set_pipeline(render_pipeline_cache.get("Silhoutte Surface").unwrap());
+
     for (mesh, instance) in silhoutte_objs {
-        render_pass.set_pipeline(render_pipeline_cache.get("Silhoutte Surface").unwrap());
         let position_buffer = mesh.vertex_slice::<vertex::Position>();
         let transformation_buffer = instance.vertex_slice::<transformation::TransformationData>();
 

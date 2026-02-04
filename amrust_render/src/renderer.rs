@@ -1,6 +1,7 @@
 use image::{ImageBuffer, Rgba};
 
-use crate::prelude::*;
+use crate::composite::CompositeFragUniform;
+use crate::{Renderable, composite, prelude::*};
 
 use crate::{
     RenderData, WgpuError,
@@ -17,6 +18,7 @@ pub struct RenderTextureData {
     pub texture: wgpu::Texture,
     pub texture_view: wgpu::TextureView,
     pub texture_size: wgpu::Extent3d,
+    pub texture_sampler: wgpu::Sampler,
 }
 
 pub struct Renderer {
@@ -34,6 +36,8 @@ pub struct Renderer {
     pub texture_sampler: wgpu::Sampler,
     pub texture_array_bind_group_layout: wgpu::BindGroupLayout,
     camera: Camera,
+    composite_frag_uniform_buffer: wgpu::Buffer,
+    composite_frag_uniform: CompositeFragUniform,
 
     // render pipelines
     render_pipeline_cache: HashMap<String, wgpu::RenderPipeline>,
@@ -135,9 +139,7 @@ impl Renderer {
         let output_buffer_size = (u32_size * width * height) as wgpu::BufferAddress;
         let output_buffer_desc = wgpu::BufferDescriptor {
             size: output_buffer_size,
-            usage: wgpu::BufferUsages::COPY_DST
-                // this tells wpgu that we want to read this buffer from the cpu
-                | wgpu::BufferUsages::MAP_READ,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             label: None,
             mapped_at_creation: false,
         };
@@ -277,6 +279,18 @@ impl Renderer {
             .set_depth_stencil(pipeline::create_depth_stencil_state())
             .build(&device, "Silhoutte Surface");
 
+        let comp_bind_group_layout = composite::get_composite_pipeline_bind_group_layout(&device);
+        let comp_vert_source =
+            wgpu::ShaderSource::Wgsl((include_str!("shaders/composite_vert_shader.wgsl")).into());
+        let comp_frag_shader_source =
+            wgpu::ShaderSource::Wgsl(include_str!("shaders/composite_frag_shader.wgsl").into());
+        let comp_render_pipeline = pipeline::PipelineBuilder::new()
+            .set_vertex_source(comp_vert_source, None)
+            .set_frag_source(comp_frag_shader_source, None)
+            .set_texture_format(texture_format)
+            .add_bind_group_layout(&comp_bind_group_layout)
+            .build(&device, "Composite Pipeline");
+
         let mut render_pipeline_cache = HashMap::new();
         render_pipeline_cache.insert(
             "Textured Surface".to_string(),
@@ -293,8 +307,24 @@ impl Renderer {
             texture_array_surface_render_pipeline,
         );
         render_pipeline_cache.insert("Silhoutte Surface".to_string(), silhoutte_render_pipeline);
+        render_pipeline_cache.insert("Composite Pipeline".to_string(), comp_render_pipeline);
 
         let camera = Camera::new(&device);
+
+        let composite_frag_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Highlight pixle size"),
+            size: CompositeFragUniform::get_size() as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let composite_frag_uniform = CompositeFragUniform::new(10);
+
+        queue.write_buffer(
+            &composite_frag_uniform_buffer,
+            0,
+            bytemuck::cast_slice(&[composite_frag_uniform]),
+        );
 
         Ok(Renderer {
             device,
@@ -307,6 +337,8 @@ impl Renderer {
             texture_array_bind_group_layout,
             texture_sampler,
             camera,
+            composite_frag_uniform_buffer,
+            composite_frag_uniform,
             render_pipeline_cache,
         })
     }
@@ -336,11 +368,13 @@ impl Renderer {
         };
         let texture = self.device.create_texture(&texture_desc);
         let texture_view = texture.create_view(&Default::default());
+        let texture_sampler = self.device.create_sampler(&Default::default());
 
         RenderTextureData {
             texture,
             texture_view,
             texture_size: self.texture_size,
+            texture_sampler,
         }
     }
 
@@ -353,6 +387,15 @@ impl Renderer {
     pub fn update_camera(&mut self, camera_data: &impl CameraData) {
         self.camera.update(camera_data);
         self.camera.write_buffer(&self.queue);
+    }
+
+    pub fn set_highlight_pixels(&mut self, px_thickness: u32) {
+        self.composite_frag_uniform.highlight_pixel_size = px_thickness as i32;
+        self.queue.write_buffer(
+            &self.composite_frag_uniform_buffer,
+            0,
+            bytemuck::cast_slice(&[self.composite_frag_uniform]),
+        );
     }
 
     pub async fn render_to_texture<'a>(
@@ -373,12 +416,11 @@ impl Renderer {
         render_data: &[RenderData<'a>],
         render_texture_data: Option<&RenderTextureData>,
     ) -> Result<(), WgpuError> {
-        let texture_data = match render_texture_data {
+        let final_texture_data = match render_texture_data {
             Some(data) => data,
             None => &self.create_render_texture_data(),
         };
 
-        
         let depth_texture =
             texture::DepthTexture::create_depth_texture(&self.device, self.texture_size);
 
@@ -386,12 +428,22 @@ impl Renderer {
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
+        let use_final_texture_data = render_data
+            .iter()
+            .all(|d| !matches!(d.renderable, Renderable::SilhouetteMesh));
+
+        let color_data = if use_final_texture_data {
+            final_texture_data
+        } else {
+            &create_texture_data(&self.device, self.texture_size, self.texture_format)
+        };
+
         // standard render pass
         {
             let render_pass_desc = wgpu::RenderPassDescriptor {
                 label: Some("Surface Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &texture_data.texture_view,
+                    view: &color_data.texture_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -440,11 +492,11 @@ impl Renderer {
         //mask render pass for selected meshes
         if render_data
             .iter()
-            .any(|d| matches!(d.renderable, crate::Renderable::OutlinedMesh { .. }))
+            .any(|d| matches!(d.renderable, crate::Renderable::SilhouetteMesh))
         {
             let selection_mask_tex = create_texture_data(
                 &self.device,
-                texture_data.texture_size,
+                final_texture_data.texture_size,
                 wgpu::TextureFormat::R8Unorm,
             );
             {
@@ -485,28 +537,47 @@ impl Renderer {
                     &mut render_pass,
                 );
             }
-        }
 
-        // composite of textures
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Outline Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &final_color_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
+            // composite of textures
+            {
+                // let new_texture_data =
+                //     create_texture_data(&self.device, self.texture_size, self.texture_format);
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Outline Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &final_texture_data.texture_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
 
-            pass.set_pipeline(&outline_pipeline);
-            pass.set_bind_group(0, &outline_bind_group, &[]);
-            pass.draw(0..3, 0..1);
+                pass.set_pipeline(
+                    self.render_pipeline_cache
+                        .get("Composite Pipeline")
+                        .unwrap(),
+                );
+                pass.set_bind_group(
+                    0,
+                    &composite::create_composite_bind_group(
+                        &self.device,
+                        &composite::get_composite_pipeline_bind_group_layout(&self.device),
+                        &color_data.texture_view,
+                        &color_data.texture_sampler,
+                        &selection_mask_tex.texture_view,
+                        &selection_mask_tex.texture_sampler,
+                        self.composite_frag_uniform_buffer
+                            .as_entire_buffer_binding(),
+                    ),
+                    &[],
+                );
+                pass.draw(0..3, 0..1);
+            }
         }
 
         if let Some(buffer) = &self.output_buffer {
@@ -514,7 +585,7 @@ impl Renderer {
             encoder.copy_texture_to_buffer(
                 wgpu::TexelCopyTextureInfo {
                     aspect: wgpu::TextureAspect::All,
-                    texture: &texture_data.texture,
+                    texture: &final_texture_data.texture,
                     mip_level: 0,
                     origin: wgpu::Origin3d::ZERO,
                 },
@@ -602,10 +673,12 @@ pub fn create_texture_data(
     };
     let texture = device.create_texture(&texture_desc);
     let texture_view = texture.create_view(&Default::default());
+    let texture_sampler = device.create_sampler(&Default::default());
 
     RenderTextureData {
         texture,
         texture_view,
         texture_size: size,
+        texture_sampler,
     }
 }
