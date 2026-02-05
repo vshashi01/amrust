@@ -115,7 +115,7 @@ pub fn solid_render_pass<'a>(
         render_pass.draw(0..mesh.vertex_count, 0..instance.instance_count);
     }
 
-    // screen_space_colored_mesh_pass(renderables, render_pipeline_cache, render_pass, true);
+    screen_space_colored_mesh_pass(renderables, render_pipeline_cache, render_pass, true);
 }
 
 pub fn wireframe_render_pass<'a>(

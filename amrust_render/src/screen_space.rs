@@ -1,4 +1,4 @@
-use std::num::NonZero;
+use wgpu::util::DeviceExt;
 
 use crate::instance::InstanceFieldDescriptor;
 
@@ -37,7 +37,37 @@ impl ScreenSpaceUniform {
     }
 }
 
-pub struct SizeInPixel(f32);
+pub struct ScreenSpace {
+    width: f32,
+    height: f32,
+    buffer: wgpu::Buffer,
+}
+
+impl ScreenSpace {
+    pub fn new(device: &wgpu::Device, width: f32, height: f32) -> Self {
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Screen Space buffer"),
+            contents: bytemuck::cast_slice(&[ScreenSpaceUniform {
+                screen_size: [width, height],
+            }]),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
+        Self {
+            width,
+            height,
+            buffer,
+        }
+    }
+
+    pub fn get_binding_resource(&self) -> wgpu::BindingResource<'_> {
+        self.buffer.as_entire_binding()
+    }
+}
+
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, bytemuck::Zeroable, bytemuck::Pod)]
+pub struct SizeInPixel(pub f32);
 
 impl InstanceFieldDescriptor for SizeInPixel {
     fn layout<const LOCATION: u32>() -> wgpu::VertexBufferLayout<'static> {
@@ -45,54 +75,10 @@ impl InstanceFieldDescriptor for SizeInPixel {
             array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &[wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x3,
+                format: wgpu::VertexFormat::Float32,
                 offset: 0,
                 shader_location: LOCATION,
             }],
         }
     }
-}
-
-pub fn get_screen_space_uniform_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
-    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("Composite Bind Group Layout"),
-        entries: &[],
-    })
-}
-
-pub fn create_screen_space_mesh_bind_group(
-    device: &wgpu::Device,
-    composite_bind_group_layout: &wgpu::BindGroupLayout,
-    main_texture_view: &wgpu::TextureView,
-    main_texture_sampler: &wgpu::Sampler,
-    silhoutte_texture_view: &wgpu::TextureView,
-    silhoutte_texture_sampler: &wgpu::Sampler,
-    screen_space_frag_uniform: wgpu::BufferBinding,
-) -> wgpu::BindGroup {
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("Composite Bind Group"),
-        layout: composite_bind_group_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(main_texture_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(main_texture_sampler),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::TextureView(silhoutte_texture_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: wgpu::BindingResource::Sampler(silhoutte_texture_sampler),
-            },
-            wgpu::BindGroupEntry {
-                binding: 4,
-                resource: wgpu::BindingResource::Buffer(screen_space_frag_uniform),
-            },
-        ],
-    })
 }

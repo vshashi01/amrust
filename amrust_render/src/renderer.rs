@@ -1,7 +1,8 @@
 use image::{ImageBuffer, Rgba};
 
+use crate::camera::CameraUniform;
 use crate::composite::CompositeFragUniform;
-use crate::screen_space::{self, ScreenSpaceUniform};
+use crate::screen_space::{self, ScreenSpace, ScreenSpaceUniform};
 use crate::{Renderable, composite, constants, prelude::*};
 
 use crate::{
@@ -32,11 +33,13 @@ pub struct Renderer {
     texture_format: wgpu::TextureFormat, //stored for future dynamic render pipeline creation
 
     // internal rendering resources
+    global_3d_pass_bind_group: wgpu::BindGroup,
     global_bind_groups: Vec<wgpu::BindGroup>,
     pub texture_bind_group_layout: wgpu::BindGroupLayout,
     pub texture_sampler: wgpu::Sampler,
     pub texture_array_bind_group_layout: wgpu::BindGroupLayout,
     camera: Camera,
+    screen_space_data: ScreenSpace,
     composite_frag_uniform_buffer: wgpu::Buffer,
     composite_frag_uniform: CompositeFragUniform,
 
@@ -162,7 +165,8 @@ impl Renderer {
         texture_size: wgpu::Extent3d,
         output_buffer: Option<wgpu::Buffer>,
     ) -> Result<Self, WgpuError> {
-        let camera_bind_group_layout = Camera::create_bind_group_layout(&device);
+        //let camera_bind_group_layout = Camera::create_bind_group_layout(&device);
+        let camera_bind_group_layout = create_global_3d_render_pass_bind_group_layout(&device);
         let basic_texture_bind_group_layout = texture::generate_texture_bind_group_layout::<0, 1>(
             &device,
             "Basic Texture Bind Group Layout",
@@ -292,7 +296,7 @@ impl Renderer {
             .add_bind_group_layout(&comp_bind_group_layout)
             .build(&device, constants::COMPOSITE_PASS_PIPELINE);
 
-        /*         let screen_space_uniform = ScreenSpaceUniform::create_bind_group_layout(&device);
+        let screen_space_uniform = ScreenSpaceUniform::create_bind_group_layout(&device);
         let screen_space_vert_source = wgpu::ShaderSource::Wgsl(
             (include_str!("shaders/screen_space_vert_shader.wgsl")).into(),
         );
@@ -309,6 +313,7 @@ impl Renderer {
             .add_vertex_buffer_layout(screen_space::SizeInPixel::layout::<12>())
             .add_bind_group_layout(&camera_bind_group_layout)
             .add_bind_group_layout(&screen_space_uniform)
+            .set_depth_stencil(pipeline::create_depth_stencil_state())
             .build(&device, constants::SCREEN_SPACE_MESH_PIPELINE_KEY);
 
         let screen_space_vert_source = wgpu::ShaderSource::Wgsl(
@@ -328,7 +333,8 @@ impl Renderer {
             .add_bind_group_layout(&camera_bind_group_layout)
             .add_bind_group_layout(&screen_space_uniform)
             .set_topology(wgpu::PrimitiveTopology::LineList)
-            .build(&device, constants::SCREEN_SPACE_WIREFRAME_PIPELINE_KEY); */
+            .set_depth_stencil(pipeline::create_depth_stencil_state())
+            .build(&device, constants::SCREEN_SPACE_WIREFRAME_PIPELINE_KEY);
 
         let mut render_pipeline_cache = HashMap::new();
         render_pipeline_cache.insert(
@@ -356,16 +362,27 @@ impl Renderer {
             silhoutte_render_pipeline,
         );
         render_pipeline_cache.insert(constants::COMPOSITE_PASS_PIPELINE, comp_render_pipeline);
-        // render_pipeline_cache.insert(
-        //     constants::SCREEN_SPACE_MESH_PIPELINE_KEY,
-        //     screen_space_colored_mesh_render_pipeline,
-        // );
-        // render_pipeline_cache.insert(
-        //     constants::SCREEN_SPACE_WIREFRAME_PIPELINE_KEY,
-        //     screen_space_wireframe_mesh_render_pipeline,
-        // );
+        render_pipeline_cache.insert(
+            constants::SCREEN_SPACE_MESH_PIPELINE_KEY,
+            screen_space_colored_mesh_render_pipeline,
+        );
+        render_pipeline_cache.insert(
+            constants::SCREEN_SPACE_WIREFRAME_PIPELINE_KEY,
+            screen_space_wireframe_mesh_render_pipeline,
+        );
 
         let camera = Camera::new(&device);
+        let screen_space_data = ScreenSpace::new(
+            &device,
+            texture_size.width as f32,
+            texture_size.height as f32,
+        );
+        let global_bind_group = create_global_3d_render_pass_bind_group(
+            &device,
+            &camera_bind_group_layout,
+            camera.get_binding_reosurce(),
+            screen_space_data.get_binding_resource(),
+        );
 
         let composite_frag_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Highlight pixle size"),
@@ -393,6 +410,8 @@ impl Renderer {
             texture_array_bind_group_layout,
             texture_sampler,
             camera,
+            screen_space_data,
+            global_3d_pass_bind_group: global_bind_group,
             composite_frag_uniform_buffer,
             composite_frag_uniform,
             render_pipeline_cache,
@@ -524,7 +543,7 @@ impl Renderer {
             };
             let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
 
-            render_pass.set_bind_group(0, &self.camera.bind_group, &[]);
+            render_pass.set_bind_group(0, &self.global_3d_pass_bind_group, &[]);
             // set up global bind groups
             for (i, bind_group) in self.global_bind_groups.iter().enumerate() {
                 render_pass.set_bind_group((i + 1) as u32, bind_group, &[]);
@@ -579,7 +598,7 @@ impl Renderer {
                 };
                 let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
 
-                render_pass.set_bind_group(0, &self.camera.bind_group, &[]);
+                render_pass.set_bind_group(0, &self.global_3d_pass_bind_group, &[]);
                 // set up global bind groups
                 for (i, bind_group) in self.global_bind_groups.iter().enumerate() {
                     render_pass.set_bind_group((i + 1) as u32, bind_group, &[]);
@@ -735,4 +754,58 @@ pub fn create_texture_data(
         texture_size: size,
         texture_sampler,
     }
+}
+
+fn create_global_3d_render_pass_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Global Bind Group Layout"),
+        entries: &[
+            //camera uniform
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            //screen space size uniform
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    })
+}
+
+fn create_global_3d_render_pass_bind_group(
+    device: &wgpu::Device,
+    bind_group_layout: &wgpu::BindGroupLayout,
+    camera_resource: wgpu::BindingResource<'_>,
+    screen_space_resource: wgpu::BindingResource<'_>,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Global Bind Group"),
+        layout: bind_group_layout,
+        entries: &[
+            //camera uniform
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_resource,
+            },
+            //screen space size uniform
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: screen_space_resource,
+            },
+        ],
+    })
 }

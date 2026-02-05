@@ -17,14 +17,16 @@
 struct CameraUniform {
     view_proj: mat4x4<f32>,
 };
-@group(0) @binding(0)
-var<uniform> camera: CameraUniform;
 
 struct ScreenUniform {
     viewport: vec2<f32>, // (width_px, height_px)
    // _pad: vec2<f32>,
 };
-@group(1) @binding(0)
+
+@group(0) @binding(0)
+var<uniform> camera: CameraUniform;
+
+@group(0) @binding(1)
 var<uniform> screen: ScreenUniform;
 
 struct VertexInput {
