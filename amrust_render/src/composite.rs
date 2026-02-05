@@ -15,7 +15,7 @@ impl CompositeFragUniform {
 
     pub const fn get_size() -> usize {
         // only 1 size for now
-        std::mem::size_of::<i32>()
+        std::mem::size_of::<Self>()
     }
 }
 

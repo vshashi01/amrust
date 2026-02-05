@@ -1,7 +1,8 @@
 use image::{ImageBuffer, Rgba};
 
 use crate::composite::CompositeFragUniform;
-use crate::{Renderable, composite, prelude::*};
+use crate::screen_space::{self, ScreenSpaceUniform};
+use crate::{Renderable, composite, constants, prelude::*};
 
 use crate::{
     RenderData, WgpuError,
@@ -40,7 +41,7 @@ pub struct Renderer {
     composite_frag_uniform: CompositeFragUniform,
 
     // render pipelines
-    render_pipeline_cache: HashMap<String, wgpu::RenderPipeline>,
+    render_pipeline_cache: HashMap<&'static str, wgpu::RenderPipeline>,
 }
 
 pub const DEVICE_FEATURES: [wgpu::Features; 2] = [
@@ -193,7 +194,7 @@ impl Renderer {
             .add_bind_group_layout(&camera_bind_group_layout)
             .add_bind_group_layout(&basic_texture_bind_group_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
-            .build(&device, "Textured Surface");
+            .build(&device, constants::TEXTURE_MESH_PIPELINE_KEY);
 
         let standard_textured_vert_shader_source =
             wgpu::ShaderSource::Wgsl((include_str!("shaders/textured_vert_shader.wgsl")).into());
@@ -213,7 +214,7 @@ impl Renderer {
             .add_bind_group_layout(&camera_bind_group_layout)
             .add_bind_group_layout(&texture_array_bind_group_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
-            .build(&device, "Texture Array Surface");
+            .build(&device, constants::ARRAY_TEXTURE_MESH_PIPELINE_KEY);
 
         let colored_vert_shader_source =
             wgpu::ShaderSource::Wgsl((include_str!("shaders/colored_vert_shader.wgsl")).into());
@@ -229,7 +230,7 @@ impl Renderer {
             .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
             .add_bind_group_layout(&camera_bind_group_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
-            .build(&device, "Colored Surface");
+            .build(&device, constants::VERTEX_COLORED_MESH_PIPELINE_KEY);
 
         let solid_source = wgpu::ShaderSource::Wgsl(
             (include_str!("shaders/material_color_vert_shader.wgsl")).into(),
@@ -245,7 +246,7 @@ impl Renderer {
             .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
             .add_bind_group_layout(&camera_bind_group_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
-            .build(&device, "Solid uniform");
+            .build(&device, constants::SOLID_COLORED_MESH_PIPELINE_KEY);
 
         let colored_vert_shader_source = wgpu::ShaderSource::Wgsl(
             (include_str!("shaders/material_color_vert_shader.wgsl")).into(),
@@ -262,7 +263,7 @@ impl Renderer {
             .add_bind_group_layout(&camera_bind_group_layout)
             .set_topology(wgpu::PrimitiveTopology::LineList)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
-            .build(&device, "Solid Wireframe");
+            .build(&device, constants::WIREFRAME_MESH_PIPELINE_KEY);
 
         let basic_vert_source =
             wgpu::ShaderSource::Wgsl((include_str!("shaders/basic_vert_shader.wgsl")).into());
@@ -277,7 +278,7 @@ impl Renderer {
             .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
             .add_bind_group_layout(&camera_bind_group_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
-            .build(&device, "Silhoutte Surface");
+            .build(&device, constants::MESH_SILHOUETTE_PIPELINE_KEY);
 
         let comp_bind_group_layout = composite::get_composite_pipeline_bind_group_layout(&device);
         let comp_vert_source =
@@ -289,25 +290,80 @@ impl Renderer {
             .set_frag_source(comp_frag_shader_source, None)
             .set_texture_format(texture_format)
             .add_bind_group_layout(&comp_bind_group_layout)
-            .build(&device, "Composite Pipeline");
+            .build(&device, constants::COMPOSITE_PASS_PIPELINE);
+
+        /*         let screen_space_uniform = ScreenSpaceUniform::create_bind_group_layout(&device);
+        let screen_space_vert_source = wgpu::ShaderSource::Wgsl(
+            (include_str!("shaders/screen_space_vert_shader.wgsl")).into(),
+        );
+        let colored_frag_source =
+            wgpu::ShaderSource::Wgsl(include_str!("shaders/colored_frag_shader.wgsl").into());
+        let screen_space_colored_mesh_render_pipeline = pipeline::PipelineBuilder::new()
+            .set_vertex_source(screen_space_vert_source, None)
+            .set_frag_source(colored_frag_source, None)
+            .set_texture_format(texture_format)
+            .add_vertex_buffer_layout(vertex::Position::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Color::layout::<1>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_vertex_buffer_layout(screen_space::SizeInPixel::layout::<12>())
+            .add_bind_group_layout(&camera_bind_group_layout)
+            .add_bind_group_layout(&screen_space_uniform)
+            .build(&device, constants::SCREEN_SPACE_MESH_PIPELINE_KEY);
+
+        let screen_space_vert_source = wgpu::ShaderSource::Wgsl(
+            (include_str!("shaders/screen_space_vert_shader.wgsl")).into(),
+        );
+        let colored_frag_source =
+            wgpu::ShaderSource::Wgsl(include_str!("shaders/colored_frag_shader.wgsl").into());
+        let screen_space_wireframe_mesh_render_pipeline = pipeline::PipelineBuilder::new()
+            .set_vertex_source(screen_space_vert_source, None)
+            .set_frag_source(colored_frag_source, None)
+            .set_texture_format(texture_format)
+            .add_vertex_buffer_layout(vertex::Position::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Color::layout::<1>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_vertex_buffer_layout(screen_space::SizeInPixel::layout::<12>())
+            .add_bind_group_layout(&camera_bind_group_layout)
+            .add_bind_group_layout(&screen_space_uniform)
+            .set_topology(wgpu::PrimitiveTopology::LineList)
+            .build(&device, constants::SCREEN_SPACE_WIREFRAME_PIPELINE_KEY); */
 
         let mut render_pipeline_cache = HashMap::new();
         render_pipeline_cache.insert(
-            "Textured Surface".to_string(),
+            constants::TEXTURE_MESH_PIPELINE_KEY,
             texture_surface_render_pipeline,
         );
-        render_pipeline_cache.insert("Wireframe".to_string(), wireframe_render_pipeline);
         render_pipeline_cache.insert(
-            "Colored Surface".to_string(),
+            constants::WIREFRAME_MESH_PIPELINE_KEY,
+            wireframe_render_pipeline,
+        );
+        render_pipeline_cache.insert(
+            constants::VERTEX_COLORED_MESH_PIPELINE_KEY,
             colored_surface_render_pipeline,
         );
-        render_pipeline_cache.insert("Uniform Solid Surface".to_string(), solid_render_pipeline);
         render_pipeline_cache.insert(
-            "Texture Array Surface".to_owned(),
+            constants::SOLID_COLORED_MESH_PIPELINE_KEY,
+            solid_render_pipeline,
+        );
+        render_pipeline_cache.insert(
+            constants::ARRAY_TEXTURE_MESH_PIPELINE_KEY,
             texture_array_surface_render_pipeline,
         );
-        render_pipeline_cache.insert("Silhoutte Surface".to_string(), silhoutte_render_pipeline);
-        render_pipeline_cache.insert("Composite Pipeline".to_string(), comp_render_pipeline);
+        render_pipeline_cache.insert(
+            constants::MESH_SILHOUETTE_PIPELINE_KEY,
+            silhoutte_render_pipeline,
+        );
+        render_pipeline_cache.insert(constants::COMPOSITE_PASS_PIPELINE, comp_render_pipeline);
+        // render_pipeline_cache.insert(
+        //     constants::SCREEN_SPACE_MESH_PIPELINE_KEY,
+        //     screen_space_colored_mesh_render_pipeline,
+        // );
+        // render_pipeline_cache.insert(
+        //     constants::SCREEN_SPACE_WIREFRAME_PIPELINE_KEY,
+        //     screen_space_wireframe_mesh_render_pipeline,
+        // );
 
         let camera = Camera::new(&device);
 
@@ -540,10 +596,8 @@ impl Renderer {
 
             // composite of textures
             {
-                // let new_texture_data =
-                //     create_texture_data(&self.device, self.texture_size, self.texture_format);
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("Outline Pass"),
+                    label: Some("Composite Pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: &final_texture_data.texture_view,
                         resolve_target: None,
@@ -559,7 +613,7 @@ impl Renderer {
 
                 pass.set_pipeline(
                     self.render_pipeline_cache
-                        .get("Composite Pipeline")
+                        .get(constants::COMPOSITE_PASS_PIPELINE)
                         .unwrap(),
                 );
                 pass.set_bind_group(

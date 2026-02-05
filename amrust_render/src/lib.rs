@@ -20,8 +20,10 @@ pub mod vertex;
 // internal module
 // mod normalized_box;
 mod composite;
+mod constants;
 mod pipeline;
 mod render_pass;
+mod screen_space;
 
 #[derive(Debug, Error)]
 pub enum WgpuError {
@@ -40,6 +42,8 @@ pub enum Renderable {
     Mesh,
     WireframeMesh,
     SilhouetteMesh,
+    ScreeSpaceColoredMesh { px_size: u32, depth_testing: bool },
+    ScreenSpaceWireframeMesh { px_size: u32, depth_testing: bool },
 }
 
 pub struct RenderData<'a> {
