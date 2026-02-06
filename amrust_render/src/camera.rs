@@ -194,6 +194,19 @@ impl OrthographicCameraData {
 
         (new_eye_position, new_target, rotated_up_vector)
     }
+
+    pub fn copy_rotation_component(&mut self, src: &OrthographicCameraData) {
+        let f = (src.target_position - src.eye_position).normalize(); // forward (world)
+        let r = f.cross(src.up_vector).normalize(); // right (world) for RH look_at
+        let u = r.cross(f).normalize(); // corrected up (world)
+
+        let dist = (self.target_position - self.eye_position)
+            .length()
+            .max(1e-6);
+
+        self.up_vector = u;
+        self.target_position = self.eye_position + f * dist;
+    }
 }
 
 impl CameraData for OrthographicCameraData {

@@ -3,7 +3,7 @@ use thiserror::Error;
 mod prelude;
 pub use prelude::*;
 
-use crate::{gpu_mesh::GpuMesh, instance::GpuInstance};
+use crate::{camera::Camera, gpu_mesh::GpuMesh, instance::GpuInstance};
 
 //export module
 pub mod bounding_box;
@@ -93,10 +93,10 @@ mod tests {
             let mut render_db = TestRenderDb::new(&renderer.device);
             let _wireframe_object_id = set_wireframe_mesh_object(&renderer.device, &mut render_db);
 
-            renderer.update_camera(&get_camera_data());
+            renderer.update_camera(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
 
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
-            let _ = renderer.render(&render_data).await;
+            let _ = renderer.render(&render_data, None).await;
             let image_buffer = renderer.present().await;
             // image_buffer.save("tests/data/wireframe_mesh.png").unwrap();
 
@@ -129,9 +129,9 @@ mod tests {
             let (_mesh_object_id, _wireframe_object_id) =
                 set_solid_mesh(&renderer.device, &mut render_db);
 
-            renderer.update_camera(&get_camera_data());
+            renderer.update_camera(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
-            let _ = renderer.render(&render_data).await;
+            let _ = renderer.render(&render_data, None).await;
             let image_buffer = renderer.present().await;
             // image_buffer.save("tests/data/solid_color_mesh.png").unwrap();
 
@@ -164,13 +164,83 @@ mod tests {
             let (_mesh_object_id, _wireframe_object_id) =
                 set_colored_mesh_object(&renderer.device, &mut render_db);
 
-            renderer.update_camera(&get_camera_data());
+            renderer.update_camera(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
-            let _ = renderer.render(&render_data).await;
+            let _ = renderer.render(&render_data, None).await;
             let image_buffer = renderer.present().await;
             // image_buffer
             //     .save("tests/data/vertex_color_mesh.png")
             //     .unwrap();
+
+            let ref_image_data = image::open(PathBuf::from("tests/data/vertex_color_mesh.png"))
+                .unwrap()
+                .into_rgba8();
+
+            let ref_image =
+                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &ref_image_data);
+            let test_image =
+                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &image_buffer);
+
+            let error_map = nv_flip::flip(ref_image, test_image, DEFAULT_PIXELS_PER_DEGREE);
+            let pool = nv_flip::FlipPool::from_image(&error_map);
+            if let Some(Ordering::Greater) = pool.mean().partial_cmp(&FLIP_MEAN_ERROR) {
+                println!("Mean error {}", pool.mean());
+                panic!("Something is wrong with the Vertex colors")
+            }
+        });
+    }
+
+    #[test]
+    fn test_box_with_vertex_color_with_sub_viewport() {
+        pollster::block_on(async {
+            let mut renderer = renderer::Renderer::from_new_device(TEXTURE_WIDTH, TEXTURE_HEIGHT)
+                .await
+                .unwrap();
+
+            let mut main_render_db = TestRenderDb::new(&renderer.device);
+            let (_mesh_object_id, _wireframe_object_id) =
+                set_colored_mesh_object(&renderer.device, &mut main_render_db);
+
+            renderer.update_camera(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
+            let main_render_data = main_render_db.get_renderables().collect::<Vec<_>>();
+
+            let mut secondary_render_db = TestRenderDb::new(&renderer.device);
+            set_simple_mesh(&renderer.device, &mut secondary_render_db);
+            set_wcs_gizmo(&renderer.device, &mut secondary_render_db);
+            let secondary_render_data = secondary_render_db.get_renderables().collect::<Vec<_>>();
+
+            let mut subviewport_camera = Camera::new(&renderer.device);
+            let mut camera_data = OrthographicCameraData {
+                aspect_ratio: 400 as f32 / 400 as f32,
+                ..Default::default()
+            };
+            camera_data.copy_rotation_component(&get_camera_data(400, 400));
+            subviewport_camera.update(&camera_data);
+            let subviewport_screen_space =
+                screen_space::ScreenSpace::new(&renderer.device, 400.0, 400.0);
+
+            let subviewport_bind_group = renderer::create_global_3d_render_pass_bind_group(
+                &renderer.device,
+                &renderer::create_global_3d_render_pass_bind_group_layout(&renderer.device),
+                subviewport_camera.get_binding_reosurce(),
+                subviewport_screen_space.get_binding_resource(),
+            );
+
+            let _ = renderer
+                .render(
+                    &main_render_data,
+                    Some(&[renderer::Subviewport {
+                        min: glam::Vec2::new(0.0, 0.0),
+                        max: glam::Vec2::new(400.0, 400.0),
+                        global_bind_group: &subviewport_bind_group,
+                        render_data: &secondary_render_data,
+                    }]),
+                )
+                .await;
+            let image_buffer = renderer.present().await;
+            image_buffer
+                .save("tests/data/vertex_color_mesh_with_subviewport.png")
+                .unwrap();
 
             let ref_image_data = image::open(PathBuf::from("tests/data/vertex_color_mesh.png"))
                 .unwrap()
@@ -201,10 +271,10 @@ mod tests {
             let (_mesh_object_id, _wireframe_object_id, _silhoutte_mesh_object_id) =
                 set_colored_mesh_object_with_silhoutte(&renderer.device, &mut render_db);
 
-            renderer.update_camera(&get_camera_data());
+            renderer.update_camera(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
             renderer.set_highlight_pixels(4);
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
-            let _ = renderer.render(&render_data).await;
+            let _ = renderer.render(&render_data, None).await;
             let image_buffer = renderer.present().await;
             // image_buffer
             //     .save("tests/data/vertex_color_mesh_with_silhouette.png")
@@ -242,9 +312,9 @@ mod tests {
             let (_mesh_object_id, _wireframe_object_id) =
                 set_screen_space_mesh_and_wireframe(&renderer.device, &mut render_db, true);
 
-            renderer.update_camera(&get_camera_data());
+            renderer.update_camera(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
-            let _ = renderer.render(&render_data).await;
+            let _ = renderer.render(&render_data, None).await;
             let image_buffer = renderer.present().await;
             image_buffer
                 .save("tests/data/screen_space_boxes_with_depth.png")
@@ -282,9 +352,9 @@ mod tests {
             let (_mesh_object_id, _wireframe_object_id) =
                 set_screen_space_mesh_and_wireframe(&renderer.device, &mut render_db, false);
 
-            renderer.update_camera(&get_camera_data());
+            renderer.update_camera(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
-            let _ = renderer.render(&render_data).await;
+            let _ = renderer.render(&render_data, None).await;
             let image_buffer = renderer.present().await;
             // image_buffer
             //     .save("tests/data/screen_space_boxes_without_depth.png")
@@ -326,9 +396,9 @@ mod tests {
                 &mut render_db,
             );
 
-            renderer.update_camera(&get_camera_data());
+            renderer.update_camera(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
-            let _ = renderer.render(&render_data).await;
+            let _ = renderer.render(&render_data, None).await;
             let image_buffer = renderer.present().await;
             // image_buffer.save("tests/data/single_tex_mesh.png").unwrap();
 
@@ -366,9 +436,9 @@ mod tests {
                 &mut render_db,
             );
 
-            renderer.update_camera(&get_camera_data());
+            renderer.update_camera(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
-            let _ = renderer.render(&render_data).await;
+            let _ = renderer.render(&render_data, None).await;
             let image_buffer = renderer.present().await;
             // image_buffer
             //     .save("tests/data/array_tex_mesh_new.png")
@@ -392,9 +462,9 @@ mod tests {
         });
     }
 
-    fn get_camera_data() -> OrthographicCameraData {
+    fn get_camera_data(width: u32, height: u32) -> OrthographicCameraData {
         let mut camera = OrthographicCameraData {
-            aspect_ratio: TEXTURE_WIDTH as f32 / TEXTURE_HEIGHT as f32,
+            aspect_ratio: width as f32 / height as f32,
             ..Default::default()
         };
         camera
@@ -1011,6 +1081,30 @@ mod tests {
         };
 
         render_db.add_object(gizmo_object)
+    }
+
+    fn set_simple_mesh(device: &wgpu::Device, render_db: &mut TestRenderDb) -> u32 {
+        let simple_mesh = MeshBuilder::new()
+            .add_vertex_stream(ORDERED_POSITIONS)
+            .add_wireframe_index_stream(ORDERED_POSITIONS_BOX_EDGE_INDICES)
+            .build(device);
+
+        let simple_mesh_id = render_db.add_mesh(simple_mesh);
+        let transformations = [Transformation(Mat4::IDENTITY).to_data()];
+
+        let simple_mesh_instance_buffer = InstanceDataBuilder::new()
+            .add_instance_stream(&transformations)
+            .add_instance_stream(&[Material::new(1.0, 1.0, 0.0).to_data()])
+            .build(device);
+
+        let simple_mesh_object = RenderObject {
+            renderable: Renderable::Mesh,
+            gpu_mesh_id: simple_mesh_id,
+            instance: simple_mesh_instance_buffer,
+            local_resources: vec![],
+        };
+
+        render_db.add_object(simple_mesh_object)
     }
 
     pub struct RenderObject {

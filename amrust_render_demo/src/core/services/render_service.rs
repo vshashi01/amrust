@@ -136,7 +136,7 @@ impl RenderService {
                         // log::debug!("Render data count: {:?}", render_data.len());
                         match self
                             .renderer
-                            .render_to_texture(&render_data, &self.render_texture_data)
+                            .render_to_texture(&render_data, &self.render_texture_data, None)
                             .await
                         {
                             Ok(_) => {
