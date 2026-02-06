@@ -1,8 +1,8 @@
-use amrust_render::{RenderData, RenderDatabase, Renderable, gpu_mesh::GpuMesh, instance};
+use amrust_render::{RenderData3d, RenderDatabase, Renderable3d, gpu_mesh::GpuMesh, instance};
 use slotmap::{SlotMap, new_key_type};
 
 pub struct RenderObject {
-    pub renderable: Renderable,
+    pub renderable: Renderable3d,
     pub instance: instance::GpuInstance,
     pub gpu_mesh_id: RenderMeshId,
     pub local_resources: Vec<(u32, u32)>, // (index to local_bind_group, slot_index)
@@ -136,7 +136,7 @@ impl RenderDb {
 }
 
 impl RenderDatabase for RenderDb {
-    fn get_renderables<'a>(&'a self) -> impl Iterator<Item = RenderData<'a>> {
+    fn get_renderables<'a>(&'a self) -> impl Iterator<Item = RenderData3d<'a>> {
         self.objects.iter().filter_map(|(id, render_object)| {
             if self.objects_to_render.contains(&id) {
                 let gpu_mesh = self.meshes.get(render_object.gpu_mesh_id).unwrap();
@@ -149,7 +149,7 @@ impl RenderDatabase for RenderDb {
                     })
                     .collect::<Vec<_>>();
 
-                Some(RenderData {
+                Some(RenderData3d {
                     renderable: render_object.renderable.clone(),
                     mesh: gpu_mesh,
                     instance: &render_object.instance,

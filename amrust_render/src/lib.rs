@@ -3,7 +3,7 @@ use thiserror::Error;
 mod prelude;
 pub use prelude::*;
 
-use crate::{camera::Camera, gpu_mesh::GpuMesh, instance::GpuInstance};
+use crate::{gpu_mesh::GpuMesh, instance::GpuInstance};
 
 //export module
 pub mod bounding_box;
@@ -36,7 +36,7 @@ pub enum WgpuError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Renderable {
+pub enum Renderable3d {
     ColoredMesh,
     TexturedMesh,
     ArrayTexturedMesh,
@@ -47,15 +47,15 @@ pub enum Renderable {
     ScreenSpaceWireframeMesh { depth_testing: bool, order: u8 },
 }
 
-pub struct RenderData<'a> {
-    pub renderable: Renderable,
+pub struct RenderData3d<'a> {
+    pub renderable: Renderable3d,
     pub mesh: &'a GpuMesh,
     pub instance: &'a GpuInstance,
     pub local_bind_groups: Vec<(&'a wgpu::BindGroup, u32)>,
 }
 
 pub trait RenderDatabase {
-    fn get_renderables<'a>(&'a self) -> impl Iterator<Item = RenderData<'a>>;
+    fn get_renderables<'a>(&'a self) -> impl Iterator<Item = RenderData3d<'a>>;
 }
 
 #[cfg(test)]
@@ -209,9 +209,9 @@ mod tests {
             set_wcs_gizmo(&renderer.device, &mut secondary_render_db);
             let secondary_render_data = secondary_render_db.get_renderables().collect::<Vec<_>>();
 
-            let mut subviewport_camera = Camera::new(&renderer.device);
+            let mut subviewport_camera = camera::Camera::new(&renderer.device);
             let mut camera_data = OrthographicCameraData {
-                aspect_ratio: 400 as f32 / 400 as f32,
+                aspect_ratio: 400_f32 / 400_f32,
                 ..Default::default()
             };
             camera_data.copy_rotation_component(&get_camera_data(400, 400));
@@ -612,7 +612,7 @@ mod tests {
                 vertex::UseTexture::from_texture_index(3),
                 vertex::UseTexture::from_texture_index(0),
                 vertex::UseTexture::from_texture_index(1),
-                vertex::UseTexture::no(), //2
+                vertex::UseTexture::NO, //2
                 vertex::UseTexture::from_texture_index(5),
                 vertex::UseTexture::from_texture_index(4),
                 // vertex::UseTexture::from_texture_index(left_tex_id),
@@ -646,7 +646,7 @@ mod tests {
             .build(device);
 
         let multi_tex_mesh_object = RenderObject {
-            renderable: Renderable::ArrayTexturedMesh,
+            renderable: Renderable3d::ArrayTexturedMesh,
             gpu_mesh_id: multi_tex_mesh_id,
             instance: multi_tex_mesh_instance_buffer,
             local_resources: vec![(texture_array_bind_group, 1)],
@@ -654,7 +654,7 @@ mod tests {
         let _multi_tex_mesh_object_id = render_db.add_object(multi_tex_mesh_object);
 
         let multi_tex_mesh_wireframe_object = RenderObject {
-            renderable: Renderable::WireframeMesh,
+            renderable: Renderable3d::WireframeMesh,
             gpu_mesh_id: multi_tex_mesh_id,
             instance: InstanceDataBuilder::new()
                 .add_instance_stream(&transformations)
@@ -722,7 +722,7 @@ mod tests {
             .build(device);
 
         let single_tex_mesh_object = RenderObject {
-            renderable: Renderable::TexturedMesh,
+            renderable: Renderable3d::TexturedMesh,
             gpu_mesh_id: single_tex_mesh_id,
             instance: single_tex_mesh_instance_buffer,
             local_resources: vec![(happy_tree_bind_group_id, 1)],
@@ -730,7 +730,7 @@ mod tests {
         let _single_tex_mesh_object_id = render_db.add_object(single_tex_mesh_object);
 
         let single_tex_mesh_wireframe_object = RenderObject {
-            renderable: Renderable::WireframeMesh,
+            renderable: Renderable3d::WireframeMesh,
             gpu_mesh_id: single_tex_mesh_id,
             instance: InstanceDataBuilder::new()
                 .add_instance_stream(&transformations)
@@ -780,7 +780,7 @@ mod tests {
             .build(device);
 
         let colored_mesh_object = RenderObject {
-            renderable: Renderable::ColoredMesh,
+            renderable: Renderable3d::ColoredMesh,
             gpu_mesh_id: colored_mesh_id,
             instance: colored_mesh_instance_buffer,
             local_resources: vec![],
@@ -788,7 +788,7 @@ mod tests {
         let _colored_mesh_object_id = render_db.add_object(colored_mesh_object);
 
         let colored_mesh_wireframe_object = RenderObject {
-            renderable: Renderable::WireframeMesh,
+            renderable: Renderable3d::WireframeMesh,
             gpu_mesh_id: colored_mesh_id,
             instance: InstanceDataBuilder::new()
                 .add_instance_stream(&transformations)
@@ -838,7 +838,7 @@ mod tests {
             .build(device);
 
         let colored_mesh_object = RenderObject {
-            renderable: Renderable::ColoredMesh,
+            renderable: Renderable3d::ColoredMesh,
             gpu_mesh_id: colored_mesh_id,
             instance: colored_mesh_instance_buffer,
             local_resources: vec![],
@@ -846,7 +846,7 @@ mod tests {
         let _colored_mesh_object_id = render_db.add_object(colored_mesh_object);
 
         let colored_mesh_wireframe_object = RenderObject {
-            renderable: Renderable::WireframeMesh,
+            renderable: Renderable3d::WireframeMesh,
             gpu_mesh_id: colored_mesh_id,
             instance: InstanceDataBuilder::new()
                 .add_instance_stream(&transformations)
@@ -857,7 +857,7 @@ mod tests {
         let _colored_mesh_wireframe_object_id = render_db.add_object(colored_mesh_wireframe_object);
 
         let silhoutte_mesh_object = RenderObject {
-            renderable: Renderable::SilhouetteMesh,
+            renderable: Renderable3d::SilhouetteMesh,
             gpu_mesh_id: colored_mesh_id,
             instance: InstanceDataBuilder::new()
                 .add_instance_stream(&[Transformation(Mat4::from_translation(
@@ -913,14 +913,14 @@ mod tests {
             .add_instance_stream(&transformations)
             .add_instance_stream(&surface_material_colors)
             .add_instance_stream(&[
-                material::UseMaterialData::new(true),
-                material::UseMaterialData::new(false),
+                material::UseMaterialData::YES,
+                material::UseMaterialData::NO,
             ])
             .add_instance_stream(&surface_pixel_sizes)
             .build(device);
 
         let colored_mesh_object = RenderObject {
-            renderable: Renderable::ScreenSpaceColoredMesh {
+            renderable: Renderable3d::ScreenSpaceColoredMesh {
                 depth_testing: with_depth_testing,
                 order: if with_depth_testing { 1 } else { 2 }, //The surface to go behind the wireframe
             },
@@ -938,7 +938,7 @@ mod tests {
         let wireframe_pixel_sizes = [SizeInPixel(25.0), SizeInPixel(105.0)];
 
         let colored_mesh_wireframe_object = RenderObject {
-            renderable: Renderable::ScreenSpaceWireframeMesh {
+            renderable: Renderable3d::ScreenSpaceWireframeMesh {
                 depth_testing: with_depth_testing,
                 order: 1,
             },
@@ -948,8 +948,8 @@ mod tests {
                 .add_instance_stream(&wireframe_material_colors)
                 .add_instance_stream(&wireframe_pixel_sizes)
                 .add_instance_stream(&[
-                    material::UseMaterialData::new(true),
-                    material::UseMaterialData::new(true),
+                    material::UseMaterialData::YES,
+                    material::UseMaterialData::YES,
                 ])
                 .build(device),
             local_resources: vec![],
@@ -989,7 +989,7 @@ mod tests {
             .build(device);
 
         let simple_mesh_object = RenderObject {
-            renderable: Renderable::Mesh,
+            renderable: Renderable3d::Mesh,
             gpu_mesh_id: simple_mesh_id,
             instance: simple_mesh_instance_buffer,
             local_resources: vec![],
@@ -997,7 +997,7 @@ mod tests {
         let _simple_mesh_object_id = render_db.add_object(simple_mesh_object);
 
         let simple_mesh_wireframe_object = RenderObject {
-            renderable: Renderable::WireframeMesh,
+            renderable: Renderable3d::WireframeMesh,
             gpu_mesh_id: simple_mesh_id,
             instance: InstanceDataBuilder::new()
                 .add_instance_stream(&transformations)
@@ -1035,7 +1035,7 @@ mod tests {
         ];
 
         let simple_mesh_wireframe_object = RenderObject {
-            renderable: Renderable::WireframeMesh,
+            renderable: Renderable3d::WireframeMesh,
             gpu_mesh_id: simple_mesh_id,
             instance: InstanceDataBuilder::new()
                 .add_instance_stream(&transformations)
@@ -1067,11 +1067,11 @@ mod tests {
             .add_instance_stream(&transformations)
             .add_instance_stream(&[Material::new(0.75, 0.05, 0.5).to_data()])
             .add_instance_stream(&[SizeInPixel(100.0)])
-            .add_instance_stream(&[material::UseMaterialData::new(false)])
+            .add_instance_stream(&[material::UseMaterialData::NO])
             .build(device);
 
         let gizmo_object = RenderObject {
-            renderable: Renderable::ScreenSpaceColoredMesh {
+            renderable: Renderable3d::ScreenSpaceColoredMesh {
                 depth_testing: false,
                 order: 0,
             },
@@ -1098,7 +1098,7 @@ mod tests {
             .build(device);
 
         let simple_mesh_object = RenderObject {
-            renderable: Renderable::Mesh,
+            renderable: Renderable3d::Mesh,
             gpu_mesh_id: simple_mesh_id,
             instance: simple_mesh_instance_buffer,
             local_resources: vec![],
@@ -1108,7 +1108,7 @@ mod tests {
     }
 
     pub struct RenderObject {
-        pub renderable: Renderable,
+        pub renderable: Renderable3d,
         pub instance: instance::GpuInstance,
         pub gpu_mesh_id: u32,
         pub local_resources: Vec<(u32, u32)>, // (index to local_bind_group, slot_index)
@@ -1216,7 +1216,7 @@ mod tests {
     }
 
     impl RenderDatabase for TestRenderDb {
-        fn get_renderables<'a>(&'a self) -> impl Iterator<Item = RenderData<'a>> {
+        fn get_renderables<'a>(&'a self) -> impl Iterator<Item = RenderData3d<'a>> {
             self.objects.iter().map(|r| {
                 let gpu_mesh = self.meshes.get(r.gpu_mesh_id as usize).unwrap();
                 let local_resources = r
@@ -1228,7 +1228,7 @@ mod tests {
                     })
                     .collect::<Vec<_>>();
 
-                RenderData {
+                RenderData3d {
                     renderable: r.renderable.clone(),
                     mesh: gpu_mesh,
                     instance: &r.instance,

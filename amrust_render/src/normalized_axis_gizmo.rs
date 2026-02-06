@@ -1,4 +1,4 @@
-use crate::vertex::{self, Position};
+use crate::vertex::{self, Position3d};
 
 /// Full, self-contained prism axis gizmo mesh generator.
 /// Produces 3 rectangular prisms for +X, +Y, +Z axes (triangle list).
@@ -19,7 +19,7 @@ use crate::vertex::{self, Position};
 pub fn generate_axis_gizmo_prism_mesh(
     axis_length: f32,
     axis_half_thickness: f32,
-) -> (Vec<vertex::Position>, Vec<vertex::Color>, Vec<u32>) {
+) -> (Vec<vertex::Position3d>, Vec<vertex::Color>, Vec<u32>) {
     fn push_box(
         positions: &mut Vec<[f32; 3]>,
         colors: &mut Vec<[f32; 3]>,
@@ -116,8 +116,8 @@ pub fn generate_axis_gizmo_prism_mesh(
 
     let pos = positions
         .iter()
-        .map(|p| vertex::Position(*p))
-        .collect::<Vec<Position>>();
+        .map(|p| vertex::Position3d(*p))
+        .collect::<Vec<Position3d>>();
     let color = colors.iter().map(|c| vertex::Color(*c)).collect::<Vec<_>>();
 
     (pos, color, indices)

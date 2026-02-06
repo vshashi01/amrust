@@ -5,7 +5,7 @@ use smol::lock::RwLock;
 
 use amrust_render::{
     bounding_box::BoundingBox, gpu_mesh::MeshBuilder, instance::InstanceDataBuilder,
-    material::Material, transformation::TransformationData, vertex::Position,
+    material::Material, transformation::TransformationData, vertex::Position3d,
 };
 
 use crate::{
@@ -1113,12 +1113,15 @@ fn compute_transformed_bounding_box_from_mesh(
     bbox
 }
 
-fn convert_points_vec_to_position(points: &[Vec3]) -> Vec<Position> {
-    points.iter().map(|p| Position([p.x, p.y, p.z])).collect()
+fn convert_points_vec_to_position(points: &[Vec3]) -> Vec<Position3d> {
+    points.iter().map(|p| Position3d([p.x, p.y, p.z])).collect()
 }
 
-fn convert_vertices_to_position(vertices: &[Vec3]) -> Vec<Position> {
-    vertices.iter().map(|v| Position([v.x, v.y, v.z])).collect()
+fn convert_vertices_to_position(vertices: &[Vec3]) -> Vec<Position3d> {
+    vertices
+        .iter()
+        .map(|v| Position3d([v.x, v.y, v.z]))
+        .collect()
 }
 
 fn convert_vertices_to_color(vertices: &[Vec3]) -> Vec<amrust_render::vertex::Color> {
@@ -1160,7 +1163,7 @@ pub fn add_render_object(
         .collect::<Vec<_>>();
     let material_data = vec![Material::new(1.0, 1.0, 1.0).to_data(); transformation_data.len()];
     let object = RenderObject {
-        renderable: amrust_render::Renderable::ColoredMesh,
+        renderable: amrust_render::Renderable3d::ColoredMesh,
         gpu_mesh_id: data.gpu_mesh_id,
         instance: InstanceDataBuilder::new()
             .add_instance_stream(transformation_data.as_slice())
@@ -1174,7 +1177,7 @@ pub fn add_render_object(
     };
 
     let wireframe_object = RenderObject {
-        renderable: amrust_render::Renderable::WireframeMesh,
+        renderable: amrust_render::Renderable3d::WireframeMesh,
         gpu_mesh_id: data.gpu_mesh_id,
         instance: InstanceDataBuilder::new()
             .add_instance_stream(transformation_data.as_slice())
@@ -1205,7 +1208,7 @@ fn add_bounding_box_wireframe(
     let mesh_id = render_db.add_mesh(mesh);
 
     let wireframe_object = RenderObject {
-        renderable: amrust_render::Renderable::WireframeMesh,
+        renderable: amrust_render::Renderable3d::WireframeMesh,
         gpu_mesh_id: mesh_id,
         instance: InstanceDataBuilder::new()
             .add_instance_stream(&[TransformationData(Mat4::IDENTITY.to_cols_array_2d())])
@@ -1232,8 +1235,8 @@ mod test {
         let positions = super::convert_points_vec_to_position(&points);
         assert_eq!(positions.len(), points.len());
 
-        assert_eq!(positions[0], Position([1.0, 2.0, 3.0]));
-        assert_eq!(positions[1], Position([-1.0, -2.0, -3.0]));
+        assert_eq!(positions[0], Position3d([1.0, 2.0, 3.0]));
+        assert_eq!(positions[1], Position3d([-1.0, -2.0, -3.0]));
     }
 
     #[test]
@@ -1242,8 +1245,8 @@ mod test {
         let positions = convert_vertices_to_position(&vertices);
 
         assert_eq!(positions.len(), vertices.len());
-        assert_eq!(positions[0], Position([0.0, 0.0, 0.0]));
-        assert_eq!(positions[1], Position([5.5, 6.6, 7.7]));
+        assert_eq!(positions[0], Position3d([0.0, 0.0, 0.0]));
+        assert_eq!(positions[1], Position3d([5.5, 6.6, 7.7]));
     }
 
     #[test]

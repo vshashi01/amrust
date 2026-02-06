@@ -2,10 +2,10 @@ use image::{ImageBuffer, Rgba};
 
 use crate::composite::CompositeFragUniform;
 use crate::screen_space::{self, ScreenSpace};
-use crate::{Renderable, composite, constants, prelude::*};
+use crate::{Renderable3d, composite, constants, prelude::*};
 
 use crate::{
-    RenderData, WgpuError,
+    RenderData3d, WgpuError,
     camera::Camera,
     camera::CameraData,
     instance::InstanceFieldDescriptor,
@@ -26,7 +26,7 @@ pub struct Subviewport<'a> {
     pub min: glam::Vec2,
     pub max: glam::Vec2,
     pub global_bind_group: &'a wgpu::BindGroup,
-    pub render_data: &'a [RenderData<'a>],
+    pub render_data: &'a [RenderData3d<'a>],
 }
 
 pub struct Renderer {
@@ -194,7 +194,7 @@ impl Renderer {
             .set_vertex_source(standard_textured_vert_shader_source, None)
             .set_frag_source(single_texture_frag_shader_source, None)
             .set_texture_format(texture_format)
-            .add_vertex_buffer_layout(vertex::Position::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
             .add_vertex_buffer_layout(vertex::Color::layout::<1>())
             .add_vertex_buffer_layout(vertex::TexCoords::layout::<2>())
             .add_vertex_buffer_layout(vertex::UseTexture::layout::<3>())
@@ -214,7 +214,7 @@ impl Renderer {
             .set_vertex_source(standard_textured_vert_shader_source, None)
             .set_frag_source(array_textures_frag_shader_source, None)
             .set_texture_format(texture_format)
-            .add_vertex_buffer_layout(vertex::Position::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
             .add_vertex_buffer_layout(vertex::Color::layout::<1>())
             .add_vertex_buffer_layout(vertex::TexCoords::layout::<2>())
             .add_vertex_buffer_layout(vertex::UseTexture::layout::<3>())
@@ -233,7 +233,7 @@ impl Renderer {
             .set_vertex_source(colored_vert_shader_source, None)
             .set_frag_source(colored_frag_shader_source, None)
             .set_texture_format(texture_format)
-            .add_vertex_buffer_layout(vertex::Position::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
             .add_vertex_buffer_layout(vertex::Color::layout::<1>())
             .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
             .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
@@ -250,7 +250,7 @@ impl Renderer {
             .set_vertex_source(solid_source, None)
             .set_frag_source(colored_frag_shader_source, None)
             .set_texture_format(texture_format)
-            .add_vertex_buffer_layout(vertex::Position::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
             .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
             .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
             .add_bind_group_layout(&global_bind_group_layout)
@@ -266,7 +266,7 @@ impl Renderer {
             .set_vertex_source(colored_vert_shader_source, None)
             .set_frag_source(colored_frag_shader_source, None)
             .set_texture_format(texture_format)
-            .add_vertex_buffer_layout(vertex::Position::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
             .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
             .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
             .add_bind_group_layout(&global_bind_group_layout)
@@ -283,7 +283,7 @@ impl Renderer {
             .set_vertex_source(basic_vert_source, None)
             .set_frag_source(silhoutte_frag_shader_source, None)
             .set_texture_format(wgpu::TextureFormat::R8Unorm)
-            .add_vertex_buffer_layout(vertex::Position::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
             .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
             .add_bind_group_layout(&global_bind_group_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
@@ -310,7 +310,7 @@ impl Renderer {
             .set_vertex_source(screen_space_vert_source, None)
             .set_frag_source(colored_frag_source, None)
             .set_texture_format(texture_format)
-            .add_vertex_buffer_layout(vertex::Position::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
             .add_vertex_buffer_layout(vertex::Color::layout::<1>())
             .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
             .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
@@ -329,7 +329,7 @@ impl Renderer {
             .set_vertex_source(screen_space_vert_source, None)
             .set_frag_source(colored_frag_source, None)
             .set_texture_format(texture_format)
-            .add_vertex_buffer_layout(vertex::Position::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
             .add_vertex_buffer_layout(vertex::Color::layout::<1>())
             .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
             .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
@@ -350,7 +350,7 @@ impl Renderer {
                 .set_vertex_source(screen_space_vert_source, None)
                 .set_frag_source(colored_frag_source, None)
                 .set_texture_format(texture_format)
-                .add_vertex_buffer_layout(vertex::Position::layout::<0>())
+                .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
                 .add_vertex_buffer_layout(vertex::Color::layout::<1>())
                 .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
                 .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
@@ -372,7 +372,7 @@ impl Renderer {
                 .set_vertex_source(screen_space_vert_source, None)
                 .set_frag_source(colored_frag_source, None)
                 .set_texture_format(texture_format)
-                .add_vertex_buffer_layout(vertex::Position::layout::<0>())
+                .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
                 .add_vertex_buffer_layout(vertex::Color::layout::<1>())
                 .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
                 .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
@@ -536,7 +536,7 @@ impl Renderer {
 
     pub async fn render_to_texture<'a>(
         &self,
-        render_data: &[RenderData<'a>],
+        render_data: &[RenderData3d<'a>],
         render_texture_data: &RenderTextureData,
         sub_viewport: Option<&[Subviewport<'a>]>,
     ) -> Result<(), WgpuError> {
@@ -546,7 +546,7 @@ impl Renderer {
 
     pub async fn render<'a>(
         &self,
-        render_data: &[RenderData<'a>],
+        render_data: &[RenderData3d<'a>],
         sub_viewport: Option<&[Subviewport<'a>]>,
     ) -> Result<(), WgpuError> {
         Self::render_internal(self, render_data, None, sub_viewport).await
@@ -554,7 +554,7 @@ impl Renderer {
 
     async fn render_internal<'a>(
         &self,
-        render_data: &[RenderData<'a>],
+        render_data: &[RenderData3d<'a>],
         render_texture_data: Option<&RenderTextureData>,
         sub_viewport: Option<&[Subviewport<'a>]>,
     ) -> Result<(), WgpuError> {
@@ -572,7 +572,7 @@ impl Renderer {
 
         let use_final_texture_data = render_data
             .iter()
-            .all(|d| !matches!(d.renderable, Renderable::SilhouetteMesh));
+            .all(|d| !matches!(d.renderable, Renderable3d::SilhouetteMesh));
 
         let color_data = if use_final_texture_data {
             final_texture_data
@@ -631,9 +631,10 @@ impl Renderer {
 
         // screen space pass without depth
         if render_data.iter().any(|d| {
-            if let Renderable::ScreenSpaceWireframeMesh { depth_testing, .. } = d.renderable {
+            if let Renderable3d::ScreenSpaceWireframeMesh { depth_testing, .. } = d.renderable {
                 !depth_testing
-            } else if let Renderable::ScreenSpaceColoredMesh { depth_testing, .. } = d.renderable {
+            } else if let Renderable3d::ScreenSpaceColoredMesh { depth_testing, .. } = d.renderable
+            {
                 !depth_testing
             } else {
                 false
@@ -679,7 +680,7 @@ impl Renderer {
         //mask render pass for selected meshes
         if render_data
             .iter()
-            .any(|d| matches!(d.renderable, crate::Renderable::SilhouetteMesh))
+            .any(|d| matches!(d.renderable, crate::Renderable3d::SilhouetteMesh))
         {
             let selection_mask_tex = create_texture_data(
                 &self.device,

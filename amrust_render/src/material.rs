@@ -42,9 +42,9 @@ impl InstanceFieldDescriptor for RgbMaterialData {
 pub struct UseMaterialData(i32);
 
 impl UseMaterialData {
-    pub fn new(use_material_data: bool) -> Self {
-        if use_material_data { Self(1) } else { Self(0) }
-    }
+    pub const NO: Self = Self(-1);
+
+    pub const YES: Self = Self(1);
 }
 
 impl InstanceFieldDescriptor for UseMaterialData {

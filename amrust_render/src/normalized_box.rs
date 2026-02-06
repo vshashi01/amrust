@@ -1,6 +1,6 @@
 #![allow(unused)]
 
-use crate::vertex::{Color, Position, TexCoords, UseTexture};
+use crate::vertex::{Color, Position3d, TexCoords, UseTexture};
 
 //
 //
@@ -41,37 +41,37 @@ use crate::vertex::{Color, Position, TexCoords, UseTexture};
 //          0-----1
 //
 
-pub const POSITIONS: &[Position] = &[
+pub const POSITIONS: &[Position3d] = &[
     // back face                  // vertices ~ index
-    Position([-1.0, -1.0, -1.0]), // 0 ~ 0
-    Position([1.0, -1.0, -1.0]),  // 1 ~ 1
-    Position([1.0, 1.0, -1.0]),   // 2 ~ 2
-    Position([-1.0, 1.0, -1.0]),  // 3 ~ 3
+    Position3d([-1.0, -1.0, -1.0]), // 0 ~ 0
+    Position3d([1.0, -1.0, -1.0]),  // 1 ~ 1
+    Position3d([1.0, 1.0, -1.0]),   // 2 ~ 2
+    Position3d([-1.0, 1.0, -1.0]),  // 3 ~ 3
     // front face
-    Position([-1.0, -1.0, 1.0]), // 4 ~ 4
-    Position([-1.0, 1.0, 1.0]),  // 5 ~ 5
-    Position([1.0, 1.0, 1.0]),   // 6 ~ 6
-    Position([1.0, -1.0, 1.0]),  // 7 ~ 7
+    Position3d([-1.0, -1.0, 1.0]), // 4 ~ 4
+    Position3d([-1.0, 1.0, 1.0]),  // 5 ~ 5
+    Position3d([1.0, 1.0, 1.0]),   // 6 ~ 6
+    Position3d([1.0, -1.0, 1.0]),  // 7 ~ 7
     // bottom face
-    Position([-1.0, -1.0, 1.0]),  // 4 ~ 8
-    Position([-1.0, -1.0, -1.0]), // 0 ~ 9
-    Position([1.0, -1.0, 1.0]),   // 7 ~ 10
-    Position([1.0, -1.0, -1.0]),  // 1 ~ 11
+    Position3d([-1.0, -1.0, 1.0]),  // 4 ~ 8
+    Position3d([-1.0, -1.0, -1.0]), // 0 ~ 9
+    Position3d([1.0, -1.0, 1.0]),   // 7 ~ 10
+    Position3d([1.0, -1.0, -1.0]),  // 1 ~ 11
     // top face
-    Position([-1.0, 1.0, -1.0]), // 3 ~ 12
-    Position([-1.0, 1.0, 1.0]),  // 5 ~ 13
-    Position([1.0, 1.0, -1.0]),  // 2 ~ 14
-    Position([1.0, 1.0, 1.0]),   // 6 ~ 15
+    Position3d([-1.0, 1.0, -1.0]), // 3 ~ 12
+    Position3d([-1.0, 1.0, 1.0]),  // 5 ~ 13
+    Position3d([1.0, 1.0, -1.0]),  // 2 ~ 14
+    Position3d([1.0, 1.0, 1.0]),   // 6 ~ 15
     // right face
-    Position([1.0, 1.0, 1.0]),   // 6 ~ 16
-    Position([1.0, -1.0, 1.0]),  // 7 ~ 17
-    Position([1.0, 1.0, -1.0]),  // 2 ~ 18
-    Position([1.0, -1.0, -1.0]), // 1 ~ 19
+    Position3d([1.0, 1.0, 1.0]),   // 6 ~ 16
+    Position3d([1.0, -1.0, 1.0]),  // 7 ~ 17
+    Position3d([1.0, 1.0, -1.0]),  // 2 ~ 18
+    Position3d([1.0, -1.0, -1.0]), // 1 ~ 19
     // left face
-    Position([-1.0, 1.0, -1.0]),  // 3 ~ 20
-    Position([-1.0, -1.0, -1.0]), // 0 ~ 21
-    Position([-1.0, 1.0, 1.0]),   // 5 ~ 22
-    Position([-1.0, -1.0, 1.0]),  // 4 ~ 23
+    Position3d([-1.0, 1.0, -1.0]),  // 3 ~ 20
+    Position3d([-1.0, -1.0, -1.0]), // 0 ~ 21
+    Position3d([-1.0, 1.0, 1.0]),   // 5 ~ 22
+    Position3d([-1.0, -1.0, 1.0]),  // 4 ~ 23
 ];
 
 // pub const COLORS: &[Color] = &[
@@ -147,35 +147,35 @@ pub const TEX_COORDS: &[TexCoords] = &[
 
 pub const USE_TEXTURE: &[UseTexture] = &[
     // back face
-    UseTexture::yes(),
-    UseTexture::yes(),
-    UseTexture::yes(),
-    UseTexture::yes(),
+    UseTexture::YES,
+    UseTexture::YES,
+    UseTexture::YES,
+    UseTexture::YES,
     // front face
-    UseTexture::yes(),
-    UseTexture::yes(),
-    UseTexture::yes(),
-    UseTexture::yes(),
+    UseTexture::YES,
+    UseTexture::YES,
+    UseTexture::YES,
+    UseTexture::YES,
     // bottom face
-    UseTexture::yes(),
-    UseTexture::yes(),
-    UseTexture::yes(),
-    UseTexture::yes(),
+    UseTexture::YES,
+    UseTexture::YES,
+    UseTexture::YES,
+    UseTexture::YES,
     // top face
-    UseTexture::yes(),
-    UseTexture::yes(),
-    UseTexture::yes(),
-    UseTexture::yes(),
+    UseTexture::YES,
+    UseTexture::YES,
+    UseTexture::YES,
+    UseTexture::YES,
     // right face
-    UseTexture::no(),
-    UseTexture::no(),
-    UseTexture::no(),
-    UseTexture::no(),
+    UseTexture::NO,
+    UseTexture::NO,
+    UseTexture::NO,
+    UseTexture::NO,
     // left face
-    UseTexture::yes(),
-    UseTexture::yes(),
-    UseTexture::yes(),
-    UseTexture::yes(),
+    UseTexture::YES,
+    UseTexture::YES,
+    UseTexture::YES,
+    UseTexture::YES,
 ];
 
 pub fn get_use_texture_vertices(
@@ -264,49 +264,49 @@ pub const INDEXED_POSITIONS_BOX_EDGE_INDICES: &[u32] = &[
     13, 12, 12, 14, 14, 15, 15, 13,
 ];
 
-pub const ORDERED_POSITIONS: &[Position] = &[
+pub const ORDERED_POSITIONS: &[Position3d] = &[
     // Front face                // vertices ~ actual index
-    Position([-1.0, 1.0, 1.0]),  // 5 ~ 0
-    Position([-1.0, -1.0, 1.0]), // 4 ~ 1
-    Position([1.0, 1.0, 1.0]),   // 6 ~ 2
-    Position([1.0, 1.0, 1.0]),   // 6 ~ 3
-    Position([-1.0, -1.0, 1.0]), // 4 ~ 4
-    Position([1.0, -1.0, 1.0]),  // 7 ~ 5
+    Position3d([-1.0, 1.0, 1.0]),  // 5 ~ 0
+    Position3d([-1.0, -1.0, 1.0]), // 4 ~ 1
+    Position3d([1.0, 1.0, 1.0]),   // 6 ~ 2
+    Position3d([1.0, 1.0, 1.0]),   // 6 ~ 3
+    Position3d([-1.0, -1.0, 1.0]), // 4 ~ 4
+    Position3d([1.0, -1.0, 1.0]),  // 7 ~ 5
     // Left face
-    Position([-1.0, 1.0, -1.0]),  // 3 ~ 6
-    Position([-1.0, -1.0, -1.0]), // 0 ~ 7
-    Position([-1.0, 1.0, 1.0]),   // 5 ~ 8
-    Position([-1.0, 1.0, 1.0]),   // 5 ~ 9
-    Position([-1.0, -1.0, -1.0]), // 0 ~ 10
-    Position([-1.0, -1.0, 1.0]),  // 4 ~ 11
+    Position3d([-1.0, 1.0, -1.0]),  // 3 ~ 6
+    Position3d([-1.0, -1.0, -1.0]), // 0 ~ 7
+    Position3d([-1.0, 1.0, 1.0]),   // 5 ~ 8
+    Position3d([-1.0, 1.0, 1.0]),   // 5 ~ 9
+    Position3d([-1.0, -1.0, -1.0]), // 0 ~ 10
+    Position3d([-1.0, -1.0, 1.0]),  // 4 ~ 11
     // Right face
-    Position([1.0, 1.0, 1.0]),   // 6 ~ 12
-    Position([1.0, -1.0, 1.0]),  // 7 ~ 13
-    Position([1.0, 1.0, -1.0]),  // 2 ~ 14
-    Position([1.0, 1.0, -1.0]),  // 2 ~ 15
-    Position([1.0, -1.0, 1.0]),  // 7 ~ 16
-    Position([1.0, -1.0, -1.0]), // 1 ~ 17
+    Position3d([1.0, 1.0, 1.0]),   // 6 ~ 12
+    Position3d([1.0, -1.0, 1.0]),  // 7 ~ 13
+    Position3d([1.0, 1.0, -1.0]),  // 2 ~ 14
+    Position3d([1.0, 1.0, -1.0]),  // 2 ~ 15
+    Position3d([1.0, -1.0, 1.0]),  // 7 ~ 16
+    Position3d([1.0, -1.0, -1.0]), // 1 ~ 17
     // Top face
-    Position([-1.0, 1.0, -1.0]), // 3 ~ 18
-    Position([-1.0, 1.0, 1.0]),  // 5 ~ 19
-    Position([1.0, 1.0, -1.0]),  // 2 ~ 20
-    Position([1.0, 1.0, -1.0]),  // 2 ~ 21
-    Position([-1.0, 1.0, 1.0]),  // 5 ~ 22
-    Position([1.0, 1.0, 1.0]),   // 6 ~ 23
+    Position3d([-1.0, 1.0, -1.0]), // 3 ~ 18
+    Position3d([-1.0, 1.0, 1.0]),  // 5 ~ 19
+    Position3d([1.0, 1.0, -1.0]),  // 2 ~ 20
+    Position3d([1.0, 1.0, -1.0]),  // 2 ~ 21
+    Position3d([-1.0, 1.0, 1.0]),  // 5 ~ 22
+    Position3d([1.0, 1.0, 1.0]),   // 6 ~ 23
     // Bottom face
-    Position([-1.0, -1.0, 1.0]),  // 4 ~ 24
-    Position([-1.0, -1.0, -1.0]), // 0 ~ 25
-    Position([1.0, -1.0, 1.0]),   // 7 ~ 26
-    Position([1.0, -1.0, 1.0]),   // 7 ~ 27
-    Position([-1.0, -1.0, -1.0]), // 0 ~ 28
-    Position([1.0, -1.0, -1.0]),  // 1 ~ 29
+    Position3d([-1.0, -1.0, 1.0]),  // 4 ~ 24
+    Position3d([-1.0, -1.0, -1.0]), // 0 ~ 25
+    Position3d([1.0, -1.0, 1.0]),   // 7 ~ 26
+    Position3d([1.0, -1.0, 1.0]),   // 7 ~ 27
+    Position3d([-1.0, -1.0, -1.0]), // 0 ~ 28
+    Position3d([1.0, -1.0, -1.0]),  // 1 ~ 29
     // Back face
-    Position([1.0, 1.0, -1.0]),   // 2 ~ 30
-    Position([1.0, -1.0, -1.0]),  // 1 ~ 31
-    Position([-1.0, 1.0, -1.0]),  // 3 ~ 32
-    Position([-1.0, 1.0, -1.0]),  // 3 ~ 33
-    Position([1.0, -1.0, -1.0]),  // 1 ~ 34
-    Position([-1.0, -1.0, -1.0]), // 0 ~ 35
+    Position3d([1.0, 1.0, -1.0]),   // 2 ~ 30
+    Position3d([1.0, -1.0, -1.0]),  // 1 ~ 31
+    Position3d([-1.0, 1.0, -1.0]),  // 3 ~ 32
+    Position3d([-1.0, 1.0, -1.0]),  // 3 ~ 33
+    Position3d([1.0, -1.0, -1.0]),  // 1 ~ 34
+    Position3d([-1.0, -1.0, -1.0]), // 0 ~ 35
 ];
 
 #[rustfmt::skip]

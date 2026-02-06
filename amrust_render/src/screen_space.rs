@@ -1,4 +1,4 @@
-use wgpu::util::DeviceExt;
+use crate::prelude::*;
 
 use crate::instance::InstanceFieldDescriptor;
 
