@@ -5,36 +5,7 @@ use crate::instance::InstanceFieldDescriptor;
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, bytemuck::Zeroable, bytemuck::Pod)]
 pub struct ScreenSpaceUniform {
-    pub screen_size: [f32; 2],
-}
-
-impl ScreenSpaceUniform {
-    pub fn new(width: f32, height: f32) -> Self {
-        Self {
-            screen_size: [width, height],
-        }
-    }
-
-    pub const fn get_size() -> usize {
-        // only 1 size for now
-        std::mem::size_of::<Self>()
-    }
-
-    pub fn create_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
-        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Camera bind group layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        })
-    }
+    screen_size: [f32; 2],
 }
 
 pub struct ScreenSpace {
@@ -58,6 +29,21 @@ impl ScreenSpace {
             height,
             buffer,
         }
+    }
+
+    pub fn update_size(&mut self, width: f32, height: f32) {
+        self.width = width;
+        self.height = height;
+    }
+
+    pub fn write_buffer(&self, queue: &wgpu::Queue) {
+        queue.write_buffer(
+            &self.buffer,
+            0,
+            bytemuck::cast_slice(&[ScreenSpaceUniform {
+                screen_size: [self.width, self.height],
+            }]),
+        );
     }
 
     pub fn get_binding_resource(&self) -> wgpu::BindingResource<'_> {

@@ -42,8 +42,8 @@ pub enum Renderable {
     Mesh,
     WireframeMesh,
     SilhouetteMesh,
-    ScreeSpaceColoredMesh { px_size: u32, depth_testing: bool },
-    ScreenSpaceWireframeMesh { px_size: u32, depth_testing: bool },
+    ScreeSpaceColoredMesh { depth_testing: bool },
+    ScreenSpaceWireframeMesh { depth_testing: bool },
 }
 
 pub struct RenderData<'a> {
@@ -191,43 +191,6 @@ mod tests {
     }
 
     #[test]
-    fn test_box_with_vertex_color_and_screen_space_mesh_with_depth() {
-        pollster::block_on(async {
-            let mut renderer = renderer::Renderer::from_new_device(TEXTURE_WIDTH, TEXTURE_HEIGHT)
-                .await
-                .unwrap();
-
-            let mut render_db = TestRenderDb::new();
-            let (_mesh_object_id, _wireframe_object_id) =
-                set_colored_mesh_object(&renderer.device, &mut render_db);
-
-            renderer.update_camera(&get_camera_data());
-            let render_data = render_db.get_renderables().collect::<Vec<_>>();
-            let _ = renderer.render(&render_data).await;
-            let image_buffer = renderer.present().await;
-            // image_buffer
-            //     .save("tests/data/vertex_color_mesh.png")
-            //     .unwrap();
-
-            let ref_image_data = image::open(PathBuf::from("tests/data/vertex_color_mesh.png"))
-                .unwrap()
-                .into_rgba8();
-
-            let ref_image =
-                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &ref_image_data);
-            let test_image =
-                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &image_buffer);
-
-            let error_map = nv_flip::flip(ref_image, test_image, DEFAULT_PIXELS_PER_DEGREE);
-            let pool = nv_flip::FlipPool::from_image(&error_map);
-            if let Some(Ordering::Greater) = pool.mean().partial_cmp(&FLIP_MEAN_ERROR) {
-                println!("Mean error {}", pool.mean());
-                panic!("Something is wrong with the Vertex colors")
-            }
-        });
-    }
-
-    #[test]
     fn test_box_with_vertex_color_and_silhoutte() {
         pollster::block_on(async {
             let mut renderer = renderer::Renderer::from_new_device(TEXTURE_WIDTH, TEXTURE_HEIGHT)
@@ -268,7 +231,7 @@ mod tests {
     }
 
     #[test]
-    fn test_box_in_screen_space_size() {
+    fn test_box_in_screen_space_size_with_depth() {
         pollster::block_on(async {
             let mut renderer = renderer::Renderer::from_new_device(TEXTURE_WIDTH, TEXTURE_HEIGHT)
                 .await
@@ -276,21 +239,21 @@ mod tests {
 
             let mut render_db = TestRenderDb::new();
             let (_mesh_object_id, _wireframe_object_id) =
-                set_screen_space_mesh_and_wireframe(&renderer.device, &mut render_db);
+                set_screen_space_mesh_and_wireframe(&renderer.device, &mut render_db, true);
 
             renderer.update_camera(&get_camera_data());
-            renderer.set_highlight_pixels(4);
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
             let _ = renderer.render(&render_data).await;
             let image_buffer = renderer.present().await;
-            image_buffer
-                .save("tests/data/box_in_screen_space_size.png")
-                .unwrap();
+            // image_buffer
+            //     .save("tests/data/screen_space_boxes_with_depth.png")
+            //     .unwrap();
 
-            let ref_image_data =
-                image::open(PathBuf::from("tests/data/box_in_screen_space_size.png"))
-                    .unwrap()
-                    .into_rgba8();
+            let ref_image_data = image::open(PathBuf::from(
+                "tests/data/screen_space_boxes_with_depth.png",
+            ))
+            .unwrap()
+            .into_rgba8();
 
             let ref_image =
                 nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &ref_image_data);
@@ -301,7 +264,47 @@ mod tests {
             let pool = nv_flip::FlipPool::from_image(&error_map);
             if let Some(Ordering::Greater) = pool.mean().partial_cmp(&FLIP_MEAN_ERROR) {
                 println!("Mean error {}", pool.mean());
-                panic!("Something is wrong with the Silhoutte")
+                panic!("Something is wrong with the Screen Space Mesh with Depth")
+            }
+        });
+    }
+
+    //ToDo:: Update this to test with other objects as well
+    #[test]
+    fn test_box_in_screen_space_size_without_depth() {
+        pollster::block_on(async {
+            let mut renderer = renderer::Renderer::from_new_device(TEXTURE_WIDTH, TEXTURE_HEIGHT)
+                .await
+                .unwrap();
+
+            let mut render_db = TestRenderDb::new();
+            let (_mesh_object_id, _wireframe_object_id) =
+                set_screen_space_mesh_and_wireframe(&renderer.device, &mut render_db, false);
+
+            renderer.update_camera(&get_camera_data());
+            let render_data = render_db.get_renderables().collect::<Vec<_>>();
+            let _ = renderer.render(&render_data).await;
+            let image_buffer = renderer.present().await;
+            // image_buffer
+            //     .save("tests/data/screen_space_boxes_without_depth.png")
+            //     .unwrap();
+
+            let ref_image_data = image::open(PathBuf::from(
+                "tests/data/screen_space_boxes_without_depth.png",
+            ))
+            .unwrap()
+            .into_rgba8();
+
+            let ref_image =
+                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &ref_image_data);
+            let test_image =
+                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &image_buffer);
+
+            let error_map = nv_flip::flip(ref_image, test_image, DEFAULT_PIXELS_PER_DEGREE);
+            let pool = nv_flip::FlipPool::from_image(&error_map);
+            if let Some(Ordering::Greater) = pool.mean().partial_cmp(&0.002) {
+                println!("Mean error {}", pool.mean());
+                panic!("Something is wrong with the Screen Space Mesh without Depth")
             }
         });
     }
@@ -804,6 +807,7 @@ mod tests {
     fn set_screen_space_mesh_and_wireframe(
         device: &wgpu::Device,
         render_db: &mut TestRenderDb,
+        with_depth_testing: bool,
     ) -> (u32, u32) {
         //(mesh id, wireframe id
         let colored_mesh = MeshBuilder::new()
@@ -827,23 +831,22 @@ mod tests {
             .to_data(),
         ];
 
-        let material_colors = [
+        let surface_material_colors = [
             Material::new(0.0, 0.0, 1.0).to_data(),
             Material::new(0.0, 0.0, 1.0).to_data(),
         ];
 
-        let pixel_sizes = [SizeInPixel(50.0), SizeInPixel(500.0)];
+        let surface_pixel_sizes = [SizeInPixel(15.0), SizeInPixel(100.0)];
 
         let colored_mesh_instance_buffer = InstanceDataBuilder::new()
             .add_instance_stream(&transformations)
-            .add_instance_stream(&material_colors)
-            .add_instance_stream(&pixel_sizes)
+            .add_instance_stream(&surface_material_colors)
+            .add_instance_stream(&surface_pixel_sizes)
             .build(device);
 
         let colored_mesh_object = RenderObject {
             renderable: Renderable::ScreeSpaceColoredMesh {
-                px_size: 1,
-                depth_testing: true,
+                depth_testing: with_depth_testing,
             },
             gpu_mesh_id: colored_mesh_id,
             instance: colored_mesh_instance_buffer,
@@ -851,16 +854,22 @@ mod tests {
         };
         let _colored_mesh_object_id = render_db.add_object(colored_mesh_object);
 
+        let wireframe_material_colors = [
+            Material::new(1.0, 0.0, 0.0).to_data(),
+            Material::new(1.0, 0.0, 0.0).to_data(),
+        ];
+
+        let wireframe_pixel_sizes = [SizeInPixel(25.0), SizeInPixel(105.0)];
+
         let colored_mesh_wireframe_object = RenderObject {
             renderable: Renderable::ScreenSpaceWireframeMesh {
-                px_size: 1,
-                depth_testing: true,
+                depth_testing: with_depth_testing,
             },
             gpu_mesh_id: colored_mesh_id,
             instance: InstanceDataBuilder::new()
                 .add_instance_stream(&transformations)
-                .add_instance_stream(&material_colors)
-                .add_instance_stream(&pixel_sizes)
+                .add_instance_stream(&wireframe_material_colors)
+                .add_instance_stream(&wireframe_pixel_sizes)
                 .build(device),
             local_resources: vec![],
         };

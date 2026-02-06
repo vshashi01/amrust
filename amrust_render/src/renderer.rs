@@ -1,8 +1,7 @@
 use image::{ImageBuffer, Rgba};
 
-use crate::camera::CameraUniform;
 use crate::composite::CompositeFragUniform;
-use crate::screen_space::{self, ScreenSpace, ScreenSpaceUniform};
+use crate::screen_space::{self, ScreenSpace};
 use crate::{Renderable, composite, constants, prelude::*};
 
 use crate::{
@@ -165,8 +164,7 @@ impl Renderer {
         texture_size: wgpu::Extent3d,
         output_buffer: Option<wgpu::Buffer>,
     ) -> Result<Self, WgpuError> {
-        //let camera_bind_group_layout = Camera::create_bind_group_layout(&device);
-        let camera_bind_group_layout = create_global_3d_render_pass_bind_group_layout(&device);
+        let global_bind_group_layout = create_global_3d_render_pass_bind_group_layout(&device);
         let basic_texture_bind_group_layout = texture::generate_texture_bind_group_layout::<0, 1>(
             &device,
             "Basic Texture Bind Group Layout",
@@ -195,7 +193,7 @@ impl Renderer {
             .add_vertex_buffer_layout(vertex::UseTexture::layout::<3>())
             .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
             .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
-            .add_bind_group_layout(&camera_bind_group_layout)
+            .add_bind_group_layout(&global_bind_group_layout)
             .add_bind_group_layout(&basic_texture_bind_group_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
             .build(&device, constants::TEXTURE_MESH_PIPELINE_KEY);
@@ -215,7 +213,7 @@ impl Renderer {
             .add_vertex_buffer_layout(vertex::UseTexture::layout::<3>())
             .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
             .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
-            .add_bind_group_layout(&camera_bind_group_layout)
+            .add_bind_group_layout(&global_bind_group_layout)
             .add_bind_group_layout(&texture_array_bind_group_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
             .build(&device, constants::ARRAY_TEXTURE_MESH_PIPELINE_KEY);
@@ -232,7 +230,7 @@ impl Renderer {
             .add_vertex_buffer_layout(vertex::Color::layout::<1>())
             .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
             .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
-            .add_bind_group_layout(&camera_bind_group_layout)
+            .add_bind_group_layout(&global_bind_group_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
             .build(&device, constants::VERTEX_COLORED_MESH_PIPELINE_KEY);
 
@@ -248,7 +246,7 @@ impl Renderer {
             .add_vertex_buffer_layout(vertex::Position::layout::<0>())
             .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
             .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
-            .add_bind_group_layout(&camera_bind_group_layout)
+            .add_bind_group_layout(&global_bind_group_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
             .build(&device, constants::SOLID_COLORED_MESH_PIPELINE_KEY);
 
@@ -264,7 +262,7 @@ impl Renderer {
             .add_vertex_buffer_layout(vertex::Position::layout::<0>())
             .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
             .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
-            .add_bind_group_layout(&camera_bind_group_layout)
+            .add_bind_group_layout(&global_bind_group_layout)
             .set_topology(wgpu::PrimitiveTopology::LineList)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
             .build(&device, constants::WIREFRAME_MESH_PIPELINE_KEY);
@@ -280,7 +278,7 @@ impl Renderer {
             .set_texture_format(wgpu::TextureFormat::R8Unorm)
             .add_vertex_buffer_layout(vertex::Position::layout::<0>())
             .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
-            .add_bind_group_layout(&camera_bind_group_layout)
+            .add_bind_group_layout(&global_bind_group_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
             .build(&device, constants::MESH_SILHOUETTE_PIPELINE_KEY);
 
@@ -296,7 +294,6 @@ impl Renderer {
             .add_bind_group_layout(&comp_bind_group_layout)
             .build(&device, constants::COMPOSITE_PASS_PIPELINE);
 
-        let screen_space_uniform = ScreenSpaceUniform::create_bind_group_layout(&device);
         let screen_space_vert_source = wgpu::ShaderSource::Wgsl(
             (include_str!("shaders/screen_space_vert_shader.wgsl")).into(),
         );
@@ -311,8 +308,7 @@ impl Renderer {
             .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
             .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
             .add_vertex_buffer_layout(screen_space::SizeInPixel::layout::<12>())
-            .add_bind_group_layout(&camera_bind_group_layout)
-            .add_bind_group_layout(&screen_space_uniform)
+            .add_bind_group_layout(&global_bind_group_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
             .build(&device, constants::SCREEN_SPACE_MESH_PIPELINE_KEY);
 
@@ -330,11 +326,53 @@ impl Renderer {
             .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
             .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
             .add_vertex_buffer_layout(screen_space::SizeInPixel::layout::<12>())
-            .add_bind_group_layout(&camera_bind_group_layout)
-            .add_bind_group_layout(&screen_space_uniform)
+            .add_bind_group_layout(&global_bind_group_layout)
             .set_topology(wgpu::PrimitiveTopology::LineList)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
             .build(&device, constants::SCREEN_SPACE_WIREFRAME_PIPELINE_KEY);
+
+        let screen_space_vert_source = wgpu::ShaderSource::Wgsl(
+            (include_str!("shaders/screen_space_vert_shader.wgsl")).into(),
+        );
+        let colored_frag_source =
+            wgpu::ShaderSource::Wgsl(include_str!("shaders/colored_frag_shader.wgsl").into());
+        let screen_space_colored_mesh_render_pipeline_without_depth =
+            pipeline::PipelineBuilder::new()
+                .set_vertex_source(screen_space_vert_source, None)
+                .set_frag_source(colored_frag_source, None)
+                .set_texture_format(texture_format)
+                .add_vertex_buffer_layout(vertex::Position::layout::<0>())
+                .add_vertex_buffer_layout(vertex::Color::layout::<1>())
+                .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+                .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+                .add_vertex_buffer_layout(screen_space::SizeInPixel::layout::<12>())
+                .add_bind_group_layout(&global_bind_group_layout)
+                .build(
+                    &device,
+                    constants::SCREEN_SPACE_MESH_WITHOUT_DEPTH_PIPELINE_KEY,
+                );
+
+        let screen_space_vert_source = wgpu::ShaderSource::Wgsl(
+            (include_str!("shaders/screen_space_vert_shader.wgsl")).into(),
+        );
+        let colored_frag_source =
+            wgpu::ShaderSource::Wgsl(include_str!("shaders/colored_frag_shader.wgsl").into());
+        let screen_space_wireframe_mesh_render_pipeline_without_depth =
+            pipeline::PipelineBuilder::new()
+                .set_vertex_source(screen_space_vert_source, None)
+                .set_frag_source(colored_frag_source, None)
+                .set_texture_format(texture_format)
+                .add_vertex_buffer_layout(vertex::Position::layout::<0>())
+                .add_vertex_buffer_layout(vertex::Color::layout::<1>())
+                .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+                .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+                .add_vertex_buffer_layout(screen_space::SizeInPixel::layout::<12>())
+                .add_bind_group_layout(&global_bind_group_layout)
+                .set_topology(wgpu::PrimitiveTopology::LineList)
+                .build(
+                    &device,
+                    constants::SCREEN_SPACE_WIREFRAME_WITHOUT_DEPTH_PIPELINE_KEY,
+                );
 
         let mut render_pipeline_cache = HashMap::new();
         render_pipeline_cache.insert(
@@ -370,6 +408,14 @@ impl Renderer {
             constants::SCREEN_SPACE_WIREFRAME_PIPELINE_KEY,
             screen_space_wireframe_mesh_render_pipeline,
         );
+        render_pipeline_cache.insert(
+            constants::SCREEN_SPACE_MESH_WITHOUT_DEPTH_PIPELINE_KEY,
+            screen_space_colored_mesh_render_pipeline_without_depth,
+        );
+        render_pipeline_cache.insert(
+            constants::SCREEN_SPACE_WIREFRAME_WITHOUT_DEPTH_PIPELINE_KEY,
+            screen_space_wireframe_mesh_render_pipeline_without_depth,
+        );
 
         let camera = Camera::new(&device);
         let screen_space_data = ScreenSpace::new(
@@ -379,7 +425,7 @@ impl Renderer {
         );
         let global_bind_group = create_global_3d_render_pass_bind_group(
             &device,
-            &camera_bind_group_layout,
+            &global_bind_group_layout,
             camera.get_binding_reosurce(),
             screen_space_data.get_binding_resource(),
         );
@@ -426,6 +472,10 @@ impl Renderer {
         };
 
         self.texture_size = texture_size;
+
+        self.screen_space_data
+            .update_size(width as f32, height as f32);
+        self.screen_space_data.write_buffer(&self.queue);
     }
 
     pub fn create_render_texture_data(&self) -> RenderTextureData {
@@ -549,18 +599,63 @@ impl Renderer {
                 render_pass.set_bind_group((i + 1) as u32, bind_group, &[]);
             }
 
-            // let renderables = render_db.get_renderables().collect::<Vec<_>>();
-
-            render_pass::solid_render_pass(
+            render_pass::surface_3d_render_pass_with_depth(
                 render_data,
                 &self.render_pipeline_cache,
                 &mut render_pass,
             );
 
-            render_pass::wireframe_render_pass(
+            render_pass::wireframe_3d_render_pass(
                 render_data,
                 &self.render_pipeline_cache,
                 &mut render_pass,
+            );
+        }
+
+        // screen space pass without depth
+        if render_data.iter().any(|d| {
+            if let Renderable::ScreenSpaceWireframeMesh { depth_testing } = d.renderable {
+                !depth_testing
+            } else if let Renderable::ScreeSpaceColoredMesh { depth_testing } = d.renderable {
+                !depth_testing
+            } else {
+                false
+            }
+        }) {
+            let render_pass_desc = wgpu::RenderPassDescriptor {
+                label: Some("Screen Space Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &color_data.texture_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            };
+            let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
+
+            render_pass.set_bind_group(0, &self.global_3d_pass_bind_group, &[]);
+            // set up global bind groups
+            for (i, bind_group) in self.global_bind_groups.iter().enumerate() {
+                render_pass.set_bind_group((i + 1) as u32, bind_group, &[]);
+            }
+
+            render_pass::screen_space_colored_mesh_pass(
+                render_data,
+                &self.render_pipeline_cache,
+                &mut render_pass,
+                false,
+            );
+
+            render_pass::screen_space_wireframe_pass(
+                render_data,
+                &self.render_pipeline_cache,
+                &mut render_pass,
+                false,
             );
         }
 

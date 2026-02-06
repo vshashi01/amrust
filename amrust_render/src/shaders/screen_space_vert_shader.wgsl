@@ -4,8 +4,8 @@
 // - Scales mesh so it appears `screen_px` pixels tall/wide (approx) on screen
 //
 // Bind groups:
-//   @group(0) camera uniform (same as your other shaders)
-//   @group(1) screen params uniform (viewport size in pixels)
+//   @group(0) binding(0) camera uniform (same as your other shaders)
+//   @group(0) binding(1) screen params uniform (viewport size in pixels)
 //
 // Vertex inputs:
 //   @location(0) position: vec3<f32>
@@ -31,6 +31,7 @@ var<uniform> screen: ScreenUniform;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
+    @location(1) color: vec3<f32>,
 };
 
 struct InstanceInput {
