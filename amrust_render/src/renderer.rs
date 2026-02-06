@@ -307,7 +307,8 @@ impl Renderer {
             .add_vertex_buffer_layout(vertex::Color::layout::<1>())
             .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
             .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
-            .add_vertex_buffer_layout(screen_space::SizeInPixel::layout::<12>())
+            .add_vertex_buffer_layout(material::UseMaterialData::layout::<12>())
+            .add_vertex_buffer_layout(screen_space::SizeInPixel::layout::<13>())
             .add_bind_group_layout(&global_bind_group_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
             .build(&device, constants::SCREEN_SPACE_MESH_PIPELINE_KEY);
@@ -325,7 +326,8 @@ impl Renderer {
             .add_vertex_buffer_layout(vertex::Color::layout::<1>())
             .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
             .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
-            .add_vertex_buffer_layout(screen_space::SizeInPixel::layout::<12>())
+            .add_vertex_buffer_layout(material::UseMaterialData::layout::<12>())
+            .add_vertex_buffer_layout(screen_space::SizeInPixel::layout::<13>())
             .add_bind_group_layout(&global_bind_group_layout)
             .set_topology(wgpu::PrimitiveTopology::LineList)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
@@ -345,7 +347,8 @@ impl Renderer {
                 .add_vertex_buffer_layout(vertex::Color::layout::<1>())
                 .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
                 .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
-                .add_vertex_buffer_layout(screen_space::SizeInPixel::layout::<12>())
+                .add_vertex_buffer_layout(material::UseMaterialData::layout::<12>())
+                .add_vertex_buffer_layout(screen_space::SizeInPixel::layout::<13>())
                 .add_bind_group_layout(&global_bind_group_layout)
                 .build(
                     &device,
@@ -366,7 +369,8 @@ impl Renderer {
                 .add_vertex_buffer_layout(vertex::Color::layout::<1>())
                 .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
                 .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
-                .add_vertex_buffer_layout(screen_space::SizeInPixel::layout::<12>())
+                .add_vertex_buffer_layout(material::UseMaterialData::layout::<12>())
+                .add_vertex_buffer_layout(screen_space::SizeInPixel::layout::<13>())
                 .add_bind_group_layout(&global_bind_group_layout)
                 .set_topology(wgpu::PrimitiveTopology::LineList)
                 .build(
@@ -614,9 +618,9 @@ impl Renderer {
 
         // screen space pass without depth
         if render_data.iter().any(|d| {
-            if let Renderable::ScreenSpaceWireframeMesh { depth_testing } = d.renderable {
+            if let Renderable::ScreenSpaceWireframeMesh { depth_testing, .. } = d.renderable {
                 !depth_testing
-            } else if let Renderable::ScreeSpaceColoredMesh { depth_testing } = d.renderable {
+            } else if let Renderable::ScreenSpaceColoredMesh { depth_testing, .. } = d.renderable {
                 !depth_testing
             } else {
                 false

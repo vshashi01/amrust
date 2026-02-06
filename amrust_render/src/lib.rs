@@ -11,6 +11,7 @@ pub mod camera;
 pub mod gpu_mesh;
 pub mod instance;
 pub mod material;
+pub mod normalized_axis_gizmo;
 pub mod normalized_box;
 pub mod renderer;
 pub mod texture;
@@ -42,8 +43,8 @@ pub enum Renderable {
     Mesh,
     WireframeMesh,
     SilhouetteMesh,
-    ScreeSpaceColoredMesh { depth_testing: bool },
-    ScreenSpaceWireframeMesh { depth_testing: bool },
+    ScreenSpaceColoredMesh { depth_testing: bool, order: u8 },
+    ScreenSpaceWireframeMesh { depth_testing: bool, order: u8 },
 }
 
 pub struct RenderData<'a> {
@@ -51,7 +52,6 @@ pub struct RenderData<'a> {
     pub mesh: &'a GpuMesh,
     pub instance: &'a GpuInstance,
     pub local_bind_groups: Vec<(&'a wgpu::BindGroup, u32)>,
-    pub layer: u8,
 }
 
 pub trait RenderDatabase {
@@ -81,7 +81,7 @@ mod tests {
 
     const TEXTURE_WIDTH: u32 = 512;
     const TEXTURE_HEIGHT: u32 = 512;
-    const FLIP_MEAN_ERROR: f32 = 0.02;
+    const FLIP_MEAN_ERROR: f32 = 0.00;
 
     #[test]
     fn test_box_wireframe_only() {
@@ -90,7 +90,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            let mut render_db = TestRenderDb::new();
+            let mut render_db = TestRenderDb::new(&renderer.device);
             let _wireframe_object_id = set_wireframe_mesh_object(&renderer.device, &mut render_db);
 
             renderer.update_camera(&get_camera_data());
@@ -125,7 +125,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            let mut render_db = TestRenderDb::new();
+            let mut render_db = TestRenderDb::new(&renderer.device);
             let (_mesh_object_id, _wireframe_object_id) =
                 set_solid_mesh(&renderer.device, &mut render_db);
 
@@ -160,7 +160,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            let mut render_db = TestRenderDb::new();
+            let mut render_db = TestRenderDb::new(&renderer.device);
             let (_mesh_object_id, _wireframe_object_id) =
                 set_colored_mesh_object(&renderer.device, &mut render_db);
 
@@ -197,7 +197,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            let mut render_db = TestRenderDb::new();
+            let mut render_db = TestRenderDb::new(&renderer.device);
             let (_mesh_object_id, _wireframe_object_id, _silhoutte_mesh_object_id) =
                 set_colored_mesh_object_with_silhoutte(&renderer.device, &mut render_db);
 
@@ -207,7 +207,7 @@ mod tests {
             let _ = renderer.render(&render_data).await;
             let image_buffer = renderer.present().await;
             // image_buffer
-            //     .save("tests/data/vertex_color_mesh_with_silhouette_new.png")
+            //     .save("tests/data/vertex_color_mesh_with_silhouette.png")
             //     .unwrap();
 
             let ref_image_data = image::open(PathBuf::from(
@@ -237,7 +237,8 @@ mod tests {
                 .await
                 .unwrap();
 
-            let mut render_db = TestRenderDb::new();
+            let mut render_db = TestRenderDb::new(&renderer.device);
+
             let (_mesh_object_id, _wireframe_object_id) =
                 set_screen_space_mesh_and_wireframe(&renderer.device, &mut render_db, true);
 
@@ -245,9 +246,9 @@ mod tests {
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
             let _ = renderer.render(&render_data).await;
             let image_buffer = renderer.present().await;
-            // image_buffer
-            //     .save("tests/data/screen_space_boxes_with_depth.png")
-            //     .unwrap();
+            image_buffer
+                .save("tests/data/screen_space_boxes_with_depth.png")
+                .unwrap();
 
             let ref_image_data = image::open(PathBuf::from(
                 "tests/data/screen_space_boxes_with_depth.png",
@@ -277,7 +278,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            let mut render_db = TestRenderDb::new();
+            let mut render_db = TestRenderDb::new(&renderer.device);
             let (_mesh_object_id, _wireframe_object_id) =
                 set_screen_space_mesh_and_wireframe(&renderer.device, &mut render_db, false);
 
@@ -302,7 +303,7 @@ mod tests {
 
             let error_map = nv_flip::flip(ref_image, test_image, DEFAULT_PIXELS_PER_DEGREE);
             let pool = nv_flip::FlipPool::from_image(&error_map);
-            if let Some(Ordering::Greater) = pool.mean().partial_cmp(&0.002) {
+            if let Some(Ordering::Greater) = pool.mean().partial_cmp(&FLIP_MEAN_ERROR) {
                 println!("Mean error {}", pool.mean());
                 panic!("Something is wrong with the Screen Space Mesh without Depth")
             }
@@ -316,7 +317,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            let mut render_db = TestRenderDb::new();
+            let mut render_db = TestRenderDb::new(&renderer.device);
             let (_mesh_object_id, _wireframe_object_id) = single_tex_mesh_object(
                 &renderer.device,
                 &renderer.queue,
@@ -356,7 +357,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            let mut render_db = TestRenderDb::new();
+            let mut render_db = TestRenderDb::new(&renderer.device);
             let (_mesh_object_id, _wireframe_object_id) = set_multi_tex_mesh_object(
                 &renderer.device,
                 &renderer.queue,
@@ -841,12 +842,17 @@ mod tests {
         let colored_mesh_instance_buffer = InstanceDataBuilder::new()
             .add_instance_stream(&transformations)
             .add_instance_stream(&surface_material_colors)
+            .add_instance_stream(&[
+                material::UseMaterialData::new(true),
+                material::UseMaterialData::new(false),
+            ])
             .add_instance_stream(&surface_pixel_sizes)
             .build(device);
 
         let colored_mesh_object = RenderObject {
-            renderable: Renderable::ScreeSpaceColoredMesh {
+            renderable: Renderable::ScreenSpaceColoredMesh {
                 depth_testing: with_depth_testing,
+                order: 1,
             },
             gpu_mesh_id: colored_mesh_id,
             instance: colored_mesh_instance_buffer,
@@ -864,12 +870,17 @@ mod tests {
         let colored_mesh_wireframe_object = RenderObject {
             renderable: Renderable::ScreenSpaceWireframeMesh {
                 depth_testing: with_depth_testing,
+                order: 1,
             },
             gpu_mesh_id: colored_mesh_id,
             instance: InstanceDataBuilder::new()
                 .add_instance_stream(&transformations)
                 .add_instance_stream(&wireframe_material_colors)
                 .add_instance_stream(&wireframe_pixel_sizes)
+                .add_instance_stream(&[
+                    material::UseMaterialData::new(true),
+                    material::UseMaterialData::new(true),
+                ])
                 .build(device),
             local_resources: vec![],
         };
@@ -969,6 +980,39 @@ mod tests {
         render_db.add_object(simple_mesh_wireframe_object)
     }
 
+    fn set_wcs_gizmo(device: &wgpu::Device, render_db: &mut TestRenderDb) -> u32 {
+        let (pos, color, indices) =
+            normalized_axis_gizmo::generate_axis_gizmo_prism_mesh(1.0, 0.02);
+        let simple_mesh = MeshBuilder::new()
+            .add_vertex_stream(&pos)
+            .add_vertex_stream(&color)
+            .add_mesh_index_stream(&indices)
+            .build(device);
+
+        let simple_mesh_id = render_db.add_mesh(simple_mesh);
+
+        let transformations = [Transformation(Mat4::IDENTITY).to_data()];
+
+        let simple_mesh_instance_buffer = InstanceDataBuilder::new()
+            .add_instance_stream(&transformations)
+            .add_instance_stream(&[Material::new(0.75, 0.05, 0.5).to_data()])
+            .add_instance_stream(&[SizeInPixel(100.0)])
+            .add_instance_stream(&[material::UseMaterialData::new(false)])
+            .build(device);
+
+        let gizmo_object = RenderObject {
+            renderable: Renderable::ScreenSpaceColoredMesh {
+                depth_testing: false,
+                order: 0,
+            },
+            gpu_mesh_id: simple_mesh_id,
+            instance: simple_mesh_instance_buffer,
+            local_resources: vec![],
+        };
+
+        render_db.add_object(gizmo_object)
+    }
+
     pub struct RenderObject {
         pub renderable: Renderable,
         pub instance: instance::GpuInstance,
@@ -985,14 +1029,18 @@ mod tests {
     }
 
     impl TestRenderDb {
-        fn new() -> Self {
-            Self {
+        fn new(device: &wgpu::Device) -> Self {
+            let mut _self = Self {
                 textures: vec![],
                 meshes: vec![],
                 objects: vec![],
                 // invisible_objects: HashSet::new(),
                 local_bind_groups: vec![],
-            }
+            };
+
+            set_wcs_gizmo(device, &mut _self);
+
+            _self
         }
 
         // returns the texture id and the bind group id
@@ -1091,7 +1139,6 @@ mod tests {
                     mesh: gpu_mesh,
                     instance: &r.instance,
                     local_bind_groups: local_resources,
-                    layer: 0,
                 }
             })
         }

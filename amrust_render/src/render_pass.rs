@@ -202,17 +202,24 @@ pub fn screen_space_colored_mesh_pass<'a>(
     render_pass: &mut wgpu::RenderPass<'_>,
     is_depth_tested: bool,
 ) {
-    let screen_space_objs = renderables.iter().filter_map(|o| {
-        if let Renderable::ScreeSpaceColoredMesh { depth_testing, .. } = &o.renderable {
-            if *depth_testing == is_depth_tested {
-                Some((o.mesh, o.instance))
+    let mut screen_space_objs = renderables
+        .iter()
+        .filter_map(|o| {
+            if let Renderable::ScreenSpaceColoredMesh {
+                depth_testing,
+                order,
+            } = &o.renderable
+            {
+                if *depth_testing == is_depth_tested {
+                    Some((o.mesh, o.instance, order))
+                } else {
+                    None
+                }
             } else {
                 None
             }
-        } else {
-            None
-        }
-    });
+        })
+        .collect::<Vec<_>>();
 
     if is_depth_tested {
         render_pass.set_pipeline(
@@ -226,20 +233,25 @@ pub fn screen_space_colored_mesh_pass<'a>(
                 .get(constants::SCREEN_SPACE_MESH_WITHOUT_DEPTH_PIPELINE_KEY)
                 .unwrap(),
         );
+
+        screen_space_objs.sort_by_key(|(_, _, order)| **order);
+        screen_space_objs.reverse();
     }
 
-    for (mesh, instance) in screen_space_objs {
+    for (mesh, instance, _) in screen_space_objs {
         let position_buffer = mesh.vertex_slice::<vertex::Position>();
         let color_buffer = mesh.vertex_slice::<vertex::Color>();
         let transformation_buffer = instance.vertex_slice::<transformation::TransformationData>();
         let material_buffer = instance.vertex_slice::<material::RgbMaterialData>();
+        let use_material_buffer = instance.vertex_slice::<material::UseMaterialData>();
         let size_in_pixel_buffer = instance.vertex_slice::<screen_space::SizeInPixel>();
 
         render_pass.set_vertex_buffer(0, position_buffer);
         render_pass.set_vertex_buffer(1, color_buffer);
         render_pass.set_vertex_buffer(2, transformation_buffer);
         render_pass.set_vertex_buffer(3, material_buffer);
-        render_pass.set_vertex_buffer(4, size_in_pixel_buffer);
+        render_pass.set_vertex_buffer(4, use_material_buffer);
+        render_pass.set_vertex_buffer(5, size_in_pixel_buffer);
 
         if let Some(index_stream) = &mesh.mesh_index_stream {
             let index_buffer = mesh.buffer.slice(index_stream.offset..index_stream.end);
@@ -289,13 +301,15 @@ pub fn screen_space_wireframe_pass<'a>(
         let color_buffer = mesh.vertex_slice::<vertex::Color>();
         let transformation_buffer = instance.vertex_slice::<transformation::TransformationData>();
         let material_buffer = instance.vertex_slice::<material::RgbMaterialData>();
+        let use_material_buffer = instance.vertex_slice::<material::UseMaterialData>();
         let size_in_pixel_buffer = instance.vertex_slice::<screen_space::SizeInPixel>();
 
         render_pass.set_vertex_buffer(0, position_buffer);
         render_pass.set_vertex_buffer(1, color_buffer);
         render_pass.set_vertex_buffer(2, transformation_buffer);
         render_pass.set_vertex_buffer(3, material_buffer);
-        render_pass.set_vertex_buffer(4, size_in_pixel_buffer);
+        render_pass.set_vertex_buffer(4, use_material_buffer);
+        render_pass.set_vertex_buffer(5, size_in_pixel_buffer);
 
         if let Some(index_stream) = &mesh.wireframe_index_stream {
             let index_buffer = mesh.buffer.slice(index_stream.offset..index_stream.end);

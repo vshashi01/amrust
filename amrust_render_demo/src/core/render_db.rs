@@ -154,7 +154,6 @@ impl RenderDatabase for RenderDb {
                     mesh: gpu_mesh,
                     instance: &render_object.instance,
                     local_bind_groups: local_resources,
-                    layer: 0,
                 })
             } else {
                 None

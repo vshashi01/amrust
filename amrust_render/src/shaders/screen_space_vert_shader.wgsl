@@ -41,7 +41,8 @@ struct InstanceInput {
     @location(8) model_matrix_3: vec4<f32>,
 
     @location(9) material: vec3<f32>,
-    @location(12) screen_px: f32,
+    @location(12) use_material: i32,
+    @location(13) screen_px: f32,
 };
 
 struct VertexOutput {
@@ -98,6 +99,10 @@ fn vs_main(v: VertexInput, i: InstanceInput) -> VertexOutput {
     let world = t + local.x * x + local.y * y + local.z * z;
 
     out.clip_position = camera.view_proj * vec4<f32>(world, 1.0);
-    out.color = i.material;
+    if i.use_material == 1 {
+        out.color = i.material;
+    } else {
+        out.color = v.color;
+    }
     return out;
 }

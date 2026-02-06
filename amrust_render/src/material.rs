@@ -36,3 +36,27 @@ impl InstanceFieldDescriptor for RgbMaterialData {
         }
     }
 }
+
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct UseMaterialData(i32);
+
+impl UseMaterialData {
+    pub fn new(use_material_data: bool) -> Self {
+        if use_material_data { Self(1) } else { Self(0) }
+    }
+}
+
+impl InstanceFieldDescriptor for UseMaterialData {
+    fn layout<const LOCATION: u32>() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &[wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Sint32,
+                offset: 0,
+                shader_location: LOCATION,
+            }],
+        }
+    }
+}
