@@ -852,7 +852,7 @@ mod tests {
         let colored_mesh_object = RenderObject {
             renderable: Renderable::ScreenSpaceColoredMesh {
                 depth_testing: with_depth_testing,
-                order: 1,
+                order: if with_depth_testing { 1 } else { 2 }, //The surface to go behind the wireframe
             },
             gpu_mesh_id: colored_mesh_id,
             instance: colored_mesh_instance_buffer,

@@ -270,17 +270,24 @@ pub fn screen_space_wireframe_pass<'a>(
     render_pass: &mut wgpu::RenderPass<'_>,
     is_depth_tested: bool,
 ) {
-    let screen_space_objs = renderables.iter().filter_map(|o| {
-        if let Renderable::ScreenSpaceWireframeMesh { depth_testing, .. } = &o.renderable {
-            if *depth_testing == is_depth_tested {
-                Some((o.mesh, o.instance))
+    let mut screen_space_objs = renderables
+        .iter()
+        .filter_map(|o| {
+            if let Renderable::ScreenSpaceWireframeMesh {
+                depth_testing,
+                order,
+            } = &o.renderable
+            {
+                if *depth_testing == is_depth_tested {
+                    Some((o.mesh, o.instance, order))
+                } else {
+                    None
+                }
             } else {
                 None
             }
-        } else {
-            None
-        }
-    });
+        })
+        .collect::<Vec<_>>();
 
     if is_depth_tested {
         render_pass.set_pipeline(
@@ -294,9 +301,12 @@ pub fn screen_space_wireframe_pass<'a>(
                 .get(constants::SCREEN_SPACE_WIREFRAME_WITHOUT_DEPTH_PIPELINE_KEY)
                 .unwrap(),
         );
+
+        screen_space_objs.sort_by_key(|(_, _, order)| **order);
+        screen_space_objs.reverse();
     }
 
-    for (mesh, instance) in screen_space_objs {
+    for (mesh, instance, _) in screen_space_objs {
         let position_buffer = mesh.vertex_slice::<vertex::Position>();
         let color_buffer = mesh.vertex_slice::<vertex::Color>();
         let transformation_buffer = instance.vertex_slice::<transformation::TransformationData>();
