@@ -92,7 +92,7 @@ mod tests {
             renderer.update_camera(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
 
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
-            let _ = renderer.render(&render_data, None).await;
+            let _ = renderer.render(&render_data).await;
             let image_buffer = renderer.present().await;
             // image_buffer.save("tests/data/wireframe_mesh.png").unwrap();
 
@@ -127,7 +127,7 @@ mod tests {
 
             renderer.update_camera(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
-            let _ = renderer.render(&render_data, None).await;
+            let _ = renderer.render(&render_data).await;
             let image_buffer = renderer.present().await;
             // image_buffer.save("tests/data/solid_color_mesh.png").unwrap();
 
@@ -162,7 +162,7 @@ mod tests {
 
             renderer.update_camera(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
-            let _ = renderer.render(&render_data, None).await;
+            let _ = renderer.render(&render_data).await;
             let image_buffer = renderer.present().await;
             // image_buffer
             //     .save("tests/data/vertex_color_mesh.png")
@@ -186,75 +186,75 @@ mod tests {
         });
     }
 
-    #[test]
-    fn test_box_with_vertex_color_with_sub_viewport() {
-        pollster::block_on(async {
-            let mut renderer = renderer::Renderer::from_new_device(TEXTURE_WIDTH, TEXTURE_HEIGHT)
-                .await
-                .unwrap();
+    // #[test]
+    // fn test_box_with_vertex_color_with_sub_viewport() {
+    //     pollster::block_on(async {
+    //         let mut renderer = renderer::Renderer::from_new_device(TEXTURE_WIDTH, TEXTURE_HEIGHT)
+    //             .await
+    //             .unwrap();
 
-            let mut main_render_db = TestRenderDb::new(&renderer.device);
-            let (_mesh_object_id, _wireframe_object_id) =
-                set_colored_mesh_object(&renderer.device, &mut main_render_db);
+    //         let mut main_render_db = TestRenderDb::new(&renderer.device);
+    //         let (_mesh_object_id, _wireframe_object_id) =
+    //             set_colored_mesh_object(&renderer.device, &mut main_render_db);
 
-            renderer.update_camera(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
-            let main_render_data = main_render_db.get_renderables().collect::<Vec<_>>();
+    //         renderer.update_camera(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
+    //         let main_render_data = main_render_db.get_renderables().collect::<Vec<_>>();
 
-            let mut secondary_render_db = TestRenderDb::new(&renderer.device);
-            set_simple_mesh(&renderer.device, &mut secondary_render_db);
-            set_wcs_gizmo(&renderer.device, &mut secondary_render_db);
-            let secondary_render_data = secondary_render_db.get_renderables().collect::<Vec<_>>();
+    //         let mut secondary_render_db = TestRenderDb::new(&renderer.device);
+    //         set_simple_mesh(&renderer.device, &mut secondary_render_db);
+    //         set_wcs_gizmo(&renderer.device, &mut secondary_render_db);
+    //         let secondary_render_data = secondary_render_db.get_renderables().collect::<Vec<_>>();
 
-            let mut subviewport_camera = camera::Camera::new(&renderer.device);
-            let mut camera_data = OrthographicCameraData {
-                aspect_ratio: 400_f32 / 400_f32,
-                ..Default::default()
-            };
-            camera_data.copy_rotation_component(&get_camera_data(400, 400));
-            subviewport_camera.update(&camera_data);
-            let subviewport_screen_space =
-                screen_space::ScreenSpace::new(&renderer.device, 400.0, 400.0);
+    //         let mut subviewport_camera = camera::Camera::new(&renderer.device);
+    //         let mut camera_data = OrthographicCameraData {
+    //             aspect_ratio: 400_f32 / 400_f32,
+    //             ..Default::default()
+    //         };
+    //         camera_data.copy_rotation_component(&get_camera_data(400, 400));
+    //         subviewport_camera.update(&camera_data);
+    //         let subviewport_screen_space =
+    //             screen_space::ScreenSpace::new(&renderer.device, 400.0, 400.0);
 
-            let subviewport_bind_group = renderer::create_global_3d_render_pass_bind_group(
-                &renderer.device,
-                &renderer::create_global_3d_render_pass_bind_group_layout(&renderer.device),
-                subviewport_camera.get_binding_reosurce(),
-                subviewport_screen_space.get_binding_resource(),
-            );
+    //         let subviewport_bind_group = renderer::create_global_3d_render_pass_bind_group(
+    //             &renderer.device,
+    //             &renderer::create_global_3d_render_pass_bind_group_layout(&renderer.device),
+    //             subviewport_camera.get_binding_reosurce(),
+    //             subviewport_screen_space.get_binding_resource(),
+    //         );
 
-            let _ = renderer
-                .render(
-                    &main_render_data,
-                    Some(&[renderer::Subviewport {
-                        min: glam::Vec2::new(0.0, 0.0),
-                        max: glam::Vec2::new(400.0, 400.0),
-                        global_bind_group: &subviewport_bind_group,
-                        render_data: &secondary_render_data,
-                    }]),
-                )
-                .await;
-            let image_buffer = renderer.present().await;
-            image_buffer
-                .save("tests/data/vertex_color_mesh_with_subviewport.png")
-                .unwrap();
+    //         let _ = renderer
+    //             .render(
+    //                 &main_render_data,
+    //                 Some(&[renderer::Subviewport {
+    //                     min: glam::Vec2::new(0.0, 0.0),
+    //                     max: glam::Vec2::new(400.0, 400.0),
+    //                     global_bind_group: &subviewport_bind_group,
+    //                     render_data: &secondary_render_data,
+    //                 }]),
+    //             )
+    //             .await;
+    //         let image_buffer = renderer.present().await;
+    //         image_buffer
+    //             .save("tests/data/vertex_color_mesh_with_subviewport.png")
+    //             .unwrap();
 
-            let ref_image_data = image::open(PathBuf::from("tests/data/vertex_color_mesh.png"))
-                .unwrap()
-                .into_rgba8();
+    //         let ref_image_data = image::open(PathBuf::from("tests/data/vertex_color_mesh.png"))
+    //             .unwrap()
+    //             .into_rgba8();
 
-            let ref_image =
-                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &ref_image_data);
-            let test_image =
-                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &image_buffer);
+    //         let ref_image =
+    //             nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &ref_image_data);
+    //         let test_image =
+    //             nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &image_buffer);
 
-            let error_map = nv_flip::flip(ref_image, test_image, DEFAULT_PIXELS_PER_DEGREE);
-            let pool = nv_flip::FlipPool::from_image(&error_map);
-            if let Some(Ordering::Greater) = pool.mean().partial_cmp(&FLIP_MEAN_ERROR) {
-                println!("Mean error {}", pool.mean());
-                panic!("Something is wrong with the Vertex colors")
-            }
-        });
-    }
+    //         let error_map = nv_flip::flip(ref_image, test_image, DEFAULT_PIXELS_PER_DEGREE);
+    //         let pool = nv_flip::FlipPool::from_image(&error_map);
+    //         if let Some(Ordering::Greater) = pool.mean().partial_cmp(&FLIP_MEAN_ERROR) {
+    //             println!("Mean error {}", pool.mean());
+    //             panic!("Something is wrong with the Vertex colors")
+    //         }
+    //     });
+    // }
 
     #[test]
     fn test_box_with_vertex_color_and_silhoutte() {
@@ -270,7 +270,7 @@ mod tests {
             renderer.update_camera(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
             renderer.set_highlight_pixels(4);
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
-            let _ = renderer.render(&render_data, None).await;
+            let _ = renderer.render(&render_data).await;
             let image_buffer = renderer.present().await;
             // image_buffer
             //     .save("tests/data/vertex_color_mesh_with_silhouette.png")
@@ -310,7 +310,7 @@ mod tests {
 
             renderer.update_camera(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
-            let _ = renderer.render(&render_data, None).await;
+            let _ = renderer.render(&render_data).await;
             let image_buffer = renderer.present().await;
             image_buffer
                 .save("tests/data/screen_space_boxes_with_depth.png")
@@ -350,7 +350,7 @@ mod tests {
 
             renderer.update_camera(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
-            let _ = renderer.render(&render_data, None).await;
+            let _ = renderer.render(&render_data).await;
             let image_buffer = renderer.present().await;
             // image_buffer
             //     .save("tests/data/screen_space_boxes_without_depth.png")
@@ -394,7 +394,7 @@ mod tests {
 
             renderer.update_camera(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
-            let _ = renderer.render(&render_data, None).await;
+            let _ = renderer.render(&render_data).await;
             let image_buffer = renderer.present().await;
             // image_buffer.save("tests/data/single_tex_mesh.png").unwrap();
 
@@ -434,7 +434,7 @@ mod tests {
 
             renderer.update_camera(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
-            let _ = renderer.render(&render_data, None).await;
+            let _ = renderer.render(&render_data).await;
             let image_buffer = renderer.present().await;
             // image_buffer
             //     .save("tests/data/array_tex_mesh_new.png")

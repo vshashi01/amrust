@@ -22,13 +22,6 @@ pub struct RenderTextureData {
     pub texture_sampler: wgpu::Sampler,
 }
 
-pub struct Subviewport<'a> {
-    pub min: glam::Vec2,
-    pub max: glam::Vec2,
-    pub global_bind_group: &'a wgpu::BindGroup,
-    pub render_data: &'a [RenderData3d<'a>],
-}
-
 pub struct Renderer {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -538,25 +531,19 @@ impl Renderer {
         &self,
         render_data: &[RenderData3d<'a>],
         render_texture_data: &RenderTextureData,
-        sub_viewport: Option<&[Subviewport<'a>]>,
     ) -> Result<(), WgpuError> {
         //ToDO: validate the texture size
-        Self::render_internal(self, render_data, Some(render_texture_data), sub_viewport).await
+        Self::render_internal(self, render_data, Some(render_texture_data)).await
     }
 
-    pub async fn render<'a>(
-        &self,
-        render_data: &[RenderData3d<'a>],
-        sub_viewport: Option<&[Subviewport<'a>]>,
-    ) -> Result<(), WgpuError> {
-        Self::render_internal(self, render_data, None, sub_viewport).await
+    pub async fn render<'a>(&self, render_data: &[RenderData3d<'a>]) -> Result<(), WgpuError> {
+        Self::render_internal(self, render_data, None).await
     }
 
     async fn render_internal<'a>(
         &self,
         render_data: &[RenderData3d<'a>],
         render_texture_data: Option<&RenderTextureData>,
-        sub_viewport: Option<&[Subviewport<'a>]>,
     ) -> Result<(), WgpuError> {
         let final_texture_data = match render_texture_data {
             Some(data) => data,
@@ -767,63 +754,63 @@ impl Renderer {
         }
 
         // sub viewport render pass always on top
-        if let Some(viewports) = sub_viewport {
-            let render_pass_desc = wgpu::RenderPassDescriptor {
-                label: Some("Screen Space Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &final_texture_data.texture_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &depth_texture.view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            };
+        // if let Some(viewports) = sub_viewport {
+        //     let render_pass_desc = wgpu::RenderPassDescriptor {
+        //         label: Some("Screen Space Render Pass"),
+        //         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+        //             view: &final_texture_data.texture_view,
+        //             resolve_target: None,
+        //             ops: wgpu::Operations {
+        //                 load: wgpu::LoadOp::Load,
+        //                 store: wgpu::StoreOp::Store,
+        //             },
+        //         })],
+        //         depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+        //             view: &depth_texture.view,
+        //             depth_ops: Some(wgpu::Operations {
+        //                 load: wgpu::LoadOp::Clear(1.0),
+        //                 store: wgpu::StoreOp::Store,
+        //             }),
+        //             stencil_ops: None,
+        //         }),
+        //         occlusion_query_set: None,
+        //         timestamp_writes: None,
+        //     };
 
-            let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
+        //     let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
 
-            for viewport in viewports {
-                let extend = viewport.max - viewport.min;
-                render_pass.set_viewport(
-                    viewport.min.x,
-                    viewport.min.y,
-                    extend.x,
-                    extend.y,
-                    0.0,
-                    1.0,
-                );
-                render_pass.set_scissor_rect(
-                    viewport.min.x as u32,
-                    viewport.min.y as u32,
-                    extend.x as u32,
-                    extend.y as u32,
-                );
+        //     for viewport in viewports {
+        //         let extend = viewport.max - viewport.min;
+        //         render_pass.set_viewport(
+        //             viewport.min.x,
+        //             viewport.min.y,
+        //             extend.x,
+        //             extend.y,
+        //             0.0,
+        //             1.0,
+        //         );
+        //         render_pass.set_scissor_rect(
+        //             viewport.min.x as u32,
+        //             viewport.min.y as u32,
+        //             extend.x as u32,
+        //             extend.y as u32,
+        //         );
 
-                render_pass.set_bind_group(0, viewport.global_bind_group, &[]);
+        //         render_pass.set_bind_group(0, viewport.global_bind_group, &[]);
 
-                render_pass::surface_3d_render_pass_with_depth(
-                    viewport.render_data,
-                    &self.render_pipeline_cache,
-                    &mut render_pass,
-                );
+        //         render_pass::surface_3d_render_pass_with_depth(
+        //             viewport.render_data,
+        //             &self.render_pipeline_cache,
+        //             &mut render_pass,
+        //         );
 
-                render_pass::wireframe_3d_render_pass(
-                    viewport.render_data,
-                    &self.render_pipeline_cache,
-                    &mut render_pass,
-                );
-            }
-        }
+        //         render_pass::wireframe_3d_render_pass(
+        //             viewport.render_data,
+        //             &self.render_pipeline_cache,
+        //             &mut render_pass,
+        //         );
+        //     }
+        // }
 
         if let Some(buffer) = &self.output_buffer {
             let u32_size = std::mem::size_of::<u32>() as u32;
