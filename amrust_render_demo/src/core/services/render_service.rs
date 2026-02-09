@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use amrust_render::{
-    RenderDatabase,
     camera::{CameraData, CameraTransform, OrthographicCameraData},
     renderer::{RenderTextureData, Renderer},
 };

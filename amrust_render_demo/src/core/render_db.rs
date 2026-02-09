@@ -1,4 +1,4 @@
-use amrust_render::{RenderData3d, RenderDatabase, Renderable3d, gpu_mesh::GpuMesh, instance};
+use amrust_render::{RenderData3d, Renderable3d, gpu_mesh::GpuMesh, instance};
 use slotmap::{SlotMap, new_key_type};
 
 pub struct RenderObject {
@@ -133,10 +133,8 @@ impl RenderDb {
 
     //     (self.local_bind_groups.len() - 1) as u32
     // }
-}
 
-impl RenderDatabase for RenderDb {
-    fn get_renderables<'a>(&'a self) -> impl Iterator<Item = RenderData3d<'a>> {
+    pub fn get_renderables<'a>(&'a self) -> impl Iterator<Item = RenderData3d<'a>> {
         self.objects.iter().filter_map(|(id, render_object)| {
             if self.objects_to_render.contains(&id) {
                 let gpu_mesh = self.meshes.get(render_object.gpu_mesh_id).unwrap();
