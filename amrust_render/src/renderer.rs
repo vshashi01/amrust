@@ -484,9 +484,9 @@ impl Renderer {
 
         self.texture_size = texture_size;
 
-        self.screen_space_data
-            .update_size(width as f32, height as f32);
-        self.screen_space_data.write_buffer(&self.queue);
+        // self.screen_space_data
+        //     .update_size(width as f32, height as f32);
+        // self.screen_space_data.write_buffer(&self.queue);
     }
 
     pub fn create_render_texture_data(&self) -> RenderTextureData {
