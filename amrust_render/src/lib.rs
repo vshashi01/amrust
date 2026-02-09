@@ -54,10 +54,6 @@ pub struct RenderData3d<'a> {
     pub local_bind_groups: Vec<(&'a wgpu::BindGroup, u32)>,
 }
 
-pub trait RenderDatabase {
-    fn get_renderables<'a>(&'a self) -> impl Iterator<Item = RenderData3d<'a>>;
-}
-
 #[cfg(test)]
 mod tests {
     use std::{cmp::Ordering, path::PathBuf};
@@ -1213,9 +1209,7 @@ mod tests {
 
             (self.local_bind_groups.len() - 1) as u32
         }
-    }
 
-    impl RenderDatabase for TestRenderDb {
         fn get_renderables<'a>(&'a self) -> impl Iterator<Item = RenderData3d<'a>> {
             self.objects.iter().map(|r| {
                 let gpu_mesh = self.meshes.get(r.gpu_mesh_id as usize).unwrap();
