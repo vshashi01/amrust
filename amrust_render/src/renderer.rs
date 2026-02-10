@@ -20,6 +20,13 @@ pub struct RenderTextureData {
     pub texture_view: wgpu::TextureView,
     pub texture_size: wgpu::Extent3d,
     pub texture_sampler: wgpu::Sampler,
+    pub texture_format: wgpu::TextureFormat,
+}
+
+pub enum RenderMode<'a> {
+    DrawToBuffer(&'a wgpu::Buffer, wgpu::Extent3d, wgpu::TextureFormat),
+    DrawToTexture(&'a RenderTextureData),
+    //DrawToWindow //for future
 }
 
 pub struct Renderer {
@@ -28,7 +35,7 @@ pub struct Renderer {
 
     // properties related to the render surface
     output_buffer: Option<wgpu::Buffer>,
-    texture_size: wgpu::Extent3d,
+    //texture_size: wgpu::Extent3d,
     texture_format: wgpu::TextureFormat, //stored for future dynamic render pipeline creation
 
     // internal rendering resources
@@ -37,8 +44,8 @@ pub struct Renderer {
     pub texture_bind_group_layout: wgpu::BindGroupLayout,
     pub texture_sampler: wgpu::Sampler,
     pub texture_array_bind_group_layout: wgpu::BindGroupLayout,
-    camera: Camera,
-    screen_space_data: ScreenSpace,
+    //camera: Camera,
+    //screen_space_data: ScreenSpace,
     composite_frag_uniform_buffer: wgpu::Buffer,
     composite_frag_uniform: CompositeFragUniform,
 
@@ -453,14 +460,14 @@ impl Renderer {
             device,
             queue,
             output_buffer,
-            texture_size,
+            //texture_size,
             texture_format,
             global_bind_groups: Vec::new(),
             texture_bind_group_layout: basic_texture_bind_group_layout,
             texture_array_bind_group_layout,
             texture_sampler,
-            camera,
-            screen_space_data,
+            //camera,
+            //screen_space_data,
             global_3d_pass_bind_group: global_bind_group,
             composite_frag_uniform_buffer,
             composite_frag_uniform,
@@ -468,44 +475,19 @@ impl Renderer {
         })
     }
 
-    pub fn set_size(&mut self, width: u32, height: u32) {
-        let texture_size = wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        };
+    // pub fn set_size(&mut self, width: u32, height: u32) {
+    //     let texture_size = wgpu::Extent3d {
+    //         width,
+    //         height,
+    //         depth_or_array_layers: 1,
+    //     };
 
-        self.texture_size = texture_size;
+    //     self.texture_size = texture_size;
 
-        self.screen_space_data
-            .update_size(width as f32, height as f32);
-        self.screen_space_data.write_buffer(&self.queue);
-    }
-
-    pub fn create_render_texture_data(&self) -> RenderTextureData {
-        let texture_desc = wgpu::TextureDescriptor {
-            size: self.texture_size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: self.texture_format,
-            usage: wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING,
-            label: None,
-            view_formats: &[],
-        };
-        let texture = self.device.create_texture(&texture_desc);
-        let texture_view = texture.create_view(&Default::default());
-        let texture_sampler = self.device.create_sampler(&Default::default());
-
-        RenderTextureData {
-            texture,
-            texture_view,
-            texture_size: self.texture_size,
-            texture_sampler,
-        }
-    }
+    //     self.screen_space_data
+    //         .update_size(width as f32, height as f32);
+    //     self.screen_space_data.write_buffer(&self.queue);
+    // }
 
     pub fn add_global_bind_group(&mut self, bind_group: wgpu::BindGroup) -> u32 {
         self.global_bind_groups.push(bind_group);
@@ -513,10 +495,10 @@ impl Renderer {
         (self.global_bind_groups.len() - 1) as u32
     }
 
-    pub fn update_camera(&mut self, camera_data: &impl CameraData) {
-        self.camera.update(camera_data);
-        self.camera.write_buffer(&self.queue);
-    }
+    // pub fn update_camera(&mut self, camera_data: &impl CameraData) {
+    //     self.camera.update(camera_data);
+    //     self.camera.write_buffer(&self.queue);
+    // }
 
     pub fn set_highlight_pixels(&mut self, px_thickness: u32) {
         self.composite_frag_uniform.highlight_pixel_size = px_thickness as i32;
@@ -533,7 +515,12 @@ impl Renderer {
         render_texture_data: &RenderTextureData,
     ) -> Result<(), WgpuError> {
         //ToDO: validate the texture size
-        Self::render_internal(self, render_data, Some(render_texture_data)).await
+        Self::render_internal(
+            self,
+            render_data,
+            RenderMode::DrawToTexture(render_texture_data),
+        )
+        .await
     }
 
     pub async fn render<'a>(&self, render_data: &[RenderData3d<'a>]) -> Result<(), WgpuError> {
@@ -543,15 +530,25 @@ impl Renderer {
     async fn render_internal<'a>(
         &self,
         render_data: &[RenderData3d<'a>],
-        render_texture_data: Option<&RenderTextureData>,
+        //render_texture_data: Option<&RenderTextureData>,
+        render_mode: RenderMode<'a>,
     ) -> Result<(), WgpuError> {
-        let final_texture_data = match render_texture_data {
-            Some(data) => data,
-            None => &self.create_render_texture_data(),
+        let final_texture_data = match &render_mode {
+            RenderMode::DrawToBuffer(buffer, extent3d, format) => {
+                &create_texture_data(&self.device, *extent3d, *format)
+            }
+            RenderMode::DrawToTexture(render_texture_data) => render_texture_data,
         };
 
-        let depth_texture =
-            texture::DepthTexture::create_depth_texture(&self.device, self.texture_size);
+        // let final_texture_data = match render_texture_data {
+        //     Some(data) => data,
+        //     None => &create_texture_data(&self.device, self.texture_size, self.texture_format),
+        // };
+
+        let depth_texture = texture::DepthTexture::create_depth_texture(
+            &self.device,
+            final_texture_data.texture_size,
+        );
 
         let mut encoder = self
             .device
@@ -564,57 +561,15 @@ impl Renderer {
         let color_data = if use_final_texture_data {
             final_texture_data
         } else {
-            &create_texture_data(&self.device, self.texture_size, self.texture_format)
+            &create_texture_data(
+                &self.device,
+                final_texture_data.texture_size,
+                final_texture_data.texture_format,
+            )
         };
 
         // standard render pass
-        {
-            let render_pass_desc = wgpu::RenderPassDescriptor {
-                label: Some("Surface Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &color_data.texture_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.1,
-                            g: 0.2,
-                            b: 0.3,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &depth_texture.view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            };
-            let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
-
-            render_pass.set_bind_group(0, &self.global_3d_pass_bind_group, &[]);
-            // set up global bind groups
-            for (i, bind_group) in self.global_bind_groups.iter().enumerate() {
-                render_pass.set_bind_group((i + 1) as u32, bind_group, &[]);
-            }
-
-            render_pass::surface_3d_render_pass_with_depth(
-                render_data,
-                &self.render_pipeline_cache,
-                &mut render_pass,
-            );
-
-            render_pass::wireframe_3d_render_pass(
-                render_data,
-                &self.render_pipeline_cache,
-                &mut render_pass,
-            );
-        }
+        self.main_render_pass(render_data, &depth_texture, &mut encoder, color_data);
 
         // screen space pass without depth
         if render_data.iter().any(|d| {
@@ -627,41 +582,7 @@ impl Renderer {
                 false
             }
         }) {
-            let render_pass_desc = wgpu::RenderPassDescriptor {
-                label: Some("Screen Space Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &color_data.texture_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            };
-            let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
-
-            render_pass.set_bind_group(0, &self.global_3d_pass_bind_group, &[]);
-            // set up global bind groups
-            for (i, bind_group) in self.global_bind_groups.iter().enumerate() {
-                render_pass.set_bind_group((i + 1) as u32, bind_group, &[]);
-            }
-
-            render_pass::screen_space_colored_mesh_pass(
-                render_data,
-                &self.render_pipeline_cache,
-                &mut render_pass,
-                false,
-            );
-
-            render_pass::screen_space_wireframe_pass(
-                render_data,
-                &self.render_pipeline_cache,
-                &mut render_pass,
-                false,
-            );
+            self.screen_space_render_pass(render_data, &mut encoder, color_data);
         }
 
         //mask render pass for selected meshes
@@ -669,88 +590,13 @@ impl Renderer {
             .iter()
             .any(|d| matches!(d.renderable, crate::Renderable3d::SilhouetteMesh))
         {
-            let selection_mask_tex = create_texture_data(
-                &self.device,
-                final_texture_data.texture_size,
-                wgpu::TextureFormat::R8Unorm,
+            self.silhouette_and_composite_mask(
+                render_data,
+                final_texture_data,
+                depth_texture,
+                &mut encoder,
+                color_data,
             );
-            {
-                let render_pass_desc = wgpu::RenderPassDescriptor {
-                    label: Some("Silhoutte Mesh Pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &selection_mask_tex.texture_view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &depth_texture.view,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(1.0),
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
-                    }), //ToDo: revisit depth later
-                    occlusion_query_set: None,
-                    timestamp_writes: None,
-                };
-                let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
-
-                render_pass.set_bind_group(0, &self.global_3d_pass_bind_group, &[]);
-                // set up global bind groups
-                for (i, bind_group) in self.global_bind_groups.iter().enumerate() {
-                    render_pass.set_bind_group((i + 1) as u32, bind_group, &[]);
-                }
-
-                // let renderables = render_db.get_renderables().collect::<Vec<_>>();
-
-                render_pass::silhoutte_pass(
-                    render_data,
-                    &self.render_pipeline_cache,
-                    &mut render_pass,
-                );
-            }
-
-            // composite of textures
-            {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("Composite Pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &final_texture_data.texture_view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    occlusion_query_set: None,
-                    timestamp_writes: None,
-                });
-
-                pass.set_pipeline(
-                    self.render_pipeline_cache
-                        .get(constants::COMPOSITE_PASS_PIPELINE)
-                        .unwrap(),
-                );
-                pass.set_bind_group(
-                    0,
-                    &composite::create_composite_bind_group(
-                        &self.device,
-                        &composite::get_composite_pipeline_bind_group_layout(&self.device),
-                        &color_data.texture_view,
-                        &color_data.texture_sampler,
-                        &selection_mask_tex.texture_view,
-                        &selection_mask_tex.texture_sampler,
-                        self.composite_frag_uniform_buffer
-                            .as_entire_buffer_binding(),
-                    ),
-                    &[],
-                );
-                pass.draw(0..3, 0..1);
-            }
         }
 
         // sub viewport render pass always on top
@@ -812,7 +658,7 @@ impl Renderer {
         //     }
         // }
 
-        if let Some(buffer) = &self.output_buffer {
+        if let RenderMode::DrawToBuffer(buffer, size, format) = &render_mode {
             let u32_size = std::mem::size_of::<u32>() as u32;
             encoder.copy_texture_to_buffer(
                 wgpu::TexelCopyTextureInfo {
@@ -825,11 +671,11 @@ impl Renderer {
                     buffer,
                     layout: wgpu::TexelCopyBufferLayout {
                         offset: 0,
-                        bytes_per_row: Some(u32_size * self.texture_size.width),
-                        rows_per_image: Some(self.texture_size.height),
+                        bytes_per_row: Some(u32_size * size.width),
+                        rows_per_image: Some(size.height),
                     },
                 },
-                self.texture_size,
+                *size,
             );
         }
 
@@ -838,51 +684,233 @@ impl Renderer {
         Ok(())
     }
 
-    pub async fn present(&mut self) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
-        match &self.output_buffer {
-            Some(buffer) => {
-                // We need to scope the mapping variables so that we can
-                // unmap the buffer
-                let image_buffer = {
-                    let buffer_slice = buffer.slice(..);
+    fn silhouette_and_composite_mask<'a>(
+        &self,
+        render_data: &[RenderData3d<'a>],
+        final_texture_data: &RenderTextureData,
+        depth_texture: texture::DepthTexture,
+        encoder: &mut wgpu::CommandEncoder,
+        color_data: &RenderTextureData,
+    ) {
+        let selection_mask_tex = create_texture_data(
+            &self.device,
+            final_texture_data.texture_size,
+            wgpu::TextureFormat::R8Unorm,
+        );
+        {
+            let render_pass_desc = wgpu::RenderPassDescriptor {
+                label: Some("Silhoutte Mesh Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &selection_mask_tex.texture_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth_texture.view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }), //ToDo: revisit depth later
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            };
+            let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
 
-                    // NOTE: We have to create the mapping THEN device.poll() before await
-                    // the future. Otherwise the application will freeze.
-                    let (tx, rx) = futures_intrusive::channel::shared::oneshot_channel();
-                    buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-                        tx.send(result).unwrap();
-                    });
-
-                    let result = self.device.poll(wgpu::PollType::Wait);
-
-                    match result {
-                        Ok(status) => {
-                            if status.wait_finished() {
-                                rx.receive().await.unwrap().unwrap();
-
-                                let data = buffer_slice.get_mapped_range();
-
-                                use image::{ImageBuffer, Rgba};
-
-                                ImageBuffer::<Rgba<u8>, _>::from_raw(
-                                    self.texture_size.width,
-                                    self.texture_size.height,
-                                    data.to_vec(),
-                                )
-                                .unwrap()
-                            } else {
-                                panic!("Polling GPU never returned");
-                            }
-                        }
-                        Err(e) => panic!("{}", e),
-                    }
-                };
-                buffer.unmap();
-
-                image_buffer
+            render_pass.set_bind_group(0, &self.global_3d_pass_bind_group, &[]);
+            // set up global bind groups
+            for (i, bind_group) in self.global_bind_groups.iter().enumerate() {
+                render_pass.set_bind_group((i + 1) as u32, bind_group, &[]);
             }
-            None => panic!("Output buffer is not set!"),
+
+            // let renderables = render_db.get_renderables().collect::<Vec<_>>();
+
+            render_pass::silhoutte_pass(render_data, &self.render_pipeline_cache, &mut render_pass);
         }
+
+        // composite of textures
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Composite Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &final_texture_data.texture_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+
+            pass.set_pipeline(
+                self.render_pipeline_cache
+                    .get(constants::COMPOSITE_PASS_PIPELINE)
+                    .unwrap(),
+            );
+            pass.set_bind_group(
+                0,
+                &composite::create_composite_bind_group(
+                    &self.device,
+                    &composite::get_composite_pipeline_bind_group_layout(&self.device),
+                    &color_data.texture_view,
+                    &color_data.texture_sampler,
+                    &selection_mask_tex.texture_view,
+                    &selection_mask_tex.texture_sampler,
+                    self.composite_frag_uniform_buffer
+                        .as_entire_buffer_binding(),
+                ),
+                &[],
+            );
+            pass.draw(0..3, 0..1);
+        }
+    }
+
+    fn screen_space_render_pass<'a>(
+        &self,
+        render_data: &[RenderData3d<'a>],
+        encoder: &mut wgpu::CommandEncoder,
+        color_data: &RenderTextureData,
+    ) {
+        let render_pass_desc = wgpu::RenderPassDescriptor {
+            label: Some("Screen Space Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &color_data.texture_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        };
+        let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
+
+        render_pass.set_bind_group(0, &self.global_3d_pass_bind_group, &[]);
+        // set up global bind groups
+        for (i, bind_group) in self.global_bind_groups.iter().enumerate() {
+            render_pass.set_bind_group((i + 1) as u32, bind_group, &[]);
+        }
+
+        render_pass::screen_space_colored_mesh_pass(
+            render_data,
+            &self.render_pipeline_cache,
+            &mut render_pass,
+            false,
+        );
+
+        render_pass::screen_space_wireframe_pass(
+            render_data,
+            &self.render_pipeline_cache,
+            &mut render_pass,
+            false,
+        );
+    }
+
+    fn main_render_pass<'a>(
+        &self,
+        render_data: &[RenderData3d<'a>],
+        depth_texture: &texture::DepthTexture,
+        encoder: &mut wgpu::CommandEncoder,
+        color_data: &RenderTextureData,
+    ) {
+        let render_pass_desc = wgpu::RenderPassDescriptor {
+            label: Some("Surface Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &color_data.texture_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.1,
+                        g: 0.2,
+                        b: 0.3,
+                        a: 1.0,
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth_texture.view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        };
+        let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
+        render_pass.set_bind_group(0, &self.global_3d_pass_bind_group, &[]);
+        // set up global bind groups
+        for (i, bind_group) in self.global_bind_groups.iter().enumerate() {
+            render_pass.set_bind_group((i + 1) as u32, bind_group, &[]);
+        }
+        render_pass::surface_3d_render_pass_with_depth(
+            render_data,
+            &self.render_pipeline_cache,
+            &mut render_pass,
+        );
+        render_pass::wireframe_3d_render_pass(
+            render_data,
+            &self.render_pipeline_cache,
+            &mut render_pass,
+        );
+    }
+
+    pub async fn present(
+        &mut self,
+        output_buffer: &wgpu::Buffer,
+        size: wgpu::Extent3d,
+    ) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
+        // match &self.output_buffer {
+        //     Some(buffer) => {
+        // We need to scope the mapping variables so that we can
+        // unmap the buffer
+        let image_buffer = {
+            let buffer_slice = output_buffer.slice(..);
+
+            // NOTE: We have to create the mapping THEN device.poll() before await
+            // the future. Otherwise the application will freeze.
+            let (tx, rx) = futures_intrusive::channel::shared::oneshot_channel();
+            buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+                tx.send(result).unwrap();
+            });
+
+            let result = self.device.poll(wgpu::PollType::Wait);
+
+            match result {
+                Ok(status) => {
+                    if status.wait_finished() {
+                        rx.receive().await.unwrap().unwrap();
+
+                        let data = buffer_slice.get_mapped_range();
+
+                        use image::{ImageBuffer, Rgba};
+
+                        ImageBuffer::<Rgba<u8>, _>::from_raw(size.width, size.height, data.to_vec())
+                            .unwrap()
+                    } else {
+                        panic!("Polling GPU never returned");
+                    }
+                }
+                Err(e) => panic!("{}", e),
+            }
+        };
+        output_buffer.unmap();
+
+        image_buffer
+        //     }
+        //     None => panic!("Output buffer is not set!"),
+        // }
     }
 }
 
@@ -912,6 +940,7 @@ pub fn create_texture_data(
         texture_view,
         texture_size: size,
         texture_sampler,
+        texture_format: format,
     }
 }
 

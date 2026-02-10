@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use amrust_render::{
     camera::{CameraData, CameraTransform, OrthographicCameraData},
-    renderer::{RenderTextureData, Renderer},
+    renderer::{self, RenderTextureData, Renderer},
 };
 use glam::Mat4;
 use smol::{
@@ -28,6 +28,10 @@ pub enum RenderServiceResponse {
 pub struct RenderService {
     renderer: Renderer,
     camera: OrthographicCameraData,
+    device: wgpu::Device,
+    format: wgpu::TextureFormat,
+    width: u32,
+    height: u32,
 
     receiver: Receiver<RenderServiceRequest>,
     sender: Sender<RenderServiceResponse>,
@@ -53,7 +57,7 @@ impl RenderService {
         sender: Sender<RenderServiceResponse>,
     ) -> Self {
         match Renderer::from_existing_device_and_queue(
-            renderer_settings.device,
+            renderer_settings.device.clone(),
             renderer_settings.queue,
             renderer_settings.format,
             renderer_settings.width,
@@ -64,11 +68,23 @@ impl RenderService {
             // match Renderer::from_new_device(renderer_settings.width, renderer_settings.height).await {
             Ok(mut renderer) => {
                 renderer.update_camera(&renderer_settings.initial_camera_data);
-                let render_texture_data = renderer.create_render_texture_data();
+                let render_texture_data = renderer::create_texture_data(
+                    &renderer_settings.device,
+                    wgpu::Extent3d {
+                        width: renderer_settings.width,
+                        height: renderer_settings.height,
+                        depth_or_array_layers: 1,
+                    },
+                    renderer_settings.format,
+                );
 
                 Self {
                     renderer,
                     receiver,
+                    device: renderer_settings.device,
+                    format: renderer_settings.format,
+                    width: renderer_settings.width,
+                    height: renderer_settings.height,
                     sender,
                     render_texture_data,
                     render_db,
@@ -113,8 +129,18 @@ impl RenderService {
                         self.update_camera().await;
                     }
                     RenderServiceRequest::ResizeViewport(width, height) => {
+                        self.width = width;
+                        self.height = height;
                         self.renderer.set_size(width, height);
-                        self.render_texture_data = self.renderer.create_render_texture_data();
+                        self.render_texture_data = renderer::create_texture_data(
+                            &self.device,
+                            wgpu::Extent3d {
+                                width,
+                                height,
+                                depth_or_array_layers: 1,
+                            },
+                            self.format,
+                        );
 
                         if let Err(err) = self
                             .sender
