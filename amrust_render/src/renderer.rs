@@ -591,65 +591,6 @@ impl Renderer {
             );
         }
 
-        // sub viewport render pass always on top
-        // if let Some(viewports) = sub_viewport {
-        //     let render_pass_desc = wgpu::RenderPassDescriptor {
-        //         label: Some("Screen Space Render Pass"),
-        //         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-        //             view: &final_texture_data.texture_view,
-        //             resolve_target: None,
-        //             ops: wgpu::Operations {
-        //                 load: wgpu::LoadOp::Load,
-        //                 store: wgpu::StoreOp::Store,
-        //             },
-        //         })],
-        //         depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-        //             view: &depth_texture.view,
-        //             depth_ops: Some(wgpu::Operations {
-        //                 load: wgpu::LoadOp::Clear(1.0),
-        //                 store: wgpu::StoreOp::Store,
-        //             }),
-        //             stencil_ops: None,
-        //         }),
-        //         occlusion_query_set: None,
-        //         timestamp_writes: None,
-        //     };
-
-        //     let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
-
-        //     for viewport in viewports {
-        //         let extend = viewport.max - viewport.min;
-        //         render_pass.set_viewport(
-        //             viewport.min.x,
-        //             viewport.min.y,
-        //             extend.x,
-        //             extend.y,
-        //             0.0,
-        //             1.0,
-        //         );
-        //         render_pass.set_scissor_rect(
-        //             viewport.min.x as u32,
-        //             viewport.min.y as u32,
-        //             extend.x as u32,
-        //             extend.y as u32,
-        //         );
-
-        //         render_pass.set_bind_group(0, viewport.global_bind_group, &[]);
-
-        //         render_pass::surface_3d_render_pass_with_depth(
-        //             viewport.render_data,
-        //             &self.render_pipeline_cache,
-        //             &mut render_pass,
-        //         );
-
-        //         render_pass::wireframe_3d_render_pass(
-        //             viewport.render_data,
-        //             &self.render_pipeline_cache,
-        //             &mut render_pass,
-        //         );
-        //     }
-        // }
-
         if let RenderMode::DrawToBuffer(buffer, size) = &render_mode {
             let u32_size = std::mem::size_of::<u32>() as u32;
             encoder.copy_texture_to_buffer(
