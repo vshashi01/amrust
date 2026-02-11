@@ -29,6 +29,20 @@ pub struct FrameViewData {
     pub screen_space_data: ScreenSpace,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ViewportRect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+pub struct RenderView<'a, 'fv> {
+    pub rect: Option<ViewportRect>,
+    pub render_data: &'a [RenderData3d<'a>],
+    pub frame_view_data: &'fv FrameViewData,
+}
+
 impl FrameViewData {
     pub fn new(device: &wgpu::Device, initial_frame_width: f32, initial_frame_height: f32) -> Self {
         let camera = Camera::new(device);
@@ -63,9 +77,9 @@ impl FrameViewData {
     }
 }
 
-enum RenderMode<'a> {
-    DrawToBuffer(&'a wgpu::Buffer, wgpu::Extent3d),
-    DrawToTexture(&'a RenderTextureData),
+enum RenderMode<'rm> {
+    DrawToBuffer(&'rm wgpu::Buffer, wgpu::Extent3d),
+    DrawToTexture(&'rm RenderTextureData),
     //DrawToWindow //for future
 }
 
@@ -483,13 +497,22 @@ impl Renderer {
         render_texture_data: &RenderTextureData,
         frame_view_data: &FrameViewData,
     ) -> Result<(), WgpuError> {
-        Self::render_internal(
-            self,
+        let view = RenderView {
+            rect: None,
             render_data,
-            RenderMode::DrawToTexture(render_texture_data),
             frame_view_data,
-        )
-        .await
+        };
+        self.render_views_internal(std::slice::from_ref(&view), RenderMode::DrawToTexture(render_texture_data))
+            .await
+    }
+
+    pub async fn render_views_to_texture<'a, 'fv>(
+        &self,
+        views: &[RenderView<'a, 'fv>],
+        render_texture_data: &RenderTextureData,
+    ) -> Result<(), WgpuError> {
+        self.render_views_internal(views, RenderMode::DrawToTexture(render_texture_data))
+            .await
     }
 
     pub async fn render_and_return_as_image_buffer<'a>(
@@ -499,12 +522,14 @@ impl Renderer {
         size: wgpu::Extent3d,
         frame_view_data: &FrameViewData,
     ) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>, WgpuError> {
+        let view = RenderView {
+            rect: None,
+            render_data,
+            frame_view_data,
+        };
+
         match self
-            .render_internal(
-                render_data,
-                RenderMode::DrawToBuffer(output_buffer, size),
-                frame_view_data,
-            )
+            .render_views_internal(std::slice::from_ref(&view), RenderMode::DrawToBuffer(output_buffer, size))
             .await
         {
             Ok(_) => Ok(self.present(output_buffer, size).await),
@@ -512,11 +537,25 @@ impl Renderer {
         }
     }
 
-    async fn render_internal<'a>(
+    pub async fn render_views_and_return_as_image_buffer<'a, 'fv>(
         &self,
-        render_data: &[RenderData3d<'a>],
-        render_mode: RenderMode<'a>,
-        frame_view_data: &FrameViewData,
+        views: &[RenderView<'a, 'fv>],
+        output_buffer: &wgpu::Buffer,
+        size: wgpu::Extent3d,
+    ) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>, WgpuError> {
+        match self
+            .render_views_internal(views, RenderMode::DrawToBuffer(output_buffer, size))
+            .await
+        {
+            Ok(_) => Ok(self.present(output_buffer, size).await),
+            Err(err) => Err(err),
+        }
+    }
+
+    async fn render_views_internal<'a, 'fv, 'rm>(
+        &self,
+        views: &[RenderView<'a, 'fv>],
+        render_mode: RenderMode<'rm>,
     ) -> Result<(), WgpuError> {
         let final_texture_data = match &render_mode {
             RenderMode::DrawToBuffer(_, extent3d) => {
@@ -534,61 +573,126 @@ impl Renderer {
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
-        let use_final_texture_data = render_data
-            .iter()
-            .all(|d| !matches!(d.renderable, Renderable3d::SilhouetteMesh));
+        let any_silhouette = views.iter().any(|v| {
+            v.render_data
+                .iter()
+                .any(|d| matches!(d.renderable, Renderable3d::SilhouetteMesh))
+        });
 
-        let color_data = if use_final_texture_data {
-            final_texture_data
-        } else {
-            &create_texture_data(
+        let intermediate_color_data = if any_silhouette {
+            Some(create_texture_data(
                 &self.device,
                 final_texture_data.texture_size,
                 final_texture_data.texture_format,
-            )
+            ))
+        } else {
+            None
         };
 
-        // standard render pass
-        self.main_render_pass(
-            render_data,
-            &depth_texture,
-            &mut encoder,
-            color_data,
-            &frame_view_data.bind_group,
-        );
+        for (view_index, view) in views.iter().enumerate() {
+            let has_silhouette = view
+                .render_data
+                .iter()
+                .any(|d| matches!(d.renderable, Renderable3d::SilhouetteMesh));
 
-        // screen space pass without depth
-        if render_data.iter().any(|d| {
-            if let Renderable3d::ScreenSpaceWireframeMesh { depth_testing, .. } = d.renderable {
-                !depth_testing
-            } else if let Renderable3d::ScreenSpaceColoredMesh { depth_testing, .. } = d.renderable
-            {
-                !depth_testing
+            if has_silhouette {
+                let color_data = intermediate_color_data.as_ref().unwrap();
+
+                // standard render pass into intermediate texture
+                self.main_render_pass(
+                    view.render_data,
+                    view.rect,
+                    &depth_texture,
+                    &mut encoder,
+                    color_data,
+                    &view.frame_view_data.bind_group,
+                    wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.1,
+                        g: 0.2,
+                        b: 0.3,
+                        a: 1.0,
+                    }),
+                );
+
+                // screen space pass without depth
+                if view.render_data.iter().any(|d| {
+                    if let Renderable3d::ScreenSpaceWireframeMesh { depth_testing, .. } =
+                        d.renderable
+                    {
+                        !depth_testing
+                    } else if let Renderable3d::ScreenSpaceColoredMesh { depth_testing, .. } =
+                        d.renderable
+                    {
+                        !depth_testing
+                    } else {
+                        false
+                    }
+                }) {
+                    self.screen_space_render_pass(
+                        view.render_data,
+                        view.rect,
+                        &mut encoder,
+                        color_data,
+                        &view.frame_view_data.bind_group,
+                    );
+                }
+
+                // mask render pass for selected meshes + composite into final
+                self.silhouette_and_composite_mask(
+                    view.render_data,
+                    view.rect,
+                    final_texture_data,
+                    &depth_texture,
+                    &mut encoder,
+                    color_data,
+                    &view.frame_view_data.bind_group,
+                );
             } else {
-                false
-            }
-        }) {
-            self.screen_space_render_pass(
-                render_data,
-                &mut encoder,
-                color_data,
-                &frame_view_data.bind_group,
-            );
-        }
+                let color_load = if view_index == 0 {
+                    wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.1,
+                        g: 0.2,
+                        b: 0.3,
+                        a: 1.0,
+                    })
+                } else {
+                    wgpu::LoadOp::Load
+                };
 
-        //mask render pass for selected meshes
-        if render_data
-            .iter()
-            .any(|d| matches!(d.renderable, crate::Renderable3d::SilhouetteMesh))
-        {
-            self.silhouette_and_composite_mask(
-                render_data,
-                final_texture_data,
-                depth_texture,
-                &mut encoder,
-                color_data,
-                &frame_view_data.bind_group,
-            );
+                // standard render pass directly into final texture
+                self.main_render_pass(
+                    view.render_data,
+                    view.rect,
+                    &depth_texture,
+                    &mut encoder,
+                    final_texture_data,
+                    &view.frame_view_data.bind_group,
+                    color_load,
+                );
+
+                // screen space pass without depth
+                if view.render_data.iter().any(|d| {
+                    if let Renderable3d::ScreenSpaceWireframeMesh { depth_testing, .. } =
+                        d.renderable
+                    {
+                        !depth_testing
+                    } else if let Renderable3d::ScreenSpaceColoredMesh { depth_testing, .. } =
+                        d.renderable
+                    {
+                        !depth_testing
+                    } else {
+                        false
+                    }
+                }) {
+                    self.screen_space_render_pass(
+                        view.render_data,
+                        view.rect,
+                        &mut encoder,
+                        final_texture_data,
+                        &view.frame_view_data.bind_group,
+                    );
+                }
+            }
         }
 
         if let RenderMode::DrawToBuffer(buffer, size) = &render_mode {
@@ -620,8 +724,9 @@ impl Renderer {
     fn silhouette_and_composite_mask<'a>(
         &self,
         render_data: &[RenderData3d<'a>],
+        rect: Option<ViewportRect>,
         final_texture_data: &RenderTextureData,
-        depth_texture: texture::DepthTexture,
+        depth_texture: &texture::DepthTexture,
         encoder: &mut wgpu::CommandEncoder,
         color_data: &RenderTextureData,
         global_bind_group: &wgpu::BindGroup,
@@ -655,6 +760,8 @@ impl Renderer {
             };
             let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
 
+            Self::apply_viewport_rect(&mut render_pass, rect);
+
             render_pass.set_bind_group(0, global_bind_group, &[]);
 
             render_pass::silhoutte_pass(render_data, &self.render_pipeline_cache, &mut render_pass);
@@ -668,7 +775,7 @@ impl Renderer {
                     view: &final_texture_data.texture_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -676,6 +783,8 @@ impl Renderer {
                 occlusion_query_set: None,
                 timestamp_writes: None,
             });
+
+            Self::apply_viewport_rect(&mut pass, rect);
 
             pass.set_pipeline(
                 self.render_pipeline_cache
@@ -703,6 +812,7 @@ impl Renderer {
     fn screen_space_render_pass<'a>(
         &self,
         render_data: &[RenderData3d<'a>],
+        rect: Option<ViewportRect>,
         encoder: &mut wgpu::CommandEncoder,
         color_data: &RenderTextureData,
         global_bind_group: &wgpu::BindGroup,
@@ -722,6 +832,8 @@ impl Renderer {
             timestamp_writes: None,
         };
         let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
+
+        Self::apply_viewport_rect(&mut render_pass, rect);
 
         render_pass.set_bind_group(0, global_bind_group, &[]);
         // set up global bind groups
@@ -747,10 +859,12 @@ impl Renderer {
     fn main_render_pass<'a>(
         &self,
         render_data: &[RenderData3d<'a>],
+        rect: Option<ViewportRect>,
         depth_texture: &texture::DepthTexture,
         encoder: &mut wgpu::CommandEncoder,
         color_data: &RenderTextureData,
         global_bind_group: &wgpu::BindGroup,
+        color_load: wgpu::LoadOp<wgpu::Color>,
     ) {
         let render_pass_desc = wgpu::RenderPassDescriptor {
             label: Some("Surface Render Pass"),
@@ -758,12 +872,7 @@ impl Renderer {
                 view: &color_data.texture_view,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.1,
-                        g: 0.2,
-                        b: 0.3,
-                        a: 1.0,
-                    }),
+                    load: color_load,
                     store: wgpu::StoreOp::Store,
                 },
             })],
@@ -779,6 +888,8 @@ impl Renderer {
             timestamp_writes: None,
         };
         let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
+
+        Self::apply_viewport_rect(&mut render_pass, rect);
         render_pass.set_bind_group(0, global_bind_group, &[]);
         // set up global bind groups
         for (i, bind_group) in self.global_bind_groups.iter().enumerate() {
@@ -794,6 +905,22 @@ impl Renderer {
             &self.render_pipeline_cache,
             &mut render_pass,
         );
+    }
+
+    fn apply_viewport_rect(render_pass: &mut wgpu::RenderPass<'_>, rect: Option<ViewportRect>) {
+        let Some(rect) = rect else {
+            return;
+        };
+
+        render_pass.set_viewport(
+            rect.x as f32,
+            rect.y as f32,
+            rect.width as f32,
+            rect.height as f32,
+            0.0,
+            1.0,
+        );
+        render_pass.set_scissor_rect(rect.x, rect.y, rect.width, rect.height);
     }
 
     async fn present(

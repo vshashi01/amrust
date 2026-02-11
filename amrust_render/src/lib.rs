@@ -237,75 +237,94 @@ mod tests {
         });
     }
 
-    // #[test]
-    // fn test_box_with_vertex_color_with_sub_viewport() {
-    //     pollster::block_on(async {
-    //         let mut renderer = renderer::Renderer::from_new_device()
-    //             .await
-    //             .unwrap();
+    #[test]
+    fn test_box_with_vertex_color_with_sub_viewport() {
+        pollster::block_on(async {
+            let renderer = renderer::Renderer::from_new_device().await.unwrap();
 
-    //         let mut main_render_db = TestRenderDb::new(&renderer.device);
-    //         let (_mesh_object_id, _wireframe_object_id) =
-    //             set_colored_mesh_object(&renderer.device, &mut main_render_db);
+            let mut main_frame_view_data =
+                renderer.create_frame_view_data(TEXTURE_WIDTH, TEXTURE_HEIGHT);
+            main_frame_view_data
+                .camera
+                .update(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
+            renderer.write_frame_view_data_to_gpu(&main_frame_view_data);
 
-    //         renderer.update_camera(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
-    //         let main_render_data = main_render_db.get_renderables().collect::<Vec<_>>();
+            let read_buffer =
+                renderer::create_read_buffer(&renderer.device, TEXTURE_WIDTH, TEXTURE_HEIGHT);
 
-    //         let mut secondary_render_db = TestRenderDb::new(&renderer.device);
-    //         set_simple_mesh(&renderer.device, &mut secondary_render_db);
-    //         set_wcs_gizmo(&renderer.device, &mut secondary_render_db);
-    //         let secondary_render_data = secondary_render_db.get_renderables().collect::<Vec<_>>();
+            let mut main_render_db = TestRenderDb::new(&renderer.device);
+            let (_mesh_object_id, _wireframe_object_id) =
+                set_colored_mesh_object(&renderer.device, &mut main_render_db);
+            let main_render_data = main_render_db.get_renderables().collect::<Vec<_>>();
 
-    //         let mut subviewport_camera = camera::Camera::new(&renderer.device);
-    //         let mut camera_data = OrthographicCameraData {
-    //             aspect_ratio: 400_f32 / 400_f32,
-    //             ..Default::default()
-    //         };
-    //         camera_data.copy_rotation_component(&get_camera_data(400, 400));
-    //         subviewport_camera.update(&camera_data);
-    //         let subviewport_screen_space =
-    //             screen_space::ScreenSpace::new(&renderer.device, 400.0, 400.0);
+            let mut secondary_render_db = TestRenderDb::new(&renderer.device);
+            set_simple_mesh(&renderer.device, &mut secondary_render_db);
+            set_wcs_gizmo(&renderer.device, &mut secondary_render_db);
+            let secondary_render_data = secondary_render_db.get_renderables().collect::<Vec<_>>();
 
-    //         let subviewport_bind_group = renderer::create_global_3d_render_pass_bind_group(
-    //             &renderer.device,
-    //             &renderer::create_global_3d_render_pass_bind_group_layout(&renderer.device),
-    //             subviewport_camera.get_binding_reosurce(),
-    //             subviewport_screen_space.get_binding_resource(),
-    //         );
+            let mut subviewport_frame_view_data = renderer.create_frame_view_data(400, 400);
+            let mut camera_data = OrthographicCameraData {
+                aspect_ratio: 400_f32 / 400_f32,
+                ..Default::default()
+            };
+            camera_data.copy_rotation_component(&get_camera_data(400, 400));
+            subviewport_frame_view_data.update_viewport_size(400.0, 400.0, &camera_data);
+            renderer.write_frame_view_data_to_gpu(&subviewport_frame_view_data);
 
-    //         let _ = renderer
-    //             .render(
-    //                 &main_render_data,
-    //                 Some(&[renderer::Subviewport {
-    //                     min: glam::Vec2::new(0.0, 0.0),
-    //                     max: glam::Vec2::new(400.0, 400.0),
-    //                     global_bind_group: &subviewport_bind_group,
-    //                     render_data: &secondary_render_data,
-    //                 }]),
-    //             )
-    //             .await;
-    //         let image_buffer = renderer.present().await;
-    //         image_buffer
-    //             .save("tests/data/vertex_color_mesh_with_subviewport.png")
-    //             .unwrap();
+            let views = [
+                renderer::RenderView {
+                    rect: None,
+                    render_data: &main_render_data,
+                    frame_view_data: &main_frame_view_data,
+                },
+                renderer::RenderView {
+                    rect: Some(renderer::ViewportRect {
+                        x: 0,
+                        y: 0,
+                        width: 400,
+                        height: 400,
+                    }),
+                    render_data: &secondary_render_data,
+                    frame_view_data: &subviewport_frame_view_data,
+                },
+            ];
 
-    //         let ref_image_data = image::open(PathBuf::from("tests/data/vertex_color_mesh.png"))
-    //             .unwrap()
-    //             .into_rgba8();
+            let image_buffer = renderer
+                .render_views_and_return_as_image_buffer(
+                    &views,
+                    &read_buffer,
+                    wgpu::Extent3d {
+                        width: TEXTURE_WIDTH,
+                        height: TEXTURE_HEIGHT,
+                        depth_or_array_layers: 1,
+                    },
+                )
+                .await
+                .unwrap();
 
-    //         let ref_image =
-    //             nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &ref_image_data);
-    //         let test_image =
-    //             nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &image_buffer);
+            image_buffer
+                .save("tests/data/vertex_color_mesh_with_subviewport_actual.png")
+                .unwrap();
 
-    //         let error_map = nv_flip::flip(ref_image, test_image, DEFAULT_PIXELS_PER_DEGREE);
-    //         let pool = nv_flip::FlipPool::from_image(&error_map);
-    //         if let Some(Ordering::Greater) = pool.mean().partial_cmp(&FLIP_MEAN_ERROR) {
-    //             println!("Mean error {}", pool.mean());
-    //             panic!("Something is wrong with the Vertex colors")
-    //         }
-    //     });
-    // }
+            let ref_image_data = image::open(PathBuf::from(
+                "tests/data/vertex_color_mesh_with_subviewport.png",
+            ))
+            .unwrap()
+            .into_rgba8();
+
+            let ref_image =
+                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &ref_image_data);
+            let test_image =
+                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &image_buffer);
+
+            let error_map = nv_flip::flip(ref_image, test_image, DEFAULT_PIXELS_PER_DEGREE);
+            let pool = nv_flip::FlipPool::from_image(&error_map);
+            if let Some(Ordering::Greater) = pool.mean().partial_cmp(&FLIP_MEAN_ERROR) {
+                println!("Mean error {}", pool.mean());
+                panic!("Something is wrong with the Subviewport rendering")
+            }
+        });
+    }
 
     #[test]
     fn test_box_with_vertex_color_and_silhoutte() {
