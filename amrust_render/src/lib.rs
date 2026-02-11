@@ -14,17 +14,16 @@ pub mod material;
 pub mod normalized_axis_gizmo;
 pub mod normalized_box;
 pub mod renderer;
+pub mod screen_space;
 pub mod texture;
 pub mod transformation;
 pub mod vertex;
 
 // internal module
-// mod normalized_box;
 mod composite;
 mod constants;
 mod pipeline;
 mod render_pass;
-mod screen_space;
 
 #[derive(Debug, Error)]
 pub enum WgpuError {
@@ -82,18 +81,35 @@ mod tests {
     #[test]
     fn test_box_wireframe_only() {
         pollster::block_on(async {
-            let mut renderer = renderer::Renderer::from_new_device(TEXTURE_WIDTH, TEXTURE_HEIGHT)
-                .await
-                .unwrap();
+            let renderer = renderer::Renderer::from_new_device().await.unwrap();
+
+            let mut frame_view_data =
+                renderer.create_frame_view_data(TEXTURE_WIDTH, TEXTURE_HEIGHT);
+            frame_view_data
+                .camera
+                .update(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
+            renderer.write_frame_view_data_to_gpu(&frame_view_data);
+
+            let read_buffer =
+                renderer::create_read_buffer(&renderer.device, TEXTURE_WIDTH, TEXTURE_HEIGHT);
 
             let mut render_db = TestRenderDb::new(&renderer.device);
             let _wireframe_object_id = set_wireframe_mesh_object(&renderer.device, &mut render_db);
 
-            renderer.update_camera(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
-
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
-            let _ = renderer.render(&render_data).await;
-            let image_buffer = renderer.present().await;
+            let image_buffer = renderer
+                .render_and_return_as_image_buffer(
+                    &render_data,
+                    &read_buffer,
+                    wgpu::Extent3d {
+                        width: TEXTURE_WIDTH,
+                        height: TEXTURE_HEIGHT,
+                        depth_or_array_layers: 1,
+                    },
+                    &frame_view_data,
+                )
+                .await
+                .unwrap();
             // image_buffer.save("tests/data/wireframe_mesh.png").unwrap();
 
             let ref_image_data = image::open(PathBuf::from("tests/data/wireframe_mesh.png"))
@@ -117,18 +133,36 @@ mod tests {
     #[test]
     fn test_box_solid_color_only() {
         pollster::block_on(async {
-            let mut renderer = renderer::Renderer::from_new_device(TEXTURE_WIDTH, TEXTURE_HEIGHT)
-                .await
-                .unwrap();
+            let renderer = renderer::Renderer::from_new_device().await.unwrap();
+
+            let mut frame_view_data =
+                renderer.create_frame_view_data(TEXTURE_WIDTH, TEXTURE_HEIGHT);
+            frame_view_data
+                .camera
+                .update(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
+            renderer.write_frame_view_data_to_gpu(&frame_view_data);
+
+            let read_buffer =
+                renderer::create_read_buffer(&renderer.device, TEXTURE_WIDTH, TEXTURE_HEIGHT);
 
             let mut render_db = TestRenderDb::new(&renderer.device);
             let (_mesh_object_id, _wireframe_object_id) =
                 set_solid_mesh(&renderer.device, &mut render_db);
 
-            renderer.update_camera(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
-            let _ = renderer.render(&render_data).await;
-            let image_buffer = renderer.present().await;
+            let image_buffer = renderer
+                .render_and_return_as_image_buffer(
+                    &render_data,
+                    &read_buffer,
+                    wgpu::Extent3d {
+                        width: TEXTURE_WIDTH,
+                        height: TEXTURE_HEIGHT,
+                        depth_or_array_layers: 1,
+                    },
+                    &frame_view_data,
+                )
+                .await
+                .unwrap();
             // image_buffer.save("tests/data/solid_color_mesh.png").unwrap();
 
             let ref_image_data = image::open(PathBuf::from("tests/data/solid_color_mesh.png"))
@@ -152,18 +186,35 @@ mod tests {
     #[test]
     fn test_box_with_vertex_color_only() {
         pollster::block_on(async {
-            let mut renderer = renderer::Renderer::from_new_device(TEXTURE_WIDTH, TEXTURE_HEIGHT)
-                .await
-                .unwrap();
+            let renderer = renderer::Renderer::from_new_device().await.unwrap();
+            let mut frame_view_data =
+                renderer.create_frame_view_data(TEXTURE_WIDTH, TEXTURE_HEIGHT);
+            frame_view_data
+                .camera
+                .update(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
+            renderer.write_frame_view_data_to_gpu(&frame_view_data);
+
+            let read_buffer =
+                renderer::create_read_buffer(&renderer.device, TEXTURE_WIDTH, TEXTURE_HEIGHT);
 
             let mut render_db = TestRenderDb::new(&renderer.device);
             let (_mesh_object_id, _wireframe_object_id) =
                 set_colored_mesh_object(&renderer.device, &mut render_db);
 
-            renderer.update_camera(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
-            let _ = renderer.render(&render_data).await;
-            let image_buffer = renderer.present().await;
+            let image_buffer = renderer
+                .render_and_return_as_image_buffer(
+                    &render_data,
+                    &read_buffer,
+                    wgpu::Extent3d {
+                        width: TEXTURE_WIDTH,
+                        height: TEXTURE_HEIGHT,
+                        depth_or_array_layers: 1,
+                    },
+                    &frame_view_data,
+                )
+                .await
+                .unwrap();
             // image_buffer
             //     .save("tests/data/vertex_color_mesh.png")
             //     .unwrap();
@@ -189,7 +240,7 @@ mod tests {
     // #[test]
     // fn test_box_with_vertex_color_with_sub_viewport() {
     //     pollster::block_on(async {
-    //         let mut renderer = renderer::Renderer::from_new_device(TEXTURE_WIDTH, TEXTURE_HEIGHT)
+    //         let mut renderer = renderer::Renderer::from_new_device()
     //             .await
     //             .unwrap();
 
@@ -259,21 +310,38 @@ mod tests {
     #[test]
     fn test_box_with_vertex_color_and_silhoutte() {
         pollster::block_on(async {
-            let mut renderer = renderer::Renderer::from_new_device(TEXTURE_WIDTH, TEXTURE_HEIGHT)
-                .await
-                .unwrap();
+            let mut renderer = renderer::Renderer::from_new_device().await.unwrap();
+            let mut frame_view_data =
+                renderer.create_frame_view_data(TEXTURE_WIDTH, TEXTURE_HEIGHT);
+            frame_view_data
+                .camera
+                .update(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
+            renderer.write_frame_view_data_to_gpu(&frame_view_data);
+            renderer.set_highlight_pixels(4);
+
+            let read_buffer =
+                renderer::create_read_buffer(&renderer.device, TEXTURE_WIDTH, TEXTURE_HEIGHT);
 
             let mut render_db = TestRenderDb::new(&renderer.device);
             let (_mesh_object_id, _wireframe_object_id, _silhoutte_mesh_object_id) =
                 set_colored_mesh_object_with_silhoutte(&renderer.device, &mut render_db);
 
-            renderer.update_camera(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
-            renderer.set_highlight_pixels(4);
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
-            let _ = renderer.render(&render_data).await;
-            let image_buffer = renderer.present().await;
+            let image_buffer = renderer
+                .render_and_return_as_image_buffer(
+                    &render_data,
+                    &read_buffer,
+                    wgpu::Extent3d {
+                        width: TEXTURE_WIDTH,
+                        height: TEXTURE_HEIGHT,
+                        depth_or_array_layers: 1,
+                    },
+                    &frame_view_data,
+                )
+                .await
+                .unwrap();
             // image_buffer
-            //     .save("tests/data/vertex_color_mesh_with_silhouette.png")
+            //     .save("tests/data/vertex_color_mesh_with_silhouette_actual.png")
             //     .unwrap();
 
             let ref_image_data = image::open(PathBuf::from(
@@ -299,22 +367,39 @@ mod tests {
     #[test]
     fn test_box_in_screen_space_size_with_depth() {
         pollster::block_on(async {
-            let mut renderer = renderer::Renderer::from_new_device(TEXTURE_WIDTH, TEXTURE_HEIGHT)
-                .await
-                .unwrap();
+            let renderer = renderer::Renderer::from_new_device().await.unwrap();
+            let mut frame_view_data =
+                renderer.create_frame_view_data(TEXTURE_WIDTH, TEXTURE_HEIGHT);
+            frame_view_data
+                .camera
+                .update(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
+            renderer.write_frame_view_data_to_gpu(&frame_view_data);
+
+            let read_buffer =
+                renderer::create_read_buffer(&renderer.device, TEXTURE_WIDTH, TEXTURE_HEIGHT);
 
             let mut render_db = TestRenderDb::new(&renderer.device);
 
             let (_mesh_object_id, _wireframe_object_id) =
                 set_screen_space_mesh_and_wireframe(&renderer.device, &mut render_db, true);
 
-            renderer.update_camera(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
-            let _ = renderer.render(&render_data).await;
-            let image_buffer = renderer.present().await;
-            image_buffer
-                .save("tests/data/screen_space_boxes_with_depth.png")
+            let image_buffer = renderer
+                .render_and_return_as_image_buffer(
+                    &render_data,
+                    &read_buffer,
+                    wgpu::Extent3d {
+                        width: TEXTURE_WIDTH,
+                        height: TEXTURE_HEIGHT,
+                        depth_or_array_layers: 1,
+                    },
+                    &frame_view_data,
+                )
+                .await
                 .unwrap();
+            // image_buffer
+            //     .save("tests/data/screen_space_boxes_with_depth_actual.png")
+            //     .unwrap();
 
             let ref_image_data = image::open(PathBuf::from(
                 "tests/data/screen_space_boxes_with_depth.png",
@@ -329,7 +414,7 @@ mod tests {
 
             let error_map = nv_flip::flip(ref_image, test_image, DEFAULT_PIXELS_PER_DEGREE);
             let pool = nv_flip::FlipPool::from_image(&error_map);
-            if let Some(Ordering::Greater) = pool.mean().partial_cmp(&FLIP_MEAN_ERROR) {
+            if let Some(Ordering::Greater) = pool.mean().partial_cmp(&0.0091) {
                 println!("Mean error {}", pool.mean());
                 panic!("Something is wrong with the Screen Space Mesh with Depth")
             }
@@ -340,18 +425,35 @@ mod tests {
     #[test]
     fn test_box_in_screen_space_size_without_depth() {
         pollster::block_on(async {
-            let mut renderer = renderer::Renderer::from_new_device(TEXTURE_WIDTH, TEXTURE_HEIGHT)
-                .await
-                .unwrap();
+            let renderer = renderer::Renderer::from_new_device().await.unwrap();
+            let mut frame_view_data =
+                renderer.create_frame_view_data(TEXTURE_WIDTH, TEXTURE_HEIGHT);
+            frame_view_data
+                .camera
+                .update(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
+            renderer.write_frame_view_data_to_gpu(&frame_view_data);
+
+            let read_buffer =
+                renderer::create_read_buffer(&renderer.device, TEXTURE_WIDTH, TEXTURE_HEIGHT);
 
             let mut render_db = TestRenderDb::new(&renderer.device);
             let (_mesh_object_id, _wireframe_object_id) =
                 set_screen_space_mesh_and_wireframe(&renderer.device, &mut render_db, false);
 
-            renderer.update_camera(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
-            let _ = renderer.render(&render_data).await;
-            let image_buffer = renderer.present().await;
+            let image_buffer = renderer
+                .render_and_return_as_image_buffer(
+                    &render_data,
+                    &read_buffer,
+                    wgpu::Extent3d {
+                        width: TEXTURE_WIDTH,
+                        height: TEXTURE_HEIGHT,
+                        depth_or_array_layers: 1,
+                    },
+                    &frame_view_data,
+                )
+                .await
+                .unwrap();
             // image_buffer
             //     .save("tests/data/screen_space_boxes_without_depth.png")
             //     .unwrap();
@@ -379,9 +481,16 @@ mod tests {
     #[test]
     fn test_box_with_single_texture_and_vertex_colors() {
         pollster::block_on(async {
-            let mut renderer = renderer::Renderer::from_new_device(TEXTURE_WIDTH, TEXTURE_HEIGHT)
-                .await
-                .unwrap();
+            let renderer = renderer::Renderer::from_new_device().await.unwrap();
+            let mut frame_view_data =
+                renderer.create_frame_view_data(TEXTURE_WIDTH, TEXTURE_HEIGHT);
+            frame_view_data
+                .camera
+                .update(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
+            renderer.write_frame_view_data_to_gpu(&frame_view_data);
+
+            let read_buffer =
+                renderer::create_read_buffer(&renderer.device, TEXTURE_WIDTH, TEXTURE_HEIGHT);
 
             let mut render_db = TestRenderDb::new(&renderer.device);
             let (_mesh_object_id, _wireframe_object_id) = single_tex_mesh_object(
@@ -392,10 +501,20 @@ mod tests {
                 &mut render_db,
             );
 
-            renderer.update_camera(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
-            let _ = renderer.render(&render_data).await;
-            let image_buffer = renderer.present().await;
+            let image_buffer = renderer
+                .render_and_return_as_image_buffer(
+                    &render_data,
+                    &read_buffer,
+                    wgpu::Extent3d {
+                        width: TEXTURE_WIDTH,
+                        height: TEXTURE_HEIGHT,
+                        depth_or_array_layers: 1,
+                    },
+                    &frame_view_data,
+                )
+                .await
+                .unwrap();
             // image_buffer.save("tests/data/single_tex_mesh.png").unwrap();
 
             let ref_image_data = image::open(PathBuf::from("tests/data/single_tex_mesh.png"))
@@ -419,9 +538,16 @@ mod tests {
     #[test]
     fn test_box_with_multiple_textures_and_vertex_colors() {
         pollster::block_on(async {
-            let mut renderer = renderer::Renderer::from_new_device(TEXTURE_WIDTH, TEXTURE_HEIGHT)
-                .await
-                .unwrap();
+            let renderer = renderer::Renderer::from_new_device().await.unwrap();
+            let mut frame_view_data =
+                renderer.create_frame_view_data(TEXTURE_WIDTH, TEXTURE_HEIGHT);
+            frame_view_data
+                .camera
+                .update(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
+            renderer.write_frame_view_data_to_gpu(&frame_view_data);
+
+            let read_buffer =
+                renderer::create_read_buffer(&renderer.device, TEXTURE_WIDTH, TEXTURE_HEIGHT);
 
             let mut render_db = TestRenderDb::new(&renderer.device);
             let (_mesh_object_id, _wireframe_object_id) = set_multi_tex_mesh_object(
@@ -432,10 +558,20 @@ mod tests {
                 &mut render_db,
             );
 
-            renderer.update_camera(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
-            let _ = renderer.render(&render_data).await;
-            let image_buffer = renderer.present().await;
+            let image_buffer = renderer
+                .render_and_return_as_image_buffer(
+                    &render_data,
+                    &read_buffer,
+                    wgpu::Extent3d {
+                        width: TEXTURE_WIDTH,
+                        height: TEXTURE_HEIGHT,
+                        depth_or_array_layers: 1,
+                    },
+                    &frame_view_data,
+                )
+                .await
+                .unwrap();
             // image_buffer
             //     .save("tests/data/array_tex_mesh_new.png")
             //     .unwrap();

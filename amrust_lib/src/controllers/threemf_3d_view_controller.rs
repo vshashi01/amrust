@@ -16,9 +16,7 @@ async fn load_and_render_3mf() {
     let file = std::fs::File::open(&filepath).expect("Failed to open 3MF file");
     let package =
         ThreemfPackage::from_reader_with_memory_optimized_deserializer(file, true).unwrap();
-    let renderer = renderer::Renderer::from_new_device(TEXTURE_WIDTH, TEXTURE_HEIGHT)
-        .await
-        .unwrap();
+    let renderer = renderer::Renderer::from_new_device().await.unwrap();
 
     let mut object_transform_map = Vec::new();
     package.root.build.item.iter().for_each(|item| {

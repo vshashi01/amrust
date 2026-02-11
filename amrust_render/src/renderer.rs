@@ -1,5 +1,6 @@
 use image::{ImageBuffer, Rgba};
 
+use crate::camera::CameraData;
 use crate::composite::CompositeFragUniform;
 use crate::screen_space::{self, ScreenSpace};
 use crate::{Renderable3d, composite, constants, prelude::*};
@@ -7,7 +8,6 @@ use crate::{Renderable3d, composite, constants, prelude::*};
 use crate::{
     RenderData3d, WgpuError,
     camera::Camera,
-    camera::CameraData,
     instance::InstanceFieldDescriptor,
     material, pipeline, render_pass, texture, transformation,
     vertex::{self, VertexDescriptor},
@@ -23,8 +23,48 @@ pub struct RenderTextureData {
     pub texture_format: wgpu::TextureFormat,
 }
 
-pub enum RenderMode<'a> {
-    DrawToBuffer(&'a wgpu::Buffer, wgpu::Extent3d, wgpu::TextureFormat),
+pub struct FrameViewData {
+    bind_group: wgpu::BindGroup,
+    pub camera: Camera,
+    pub screen_space_data: ScreenSpace,
+}
+
+impl FrameViewData {
+    pub fn new(device: &wgpu::Device, initial_frame_width: f32, initial_frame_height: f32) -> Self {
+        let camera = Camera::new(device);
+        let screen_space_data = ScreenSpace::new(device, initial_frame_width, initial_frame_height);
+
+        let bind_group = create_global_3d_render_pass_bind_group(
+            device,
+            camera.get_binding_reosurce(),
+            screen_space_data.get_binding_resource(),
+        );
+
+        Self {
+            camera,
+            screen_space_data,
+            bind_group,
+        }
+    }
+
+    pub fn update_viewport_size(
+        &mut self,
+        width: f32,
+        height: f32,
+        new_camera_data: &impl CameraData,
+    ) {
+        self.camera.update(new_camera_data);
+        self.screen_space_data.update_size(width, height);
+    }
+
+    pub fn update_data_to_gpu(&self, queue: &wgpu::Queue) {
+        self.camera.write_buffer(queue);
+        self.screen_space_data.write_buffer(queue);
+    }
+}
+
+enum RenderMode<'a> {
+    DrawToBuffer(&'a wgpu::Buffer, wgpu::Extent3d),
     DrawToTexture(&'a RenderTextureData),
     //DrawToWindow //for future
 }
@@ -34,18 +74,13 @@ pub struct Renderer {
     pub queue: wgpu::Queue,
 
     // properties related to the render surface
-    output_buffer: Option<wgpu::Buffer>,
-    //texture_size: wgpu::Extent3d,
     texture_format: wgpu::TextureFormat, //stored for future dynamic render pipeline creation
 
     // internal rendering resources
-    global_3d_pass_bind_group: wgpu::BindGroup,
     global_bind_groups: Vec<wgpu::BindGroup>,
     pub texture_bind_group_layout: wgpu::BindGroupLayout,
     pub texture_sampler: wgpu::Sampler,
     pub texture_array_bind_group_layout: wgpu::BindGroupLayout,
-    //camera: Camera,
-    //screen_space_data: ScreenSpace,
     composite_frag_uniform_buffer: wgpu::Buffer,
     composite_frag_uniform: CompositeFragUniform,
 
@@ -79,8 +114,6 @@ impl Renderer {
         device: wgpu::Device,
         queue: wgpu::Queue,
         texture_format: wgpu::TextureFormat,
-        width: u32,
-        height: u32,
     ) -> Result<Self, WgpuError> {
         for features in DEVICE_FEATURES {
             if !device.features().contains(features) {
@@ -100,16 +133,10 @@ impl Renderer {
             );
         }
 
-        let texture_size = wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        };
-
-        Self::setup_new_renderer(device, queue, texture_format, texture_size, None)
+        Self::setup_new_renderer(device, queue, texture_format)
     }
 
-    pub async fn from_new_device(width: u32, height: u32) -> Result<Self, WgpuError> {
+    pub async fn from_new_device() -> Result<Self, WgpuError> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::VULKAN,
             ..Default::default()
@@ -137,39 +164,15 @@ impl Renderer {
 
         let (device, queue) = adapter.request_device(&device_descriptor).await.unwrap();
 
-        let texture_size = wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        };
-
         let texture_format = wgpu::TextureFormat::Rgba8UnormSrgb;
 
-        let u32_size = std::mem::size_of::<u32>() as u32;
-        let output_buffer_size = (u32_size * width * height) as wgpu::BufferAddress;
-        let output_buffer_desc = wgpu::BufferDescriptor {
-            size: output_buffer_size,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            label: None,
-            mapped_at_creation: false,
-        };
-        let output_buffer = device.create_buffer(&output_buffer_desc);
-
-        Self::setup_new_renderer(
-            device,
-            queue,
-            texture_format,
-            texture_size,
-            Some(output_buffer),
-        )
+        Self::setup_new_renderer(device, queue, texture_format)
     }
 
     fn setup_new_renderer(
         device: wgpu::Device,
         queue: wgpu::Queue,
         texture_format: wgpu::TextureFormat,
-        texture_size: wgpu::Extent3d,
-        output_buffer: Option<wgpu::Buffer>,
     ) -> Result<Self, WgpuError> {
         let global_bind_group_layout = create_global_3d_render_pass_bind_group_layout(&device);
         let basic_texture_bind_group_layout = texture::generate_texture_bind_group_layout::<0, 1>(
@@ -428,19 +431,6 @@ impl Renderer {
             screen_space_wireframe_mesh_render_pipeline_without_depth,
         );
 
-        let camera = Camera::new(&device);
-        let screen_space_data = ScreenSpace::new(
-            &device,
-            texture_size.width as f32,
-            texture_size.height as f32,
-        );
-        let global_bind_group = create_global_3d_render_pass_bind_group(
-            &device,
-            &global_bind_group_layout,
-            camera.get_binding_reosurce(),
-            screen_space_data.get_binding_resource(),
-        );
-
         let composite_frag_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Highlight pixle size"),
             size: CompositeFragUniform::get_size() as wgpu::BufferAddress,
@@ -459,46 +449,16 @@ impl Renderer {
         Ok(Renderer {
             device,
             queue,
-            output_buffer,
-            //texture_size,
             texture_format,
             global_bind_groups: Vec::new(),
             texture_bind_group_layout: basic_texture_bind_group_layout,
             texture_array_bind_group_layout,
             texture_sampler,
-            //camera,
-            //screen_space_data,
-            global_3d_pass_bind_group: global_bind_group,
             composite_frag_uniform_buffer,
             composite_frag_uniform,
             render_pipeline_cache,
         })
     }
-
-    // pub fn set_size(&mut self, width: u32, height: u32) {
-    //     let texture_size = wgpu::Extent3d {
-    //         width,
-    //         height,
-    //         depth_or_array_layers: 1,
-    //     };
-
-    //     self.texture_size = texture_size;
-
-    //     self.screen_space_data
-    //         .update_size(width as f32, height as f32);
-    //     self.screen_space_data.write_buffer(&self.queue);
-    // }
-
-    pub fn add_global_bind_group(&mut self, bind_group: wgpu::BindGroup) -> u32 {
-        self.global_bind_groups.push(bind_group);
-
-        (self.global_bind_groups.len() - 1) as u32
-    }
-
-    // pub fn update_camera(&mut self, camera_data: &impl CameraData) {
-    //     self.camera.update(camera_data);
-    //     self.camera.write_buffer(&self.queue);
-    // }
 
     pub fn set_highlight_pixels(&mut self, px_thickness: u32) {
         self.composite_frag_uniform.highlight_pixel_size = px_thickness as i32;
@@ -509,41 +469,61 @@ impl Renderer {
         );
     }
 
+    pub fn create_frame_view_data(&self, width: u32, height: u32) -> FrameViewData {
+        FrameViewData::new(&self.device, width as f32, height as f32)
+    }
+
+    pub fn write_frame_view_data_to_gpu(&self, frame_view_data: &FrameViewData) {
+        frame_view_data.update_data_to_gpu(&self.queue);
+    }
+
     pub async fn render_to_texture<'a>(
         &self,
         render_data: &[RenderData3d<'a>],
         render_texture_data: &RenderTextureData,
+        frame_view_data: &FrameViewData,
     ) -> Result<(), WgpuError> {
-        //ToDO: validate the texture size
         Self::render_internal(
             self,
             render_data,
             RenderMode::DrawToTexture(render_texture_data),
+            frame_view_data,
         )
         .await
     }
 
-    pub async fn render<'a>(&self, render_data: &[RenderData3d<'a>]) -> Result<(), WgpuError> {
-        Self::render_internal(self, render_data, None).await
+    pub async fn render_and_return_as_image_buffer<'a>(
+        &self,
+        render_data: &[RenderData3d<'a>],
+        output_buffer: &wgpu::Buffer,
+        size: wgpu::Extent3d,
+        frame_view_data: &FrameViewData,
+    ) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>, WgpuError> {
+        match self
+            .render_internal(
+                render_data,
+                RenderMode::DrawToBuffer(output_buffer, size),
+                frame_view_data,
+            )
+            .await
+        {
+            Ok(_) => Ok(self.present(output_buffer, size).await),
+            Err(err) => Err(err),
+        }
     }
 
     async fn render_internal<'a>(
         &self,
         render_data: &[RenderData3d<'a>],
-        //render_texture_data: Option<&RenderTextureData>,
         render_mode: RenderMode<'a>,
+        frame_view_data: &FrameViewData,
     ) -> Result<(), WgpuError> {
         let final_texture_data = match &render_mode {
-            RenderMode::DrawToBuffer(buffer, extent3d, format) => {
-                &create_texture_data(&self.device, *extent3d, *format)
+            RenderMode::DrawToBuffer(_, extent3d) => {
+                &create_texture_data(&self.device, *extent3d, self.texture_format)
             }
             RenderMode::DrawToTexture(render_texture_data) => render_texture_data,
         };
-
-        // let final_texture_data = match render_texture_data {
-        //     Some(data) => data,
-        //     None => &create_texture_data(&self.device, self.texture_size, self.texture_format),
-        // };
 
         let depth_texture = texture::DepthTexture::create_depth_texture(
             &self.device,
@@ -569,7 +549,13 @@ impl Renderer {
         };
 
         // standard render pass
-        self.main_render_pass(render_data, &depth_texture, &mut encoder, color_data);
+        self.main_render_pass(
+            render_data,
+            &depth_texture,
+            &mut encoder,
+            color_data,
+            &frame_view_data.bind_group,
+        );
 
         // screen space pass without depth
         if render_data.iter().any(|d| {
@@ -582,7 +568,12 @@ impl Renderer {
                 false
             }
         }) {
-            self.screen_space_render_pass(render_data, &mut encoder, color_data);
+            self.screen_space_render_pass(
+                render_data,
+                &mut encoder,
+                color_data,
+                &frame_view_data.bind_group,
+            );
         }
 
         //mask render pass for selected meshes
@@ -596,6 +587,7 @@ impl Renderer {
                 depth_texture,
                 &mut encoder,
                 color_data,
+                &frame_view_data.bind_group,
             );
         }
 
@@ -658,7 +650,7 @@ impl Renderer {
         //     }
         // }
 
-        if let RenderMode::DrawToBuffer(buffer, size, format) = &render_mode {
+        if let RenderMode::DrawToBuffer(buffer, size) = &render_mode {
             let u32_size = std::mem::size_of::<u32>() as u32;
             encoder.copy_texture_to_buffer(
                 wgpu::TexelCopyTextureInfo {
@@ -691,6 +683,7 @@ impl Renderer {
         depth_texture: texture::DepthTexture,
         encoder: &mut wgpu::CommandEncoder,
         color_data: &RenderTextureData,
+        global_bind_group: &wgpu::BindGroup,
     ) {
         let selection_mask_tex = create_texture_data(
             &self.device,
@@ -721,13 +714,7 @@ impl Renderer {
             };
             let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
 
-            render_pass.set_bind_group(0, &self.global_3d_pass_bind_group, &[]);
-            // set up global bind groups
-            for (i, bind_group) in self.global_bind_groups.iter().enumerate() {
-                render_pass.set_bind_group((i + 1) as u32, bind_group, &[]);
-            }
-
-            // let renderables = render_db.get_renderables().collect::<Vec<_>>();
+            render_pass.set_bind_group(0, global_bind_group, &[]);
 
             render_pass::silhoutte_pass(render_data, &self.render_pipeline_cache, &mut render_pass);
         }
@@ -777,6 +764,7 @@ impl Renderer {
         render_data: &[RenderData3d<'a>],
         encoder: &mut wgpu::CommandEncoder,
         color_data: &RenderTextureData,
+        global_bind_group: &wgpu::BindGroup,
     ) {
         let render_pass_desc = wgpu::RenderPassDescriptor {
             label: Some("Screen Space Render Pass"),
@@ -794,7 +782,7 @@ impl Renderer {
         };
         let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
 
-        render_pass.set_bind_group(0, &self.global_3d_pass_bind_group, &[]);
+        render_pass.set_bind_group(0, global_bind_group, &[]);
         // set up global bind groups
         for (i, bind_group) in self.global_bind_groups.iter().enumerate() {
             render_pass.set_bind_group((i + 1) as u32, bind_group, &[]);
@@ -821,6 +809,7 @@ impl Renderer {
         depth_texture: &texture::DepthTexture,
         encoder: &mut wgpu::CommandEncoder,
         color_data: &RenderTextureData,
+        global_bind_group: &wgpu::BindGroup,
     ) {
         let render_pass_desc = wgpu::RenderPassDescriptor {
             label: Some("Surface Render Pass"),
@@ -849,7 +838,7 @@ impl Renderer {
             timestamp_writes: None,
         };
         let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
-        render_pass.set_bind_group(0, &self.global_3d_pass_bind_group, &[]);
+        render_pass.set_bind_group(0, global_bind_group, &[]);
         // set up global bind groups
         for (i, bind_group) in self.global_bind_groups.iter().enumerate() {
             render_pass.set_bind_group((i + 1) as u32, bind_group, &[]);
@@ -866,15 +855,11 @@ impl Renderer {
         );
     }
 
-    pub async fn present(
-        &mut self,
+    async fn present(
+        &self,
         output_buffer: &wgpu::Buffer,
         size: wgpu::Extent3d,
     ) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
-        // match &self.output_buffer {
-        //     Some(buffer) => {
-        // We need to scope the mapping variables so that we can
-        // unmap the buffer
         let image_buffer = {
             let buffer_slice = output_buffer.slice(..);
 
@@ -908,9 +893,6 @@ impl Renderer {
         output_buffer.unmap();
 
         image_buffer
-        //     }
-        //     None => panic!("Output buffer is not set!"),
-        // }
     }
 }
 
@@ -978,13 +960,13 @@ pub fn create_global_3d_render_pass_bind_group_layout(
 
 pub fn create_global_3d_render_pass_bind_group(
     device: &wgpu::Device,
-    bind_group_layout: &wgpu::BindGroupLayout,
+    // bind_group_layout: &wgpu::BindGroupLayout,
     camera_resource: wgpu::BindingResource<'_>,
     screen_space_resource: wgpu::BindingResource<'_>,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("Global Bind Group"),
-        layout: bind_group_layout,
+        layout: &create_global_3d_render_pass_bind_group_layout(device),
         entries: &[
             //camera uniform
             wgpu::BindGroupEntry {
@@ -998,4 +980,17 @@ pub fn create_global_3d_render_pass_bind_group(
             },
         ],
     })
+}
+
+pub fn create_read_buffer(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Buffer {
+    let u32_size = std::mem::size_of::<u32>() as u32;
+    let output_buffer_size = (u32_size * width * height) as wgpu::BufferAddress;
+    let output_buffer_desc = wgpu::BufferDescriptor {
+        size: output_buffer_size,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        label: None,
+        mapped_at_creation: false,
+    };
+
+    device.create_buffer(&output_buffer_desc)
 }

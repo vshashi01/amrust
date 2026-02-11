@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use amrust_render::{
     camera::{CameraData, CameraTransform, OrthographicCameraData},
-    renderer::{self, RenderTextureData, Renderer},
+    renderer::{self, FrameViewData, RenderTextureData, Renderer},
 };
 use glam::Mat4;
 use smol::{
@@ -32,6 +32,7 @@ pub struct RenderService {
     format: wgpu::TextureFormat,
     width: u32,
     height: u32,
+    frame_view_data: FrameViewData,
 
     receiver: Receiver<RenderServiceRequest>,
     sender: Sender<RenderServiceResponse>,
@@ -60,14 +61,14 @@ impl RenderService {
             renderer_settings.device.clone(),
             renderer_settings.queue,
             renderer_settings.format,
-            renderer_settings.width,
-            renderer_settings.height,
         )
         .await
         {
             // match Renderer::from_new_device(renderer_settings.width, renderer_settings.height).await {
-            Ok(mut renderer) => {
-                renderer.update_camera(&renderer_settings.initial_camera_data);
+            Ok(renderer) => {
+                //renderer.update_camera(&renderer_settings.initial_camera_data);
+                let frame_view_data = renderer
+                    .create_frame_view_data(renderer_settings.width, renderer_settings.height);
                 let render_texture_data = renderer::create_texture_data(
                     &renderer_settings.device,
                     wgpu::Extent3d {
@@ -85,6 +86,7 @@ impl RenderService {
                     format: renderer_settings.format,
                     width: renderer_settings.width,
                     height: renderer_settings.height,
+                    frame_view_data,
                     sender,
                     render_texture_data,
                     render_db,
@@ -96,10 +98,6 @@ impl RenderService {
                 panic!("{err}")
             }
         }
-    }
-
-    pub fn get_texture_view(&self) -> wgpu::TextureView {
-        self.render_texture_data.texture_view.clone()
     }
 
     pub async fn run(&mut self) {
@@ -119,19 +117,26 @@ impl RenderService {
                 Ok(msg) => match msg {
                     RenderServiceRequest::UpdateCamera(orthographic_camera_data) => {
                         self.camera = orthographic_camera_data;
-                        self.update_camera().await;
+                        self.update_frame_view_data().await;
                     }
                     RenderServiceRequest::TransformCamera(transforms) => {
                         for transform in transforms {
                             self.camera.transform(transform);
                         }
 
-                        self.update_camera().await;
+                        self.update_frame_view_data().await;
                     }
                     RenderServiceRequest::ResizeViewport(width, height) => {
                         self.width = width;
                         self.height = height;
-                        self.renderer.set_size(width, height);
+
+                        self.camera.set_viewport_size(width as f32, height as f32);
+                        self.frame_view_data.update_viewport_size(
+                            width as f32,
+                            height as f32,
+                            &self.camera,
+                        );
+                        self.update_frame_view_data().await;
                         self.render_texture_data = renderer::create_texture_data(
                             &self.device,
                             wgpu::Extent3d {
@@ -151,9 +156,6 @@ impl RenderService {
                         {
                             log::error!("{err:?}");
                         }
-
-                        self.camera.set_viewport_size(width as f32, height as f32);
-                        self.update_camera().await;
                     }
                     RenderServiceRequest::Render => {
                         let render_db = self.render_db.read().await;
@@ -161,7 +163,11 @@ impl RenderService {
                         // log::debug!("Render data count: {:?}", render_data.len());
                         match self
                             .renderer
-                            .render_to_texture(&render_data, &self.render_texture_data)
+                            .render_to_texture(
+                                &render_data,
+                                &self.render_texture_data,
+                                &self.frame_view_data,
+                            )
                             .await
                         {
                             Ok(_) => {
@@ -193,8 +199,10 @@ impl RenderService {
         }
     }
 
-    async fn update_camera(&mut self) {
-        self.renderer.update_camera(&self.camera);
+    async fn update_frame_view_data(&mut self) {
+        self.frame_view_data.camera.update(&self.camera);
+        self.renderer
+            .write_frame_view_data_to_gpu(&self.frame_view_data);
 
         let view_proj = self.camera.get_view_projection();
         if let Err(err) = self
