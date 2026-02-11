@@ -41,6 +41,7 @@ pub struct RenderView<'a, 'fv> {
     pub rect: Option<ViewportRect>,
     pub render_data: &'a [RenderData3d<'a>],
     pub frame_view_data: &'fv FrameViewData,
+    pub clear_color: wgpu::Color,
 }
 
 impl FrameViewData {
@@ -501,9 +502,18 @@ impl Renderer {
             rect: None,
             render_data,
             frame_view_data,
+            clear_color: wgpu::Color {
+                r: 0.1,
+                g: 0.2,
+                b: 0.3,
+                a: 1.0,
+            },
         };
-        self.render_views_internal(std::slice::from_ref(&view), RenderMode::DrawToTexture(render_texture_data))
-            .await
+        self.render_views_internal(
+            std::slice::from_ref(&view),
+            RenderMode::DrawToTexture(render_texture_data),
+        )
+        .await
     }
 
     pub async fn render_views_to_texture<'a, 'fv>(
@@ -526,10 +536,19 @@ impl Renderer {
             rect: None,
             render_data,
             frame_view_data,
+            clear_color: wgpu::Color {
+                r: 0.1,
+                g: 0.2,
+                b: 0.3,
+                a: 1.0,
+            },
         };
 
         match self
-            .render_views_internal(std::slice::from_ref(&view), RenderMode::DrawToBuffer(output_buffer, size))
+            .render_views_internal(
+                std::slice::from_ref(&view),
+                RenderMode::DrawToBuffer(output_buffer, size),
+            )
             .await
         {
             Ok(_) => Ok(self.present(output_buffer, size).await),
@@ -606,12 +625,7 @@ impl Renderer {
                     &mut encoder,
                     color_data,
                     &view.frame_view_data.bind_group,
-                    wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.1,
-                        g: 0.2,
-                        b: 0.3,
-                        a: 1.0,
-                    }),
+                    wgpu::LoadOp::Clear(view.clear_color),
                 );
 
                 // screen space pass without depth
@@ -649,12 +663,7 @@ impl Renderer {
                 );
             } else {
                 let color_load = if view_index == 0 {
-                    wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.1,
-                        g: 0.2,
-                        b: 0.3,
-                        a: 1.0,
-                    })
+                    wgpu::LoadOp::Clear(view.clear_color)
                 } else {
                     wgpu::LoadOp::Load
                 };

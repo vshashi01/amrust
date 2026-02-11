@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use amrust_render::{
     camera::{CameraData, CameraTransform, OrthographicCameraData},
     renderer::{self, FrameViewData, RenderTextureData, Renderer},
@@ -11,6 +9,8 @@ use smol::{
 };
 
 use crate::core::render_db::RenderDb;
+
+use std::sync::Arc;
 
 pub enum RenderServiceRequest {
     UpdateCamera(OrthographicCameraData),

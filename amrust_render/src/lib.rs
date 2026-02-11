@@ -276,6 +276,12 @@ mod tests {
                     rect: None,
                     render_data: &main_render_data,
                     frame_view_data: &main_frame_view_data,
+                    clear_color: wgpu::Color {
+                        r: 0.1,
+                        g: 0.2,
+                        b: 0.3,
+                        a: 1.0,
+                    },
                 },
                 renderer::RenderView {
                     rect: Some(renderer::ViewportRect {
@@ -286,6 +292,7 @@ mod tests {
                     }),
                     render_data: &secondary_render_data,
                     frame_view_data: &subviewport_frame_view_data,
+                    clear_color: wgpu::Color::RED,
                 },
             ];
 
