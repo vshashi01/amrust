@@ -267,7 +267,13 @@ mod tests {
                 aspect_ratio: 400_f32 / 400_f32,
                 ..Default::default()
             };
-            camera_data.copy_rotation_component(&get_camera_data(400, 400));
+            camera_data
+                .transform(camera::CameraTransform::SetView {
+                    eye_position: glam::Vec3::new(0.0, 0.0, 25.0),
+                    target_position: glam::Vec3::new(0.0, 0.0, 0.0),
+                    up_vector: glam::Vec3::Y,
+                })
+                .transform(camera::CameraTransform::Zoom(-0.6));
             subviewport_frame_view_data.update_viewport_size(400.0, 400.0, &camera_data);
             renderer.write_frame_view_data_to_gpu(&subviewport_frame_view_data);
 
@@ -309,9 +315,9 @@ mod tests {
                 .await
                 .unwrap();
 
-            image_buffer
-                .save("tests/data/vertex_color_mesh_with_subviewport_actual.png")
-                .unwrap();
+            // image_buffer
+            //     .save("tests/data/vertex_color_mesh_with_subviewport_actual.png")
+            //     .unwrap();
 
             let ref_image_data = image::open(PathBuf::from(
                 "tests/data/vertex_color_mesh_with_subviewport.png",
