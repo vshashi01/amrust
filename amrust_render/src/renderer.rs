@@ -38,10 +38,38 @@ pub struct ViewportRect {
 }
 
 pub struct RenderView<'a, 'fv> {
-    pub rect: Option<ViewportRect>,
-    pub render_data: &'a [RenderData3d<'a>],
-    pub frame_view_data: &'fv FrameViewData,
-    pub clear_color: wgpu::Color,
+    rect: Option<ViewportRect>,
+    render_data: &'a [RenderData3d<'a>],
+    frame_view_data: &'fv FrameViewData,
+    clear_color: wgpu::Color,
+}
+
+impl<'a, 'fv> RenderView<'a, 'fv> {
+    pub fn new_main_view(
+        render_data: &'a [RenderData3d<'a>],
+        frame_view_data: &'fv FrameViewData,
+        bg_color: wgpu::Color,
+    ) -> Self {
+        Self {
+            rect: None,
+            render_data,
+            frame_view_data,
+            clear_color: bg_color,
+        }
+    }
+
+    pub fn new_sub_viewport(
+        rect: ViewportRect,
+        render_data: &'a [RenderData3d<'a>],
+        frame_view_data: &'fv FrameViewData,
+    ) -> Self {
+        Self {
+            rect: Some(rect),
+            render_data,
+            frame_view_data,
+            clear_color: wgpu::Color::TRANSPARENT,
+        }
+    }
 }
 
 impl FrameViewData {

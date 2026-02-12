@@ -278,28 +278,26 @@ mod tests {
             renderer.write_frame_view_data_to_gpu(&subviewport_frame_view_data);
 
             let views = [
-                renderer::RenderView {
-                    rect: None,
-                    render_data: &main_render_data,
-                    frame_view_data: &main_frame_view_data,
-                    clear_color: wgpu::Color {
+                renderer::RenderView::new_main_view(
+                    &main_render_data,
+                    &main_frame_view_data,
+                    wgpu::Color {
                         r: 0.1,
                         g: 0.2,
                         b: 0.3,
                         a: 1.0,
                     },
-                },
-                renderer::RenderView {
-                    rect: Some(renderer::ViewportRect {
+                ),
+                renderer::RenderView::new_sub_viewport(
+                    renderer::ViewportRect {
                         x: 0,
                         y: 0,
                         width: 400,
                         height: 400,
-                    }),
-                    render_data: &secondary_render_data,
-                    frame_view_data: &subviewport_frame_view_data,
-                    clear_color: wgpu::Color::RED,
-                },
+                    },
+                    &secondary_render_data,
+                    &subviewport_frame_view_data,
+                ),
             ];
 
             let image_buffer = renderer
