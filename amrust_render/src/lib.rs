@@ -8,6 +8,7 @@ use crate::{gpu_mesh::GpuMesh, instance::GpuInstance};
 //export module
 pub mod bounding_box;
 pub mod camera;
+pub mod clip;
 pub mod gpu_mesh;
 pub mod instance;
 pub mod material;
@@ -51,6 +52,7 @@ pub struct RenderData3d<'a> {
     pub mesh: &'a GpuMesh,
     pub instance: &'a GpuInstance,
     pub local_bind_groups: Vec<(&'a wgpu::BindGroup, u32)>,
+    pub clip_plane: Option<clip::ClipPlane>,
 }
 
 #[cfg(test)]
@@ -333,6 +335,71 @@ mod tests {
             if let Some(Ordering::Greater) = pool.mean().partial_cmp(&FLIP_MEAN_ERROR) {
                 println!("Mean error {}", pool.mean());
                 panic!("Something is wrong with the Subviewport rendering")
+            }
+        });
+    }
+
+    #[test]
+    fn test_box_with_vertex_color_global_clip_plane() {
+        pollster::block_on(async {
+            let renderer = renderer::Renderer::from_new_device().await.unwrap();
+
+            let mut frame_view_data =
+                renderer.create_frame_view_data(TEXTURE_WIDTH, TEXTURE_HEIGHT);
+            frame_view_data
+                .camera
+                .update(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
+            frame_view_data.set_clip_plane(clip::ClipPlane {
+                axis: clip::ClipPlaneAxis::X,
+                axis_sign: 1.0,
+                d: 0.0,
+                finite: false,
+                bounds_min: glam::Vec2::ZERO,
+                bounds_max: glam::Vec2::ZERO,
+            });
+            renderer.write_frame_view_data_to_gpu(&frame_view_data);
+
+            let read_buffer =
+                renderer::create_read_buffer(&renderer.device, TEXTURE_WIDTH, TEXTURE_HEIGHT);
+
+            let mut render_db = TestRenderDb::new(&renderer.device);
+            let (_mesh_object_id, _wireframe_object_id) =
+                set_colored_mesh_object(&renderer.device, &mut render_db);
+
+            let render_data = render_db.get_renderables().collect::<Vec<_>>();
+            let image_buffer = renderer
+                .render_and_return_as_image_buffer(
+                    &render_data,
+                    &read_buffer,
+                    wgpu::Extent3d {
+                        width: TEXTURE_WIDTH,
+                        height: TEXTURE_HEIGHT,
+                        depth_or_array_layers: 1,
+                    },
+                    &frame_view_data,
+                )
+                .await
+                .unwrap();
+            image_buffer
+                .save("tests/data/vertex_color_mesh_with_global_clip_plane.png")
+                .unwrap();
+
+            let ref_image_data = image::open(PathBuf::from(
+                "tests/data/vertex_color_mesh_with_global_clip_plane.png",
+            ))
+            .unwrap()
+            .into_rgba8();
+
+            let ref_image =
+                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &ref_image_data);
+            let test_image =
+                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &image_buffer);
+
+            let error_map = nv_flip::flip(ref_image, test_image, DEFAULT_PIXELS_PER_DEGREE);
+            let pool = nv_flip::FlipPool::from_image(&error_map);
+            if let Some(Ordering::Greater) = pool.mean().partial_cmp(&FLIP_MEAN_ERROR) {
+                println!("Mean error {}", pool.mean());
+                panic!("Something is wrong with global clipping")
             }
         });
     }
@@ -811,7 +878,7 @@ mod tests {
             renderable: Renderable3d::ArrayTexturedMesh,
             gpu_mesh_id: multi_tex_mesh_id,
             instance: multi_tex_mesh_instance_buffer,
-            local_resources: vec![(texture_array_bind_group, 1)],
+            local_resources: vec![(texture_array_bind_group, 3)],
         };
         let _multi_tex_mesh_object_id = render_db.add_object(multi_tex_mesh_object);
 
@@ -887,7 +954,7 @@ mod tests {
             renderable: Renderable3d::TexturedMesh,
             gpu_mesh_id: single_tex_mesh_id,
             instance: single_tex_mesh_instance_buffer,
-            local_resources: vec![(happy_tree_bind_group_id, 1)],
+            local_resources: vec![(happy_tree_bind_group_id, 3)],
         };
         let _single_tex_mesh_object_id = render_db.add_object(single_tex_mesh_object);
 
@@ -1393,6 +1460,7 @@ mod tests {
                     mesh: gpu_mesh,
                     instance: &r.instance,
                     local_bind_groups: local_resources,
+                    clip_plane: None,
                 }
             })
         }

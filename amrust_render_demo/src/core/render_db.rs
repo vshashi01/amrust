@@ -1,5 +1,5 @@
-use amrust_render::{RenderData3d, Renderable3d, gpu_mesh::GpuMesh, instance};
-use slotmap::{SlotMap, new_key_type};
+use amrust_render::{gpu_mesh::GpuMesh, instance, RenderData3d, Renderable3d};
+use slotmap::{new_key_type, SlotMap};
 
 pub struct RenderObject {
     pub renderable: Renderable3d,
@@ -152,6 +152,7 @@ impl RenderDb {
                     mesh: gpu_mesh,
                     instance: &render_object.instance,
                     local_bind_groups: local_resources,
+                    clip_plane: None,
                 })
             } else {
                 None

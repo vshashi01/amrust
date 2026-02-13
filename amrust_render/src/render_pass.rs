@@ -1,30 +1,37 @@
-use crate::{RenderData3d, Renderable3d, material, screen_space, transformation, vertex};
 use crate::{constants, prelude::*};
+use crate::{material, screen_space, transformation, vertex, RenderData3d, Renderable3d};
 
 use std::collections::HashMap;
 
 pub fn surface_3d_render_pass_with_depth<'a>(
     renderables: &[RenderData3d<'a>],
+    mesh_clip_bind_groups: &[&wgpu::BindGroup],
     render_pipeline_cache: &HashMap<&'static str, wgpu::RenderPipeline>,
     render_pass: &mut wgpu::RenderPass<'_>,
 ) {
-    let single_textured_objects = renderables.iter().filter_map(|o| match o.renderable {
-        Renderable3d::TexturedMesh => Some((
-            o.mesh,
-            o.instance,
-            o.local_bind_groups.clone(),
-            constants::TEXTURE_MESH_PIPELINE_KEY,
-        )),
-        Renderable3d::ArrayTexturedMesh => Some((
-            o.mesh,
-            o.instance,
-            o.local_bind_groups.clone(),
-            constants::ARRAY_TEXTURE_MESH_PIPELINE_KEY,
-        )),
-        _ => None,
-    });
+    let single_textured_objects =
+        renderables
+            .iter()
+            .enumerate()
+            .filter_map(|(index, o)| match o.renderable {
+                Renderable3d::TexturedMesh => Some((
+                    index,
+                    o.mesh,
+                    o.instance,
+                    o.local_bind_groups.clone(),
+                    constants::TEXTURE_MESH_PIPELINE_KEY,
+                )),
+                Renderable3d::ArrayTexturedMesh => Some((
+                    index,
+                    o.mesh,
+                    o.instance,
+                    o.local_bind_groups.clone(),
+                    constants::ARRAY_TEXTURE_MESH_PIPELINE_KEY,
+                )),
+                _ => None,
+            });
 
-    for (mesh, instance, bind_groups_list, pipeline_key) in single_textured_objects {
+    for (index, mesh, instance, bind_groups_list, pipeline_key) in single_textured_objects {
         render_pass.set_pipeline(render_pipeline_cache.get(pipeline_key).unwrap());
         let position_buffer = mesh.vertex_slice::<vertex::Position3d>();
         let color_buffer = mesh.vertex_slice::<vertex::Color>();
@@ -34,6 +41,7 @@ pub fn surface_3d_render_pass_with_depth<'a>(
         let transformation_buffer = instance.vertex_slice::<transformation::TransformationData>();
         let material_buffer = instance.vertex_slice::<material::RgbMaterialData>();
 
+        render_pass.set_bind_group(2, mesh_clip_bind_groups[index], &[]);
         render_pass.set_vertex_buffer(0, position_buffer);
         render_pass.set_vertex_buffer(1, color_buffer);
         render_pass.set_vertex_buffer(2, tex_coord_buffer);
@@ -55,15 +63,15 @@ pub fn surface_3d_render_pass_with_depth<'a>(
         }
     }
 
-    let colored_objects = renderables.iter().filter_map(|o| {
+    let colored_objects = renderables.iter().enumerate().filter_map(|(index, o)| {
         if let Renderable3d::ColoredMesh = &o.renderable {
-            Some((o.mesh, o.instance))
+            Some((index, o.mesh, o.instance))
         } else {
             None
         }
     });
 
-    for (mesh, instance) in colored_objects {
+    for (index, mesh, instance) in colored_objects {
         render_pass.set_pipeline(
             render_pipeline_cache
                 .get(constants::VERTEX_COLORED_MESH_PIPELINE_KEY)
@@ -75,6 +83,7 @@ pub fn surface_3d_render_pass_with_depth<'a>(
         let transformation_buffer = instance.vertex_slice::<transformation::TransformationData>();
         let material_buffer = instance.vertex_slice::<material::RgbMaterialData>();
 
+        render_pass.set_bind_group(2, mesh_clip_bind_groups[index], &[]);
         render_pass.set_vertex_buffer(0, position_buffer);
         render_pass.set_vertex_buffer(1, color_buffer);
         render_pass.set_vertex_buffer(2, transformation_buffer);
@@ -90,15 +99,15 @@ pub fn surface_3d_render_pass_with_depth<'a>(
         }
     }
 
-    let simple_objects = renderables.iter().filter_map(|o| {
+    let simple_objects = renderables.iter().enumerate().filter_map(|(index, o)| {
         if let Renderable3d::Mesh = &o.renderable {
-            Some((o.mesh, o.instance))
+            Some((index, o.mesh, o.instance))
         } else {
             None
         }
     });
 
-    for (mesh, instance) in simple_objects {
+    for (index, mesh, instance) in simple_objects {
         render_pass.set_pipeline(
             render_pipeline_cache
                 .get(constants::SOLID_COLORED_MESH_PIPELINE_KEY)
@@ -108,6 +117,7 @@ pub fn surface_3d_render_pass_with_depth<'a>(
         let transformation_buffer = instance.vertex_slice::<transformation::TransformationData>();
         let material_buffer = instance.vertex_slice::<material::RgbMaterialData>();
 
+        render_pass.set_bind_group(2, mesh_clip_bind_groups[index], &[]);
         render_pass.set_vertex_buffer(0, position_buffer);
         render_pass.set_vertex_buffer(1, transformation_buffer);
         render_pass.set_vertex_buffer(2, material_buffer);
@@ -115,23 +125,30 @@ pub fn surface_3d_render_pass_with_depth<'a>(
         render_pass.draw(0..mesh.vertex_count, 0..instance.instance_count);
     }
 
-    screen_space_colored_mesh_pass(renderables, render_pipeline_cache, render_pass, true);
+    screen_space_colored_mesh_pass(
+        renderables,
+        mesh_clip_bind_groups,
+        render_pipeline_cache,
+        render_pass,
+        true,
+    );
 }
 
 pub fn wireframe_3d_render_pass<'a>(
     renderables: &[RenderData3d<'a>],
+    mesh_clip_bind_groups: &[&wgpu::BindGroup],
     render_pipeline_cache: &HashMap<&'static str, wgpu::RenderPipeline>,
     render_pass: &mut wgpu::RenderPass<'_>,
 ) {
-    let wireframe_objects = renderables.iter().filter_map(|o| {
+    let wireframe_objects = renderables.iter().enumerate().filter_map(|(index, o)| {
         if let Renderable3d::WireframeMesh = &o.renderable {
-            Some((o.mesh, o.instance))
+            Some((index, o.mesh, o.instance))
         } else {
             None
         }
     });
 
-    for (mesh, instance) in wireframe_objects {
+    for (index, mesh, instance) in wireframe_objects {
         render_pass.set_pipeline(
             render_pipeline_cache
                 .get(constants::WIREFRAME_MESH_PIPELINE_KEY)
@@ -142,6 +159,7 @@ pub fn wireframe_3d_render_pass<'a>(
         let transformation_buffer = instance.vertex_slice::<transformation::TransformationData>();
         let material_buffer = instance.vertex_slice::<material::RgbMaterialData>();
 
+        render_pass.set_bind_group(2, mesh_clip_bind_groups[index], &[]);
         render_pass.set_vertex_buffer(0, position_buffer);
         render_pass.set_vertex_buffer(1, transformation_buffer);
         render_pass.set_vertex_buffer(2, material_buffer);
@@ -156,17 +174,24 @@ pub fn wireframe_3d_render_pass<'a>(
         }
     }
 
-    screen_space_wireframe_pass(renderables, render_pipeline_cache, render_pass, true);
+    screen_space_wireframe_pass(
+        renderables,
+        mesh_clip_bind_groups,
+        render_pipeline_cache,
+        render_pass,
+        true,
+    );
 }
 
 pub fn silhoutte_pass<'a>(
     renderables: &[RenderData3d<'a>],
+    mesh_clip_bind_groups: &[&wgpu::BindGroup],
     render_pipeline_cache: &HashMap<&'static str, wgpu::RenderPipeline>,
     render_pass: &mut wgpu::RenderPass<'_>,
 ) {
-    let silhoutte_objs = renderables.iter().filter_map(|o| {
+    let silhoutte_objs = renderables.iter().enumerate().filter_map(|(index, o)| {
         if let Renderable3d::SilhouetteMesh = &o.renderable {
-            Some((o.mesh, o.instance))
+            Some((index, o.mesh, o.instance))
         } else {
             None
         }
@@ -178,10 +203,11 @@ pub fn silhoutte_pass<'a>(
             .unwrap(),
     );
 
-    for (mesh, instance) in silhoutte_objs {
+    for (index, mesh, instance) in silhoutte_objs {
         let position_buffer = mesh.vertex_slice::<vertex::Position3d>();
         let transformation_buffer = instance.vertex_slice::<transformation::TransformationData>();
 
+        render_pass.set_bind_group(2, mesh_clip_bind_groups[index], &[]);
         render_pass.set_vertex_buffer(0, position_buffer);
         render_pass.set_vertex_buffer(1, transformation_buffer);
 
@@ -198,20 +224,22 @@ pub fn silhoutte_pass<'a>(
 
 pub fn screen_space_colored_mesh_pass<'a>(
     renderables: &[RenderData3d<'a>],
+    mesh_clip_bind_groups: &[&wgpu::BindGroup],
     render_pipeline_cache: &HashMap<&'static str, wgpu::RenderPipeline>,
     render_pass: &mut wgpu::RenderPass<'_>,
     is_depth_tested: bool,
 ) {
     let mut screen_space_objs = renderables
         .iter()
-        .filter_map(|o| {
+        .enumerate()
+        .filter_map(|(index, o)| {
             if let Renderable3d::ScreenSpaceColoredMesh {
                 depth_testing,
                 order,
             } = &o.renderable
             {
                 if *depth_testing == is_depth_tested {
-                    Some((o.mesh, o.instance, order))
+                    Some((index, o.mesh, o.instance, order))
                 } else {
                     None
                 }
@@ -234,11 +262,11 @@ pub fn screen_space_colored_mesh_pass<'a>(
                 .unwrap(),
         );
 
-        screen_space_objs.sort_by_key(|(_, _, order)| **order);
+        screen_space_objs.sort_by_key(|(_, _, _, order)| **order);
         screen_space_objs.reverse();
     }
 
-    for (mesh, instance, _) in screen_space_objs {
+    for (index, mesh, instance, _) in screen_space_objs {
         let position_buffer = mesh.vertex_slice::<vertex::Position3d>();
         let color_buffer = mesh.vertex_slice::<vertex::Color>();
         let transformation_buffer = instance.vertex_slice::<transformation::TransformationData>();
@@ -246,6 +274,7 @@ pub fn screen_space_colored_mesh_pass<'a>(
         let use_material_buffer = instance.vertex_slice::<material::UseMaterialData>();
         let size_in_pixel_buffer = instance.vertex_slice::<screen_space::SizeInPixel>();
 
+        render_pass.set_bind_group(2, mesh_clip_bind_groups[index], &[]);
         render_pass.set_vertex_buffer(0, position_buffer);
         render_pass.set_vertex_buffer(1, color_buffer);
         render_pass.set_vertex_buffer(2, transformation_buffer);
@@ -266,20 +295,22 @@ pub fn screen_space_colored_mesh_pass<'a>(
 
 pub fn screen_space_wireframe_pass<'a>(
     renderables: &[RenderData3d<'a>],
+    mesh_clip_bind_groups: &[&wgpu::BindGroup],
     render_pipeline_cache: &HashMap<&'static str, wgpu::RenderPipeline>,
     render_pass: &mut wgpu::RenderPass<'_>,
     is_depth_tested: bool,
 ) {
     let mut screen_space_objs = renderables
         .iter()
-        .filter_map(|o| {
+        .enumerate()
+        .filter_map(|(index, o)| {
             if let Renderable3d::ScreenSpaceWireframeMesh {
                 depth_testing,
                 order,
             } = &o.renderable
             {
                 if *depth_testing == is_depth_tested {
-                    Some((o.mesh, o.instance, order))
+                    Some((index, o.mesh, o.instance, order))
                 } else {
                     None
                 }
@@ -302,11 +333,11 @@ pub fn screen_space_wireframe_pass<'a>(
                 .unwrap(),
         );
 
-        screen_space_objs.sort_by_key(|(_, _, order)| **order);
+        screen_space_objs.sort_by_key(|(_, _, _, order)| **order);
         screen_space_objs.reverse();
     }
 
-    for (mesh, instance, _) in screen_space_objs {
+    for (index, mesh, instance, _) in screen_space_objs {
         let position_buffer = mesh.vertex_slice::<vertex::Position3d>();
         let color_buffer = mesh.vertex_slice::<vertex::Color>();
         let transformation_buffer = instance.vertex_slice::<transformation::TransformationData>();
@@ -314,6 +345,7 @@ pub fn screen_space_wireframe_pass<'a>(
         let use_material_buffer = instance.vertex_slice::<material::UseMaterialData>();
         let size_in_pixel_buffer = instance.vertex_slice::<screen_space::SizeInPixel>();
 
+        render_pass.set_bind_group(2, mesh_clip_bind_groups[index], &[]);
         render_pass.set_vertex_buffer(0, position_buffer);
         render_pass.set_vertex_buffer(1, color_buffer);
         render_pass.set_vertex_buffer(2, transformation_buffer);

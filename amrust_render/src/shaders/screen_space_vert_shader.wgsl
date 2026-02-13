@@ -48,6 +48,7 @@ struct InstanceInput {
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) color: vec3<f32>,
+    @location(1) world_pos: vec3<f32>,
 };
 
 fn safe_normalize(v: vec3<f32>) -> vec3<f32> {
@@ -98,6 +99,7 @@ fn vs_main(v: VertexInput, i: InstanceInput) -> VertexOutput {
     let local = v.position * scale;
     let world = t + local.x * x + local.y * y + local.z * z;
 
+    out.world_pos = world;
     out.clip_position = camera.view_proj * vec4<f32>(world, 1.0);
     if i.use_material == 1 {
         out.color = i.material;

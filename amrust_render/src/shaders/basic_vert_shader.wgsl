@@ -12,6 +12,7 @@ struct VertexInput {
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
+    @location(0) world_pos: vec3<f32>,
 }
 
 struct InstanceInput {
@@ -25,7 +26,9 @@ struct InstanceInput {
 fn vs_main(model: VertexInput, instance: InstanceInput) -> VertexOutput {
     var out: VertexOutput;
     let model_matrix = mat4x4<f32>(instance.model_matrix_0, instance.model_matrix_1, instance.model_matrix_2, instance.model_matrix_3,);
-    out.clip_position = camera.view_proj * model_matrix * vec4<f32>(model.position, 1.0);
+    let world_pos = (model_matrix * vec4<f32>(model.position, 1.0)).xyz;
+    out.world_pos = world_pos;
+    out.clip_position = camera.view_proj * vec4<f32>(world_pos, 1.0);
 
     return out;
 }

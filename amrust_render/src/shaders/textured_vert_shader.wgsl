@@ -17,6 +17,7 @@ struct VertexOutput {
     @location(0) color: vec3<f32>,
     @location(1) tex_coords: vec2<f32>,
     @location(2) use_texture: i32, // 0 or 1
+    @location(3) world_pos: vec3<f32>,
 }
 
 
@@ -39,7 +40,9 @@ fn vs_main(model: VertexInput, instance: InstanceInput) -> VertexOutput {
     out.color = model.color;
     out.tex_coords = model.tex_coords;
     out.use_texture = model.use_texture;
-    out.clip_position = camera.view_proj * model_matrix * vec4<f32>(model.position, 1.0);
+    let world_pos = (model_matrix * vec4<f32>(model.position, 1.0)).xyz;
+    out.world_pos = world_pos;
+    out.clip_position = camera.view_proj * vec4<f32>(world_pos, 1.0);
 
     return out;
 }
