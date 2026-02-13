@@ -526,17 +526,16 @@ impl Renderer {
         render_texture_data: &RenderTextureData,
         frame_view_data: &FrameViewData,
     ) -> Result<(), WgpuError> {
-        let view = RenderView {
-            rect: None,
+        let view = RenderView::new_main_view(
             render_data,
             frame_view_data,
-            clear_color: wgpu::Color {
+            wgpu::Color {
                 r: 0.1,
                 g: 0.2,
                 b: 0.3,
                 a: 1.0,
             },
-        };
+        );
         self.render_views_internal(
             std::slice::from_ref(&view),
             RenderMode::DrawToTexture(render_texture_data),
@@ -560,17 +559,16 @@ impl Renderer {
         size: wgpu::Extent3d,
         frame_view_data: &FrameViewData,
     ) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>, WgpuError> {
-        let view = RenderView {
-            rect: None,
+        let view = RenderView::new_main_view(
             render_data,
             frame_view_data,
-            clear_color: wgpu::Color {
+            wgpu::Color {
                 r: 0.1,
                 g: 0.2,
                 b: 0.3,
                 a: 1.0,
             },
-        };
+        );
 
         match self
             .render_views_internal(
@@ -647,8 +645,7 @@ impl Renderer {
 
                 // standard render pass into intermediate texture
                 self.main_render_pass(
-                    view.render_data,
-                    view.rect,
+                    view,
                     &depth_texture,
                     &mut encoder,
                     color_data,
@@ -681,8 +678,7 @@ impl Renderer {
 
                 // mask render pass for selected meshes + composite into final
                 self.silhouette_and_composite_mask(
-                    view.render_data,
-                    view.rect,
+                    view,
                     final_texture_data,
                     &depth_texture,
                     &mut encoder,
@@ -698,8 +694,7 @@ impl Renderer {
 
                 // standard render pass directly into final texture
                 self.main_render_pass(
-                    view.render_data,
-                    view.rect,
+                    view,
                     &depth_texture,
                     &mut encoder,
                     final_texture_data,
@@ -758,10 +753,9 @@ impl Renderer {
         Ok(())
     }
 
-    fn silhouette_and_composite_mask<'a>(
+    fn silhouette_and_composite_mask<'a, 'fv>(
         &self,
-        render_data: &[RenderData3d<'a>],
-        rect: Option<ViewportRect>,
+        render_view: &RenderView<'a, 'fv>,
         final_texture_data: &RenderTextureData,
         depth_texture: &texture::DepthTexture,
         encoder: &mut wgpu::CommandEncoder,
@@ -797,11 +791,15 @@ impl Renderer {
             };
             let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
 
-            Self::apply_viewport_rect(&mut render_pass, rect);
+            Self::apply_viewport_rect(&mut render_pass, render_view.rect);
 
             render_pass.set_bind_group(0, global_bind_group, &[]);
 
-            render_pass::silhoutte_pass(render_data, &self.render_pipeline_cache, &mut render_pass);
+            render_pass::silhoutte_pass(
+                render_view.render_data,
+                &self.render_pipeline_cache,
+                &mut render_pass,
+            );
         }
 
         // composite of textures
@@ -821,7 +819,7 @@ impl Renderer {
                 timestamp_writes: None,
             });
 
-            Self::apply_viewport_rect(&mut pass, rect);
+            Self::apply_viewport_rect(&mut pass, render_view.rect);
 
             pass.set_pipeline(
                 self.render_pipeline_cache
@@ -893,10 +891,11 @@ impl Renderer {
         );
     }
 
-    fn main_render_pass<'a>(
+    fn main_render_pass<'a, 'fv>(
         &self,
-        render_data: &[RenderData3d<'a>],
-        rect: Option<ViewportRect>,
+        render_view: &RenderView<'a, 'fv>,
+        // render_data: &[RenderData3d<'a>],
+        // rect: Option<ViewportRect>,
         depth_texture: &texture::DepthTexture,
         encoder: &mut wgpu::CommandEncoder,
         color_data: &RenderTextureData,
@@ -926,19 +925,19 @@ impl Renderer {
         };
         let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
 
-        Self::apply_viewport_rect(&mut render_pass, rect);
+        Self::apply_viewport_rect(&mut render_pass, render_view.rect);
         render_pass.set_bind_group(0, global_bind_group, &[]);
         // set up global bind groups
         for (i, bind_group) in self.global_bind_groups.iter().enumerate() {
             render_pass.set_bind_group((i + 1) as u32, bind_group, &[]);
         }
         render_pass::surface_3d_render_pass_with_depth(
-            render_data,
+            render_view.render_data,
             &self.render_pipeline_cache,
             &mut render_pass,
         );
         render_pass::wireframe_3d_render_pass(
-            render_data,
+            render_view.render_data,
             &self.render_pipeline_cache,
             &mut render_pass,
         );
