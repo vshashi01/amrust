@@ -417,7 +417,7 @@ mod tests {
                 .update(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
             frame_view_data.set_clip_plane(&clip::ClipPlane {
                 axis: clip::ClipPlaneAxis::Y,
-                axis_sign: 1.0,
+                axis_sign: -1.0,
                 is_enabled: true,
                 d: -3.0,
                 is_finite: false,
@@ -428,10 +428,20 @@ mod tests {
 
             let read_buffer =
                 renderer::create_read_buffer(&renderer.device, TEXTURE_WIDTH, TEXTURE_HEIGHT);
-
             let mut render_db = TestRenderDb::new(&renderer.device);
+            let mut clip_plane = ClipPlanes::new(&renderer.device);
+            clip_plane.update_clip_planes(|planes| {
+                if let Some(plane) = planes.first_mut() {
+                    plane.axis = clip::ClipPlaneAxis::X;
+                    plane.axis_sign = -1.0;
+                    plane.is_enabled = true;
+                    plane.d = 0.0;
+                    plane.is_finite = false;
+                }
+            });
+            clip_plane.write_buffer(&renderer.queue);
             let (_mesh_a_id, _mesh_b_id) =
-                set_two_colored_mesh_objects(&renderer.device, &mut render_db);
+                set_two_colored_mesh_objects(&renderer.device, &mut render_db, Some(clip_plane));
 
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
             let image_buffer = renderer
@@ -447,9 +457,9 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            image_buffer
-                .save("tests/data/vertex_color_mesh_with_global_and_local_clip_plane_actual.png")
-                .unwrap();
+            // image_buffer
+            //     .save("tests/data/vertex_color_mesh_with_global_and_local_clip_plane_actual.png")
+            //     .unwrap();
 
             let ref_image_data = image::open(PathBuf::from(
                 "tests/data/vertex_color_mesh_with_global_and_local_clip_plane.png",
@@ -1106,6 +1116,7 @@ mod tests {
     fn set_two_colored_mesh_objects(
         device: &wgpu::Device,
         render_db: &mut TestRenderDb,
+        local_clip_planes: Option<ClipPlanes<1>>,
     ) -> ((u32, u32), (u32, u32)) {
         let colored_mesh = MeshBuilder::new()
             .add_vertex_stream(POSITIONS)
@@ -1141,12 +1152,14 @@ mod tests {
             .add_instance_stream(&material_color)
             .build(device);
 
+        let clip_planes = local_clip_planes.unwrap_or(ClipPlanes::new(device));
+
         let mesh_a = RenderObject {
             renderable: Renderable3d::ColoredMesh,
             gpu_mesh_id: colored_mesh_id,
             instance: instance_a_surface,
             local_resources: vec![],
-            clip_planes: ClipPlanes::new(device),
+            clip_planes: clip_planes.clone(),
         };
 
         let wireframe_a = RenderObject {
@@ -1154,7 +1167,7 @@ mod tests {
             gpu_mesh_id: colored_mesh_id,
             instance: instance_a_wireframe,
             local_resources: vec![],
-            clip_planes: ClipPlanes::new(device),
+            clip_planes: clip_planes.clone(),
         };
 
         let mesh_b = RenderObject {
@@ -1162,7 +1175,7 @@ mod tests {
             gpu_mesh_id: colored_mesh_id,
             instance: instance_b_surface,
             local_resources: vec![],
-            clip_planes: ClipPlanes::new(device),
+            clip_planes: clip_planes.clone(),
         };
 
         let wireframe_b = RenderObject {
@@ -1170,7 +1183,7 @@ mod tests {
             gpu_mesh_id: colored_mesh_id,
             instance: instance_b_wireframe,
             local_resources: vec![],
-            clip_planes: ClipPlanes::new(device),
+            clip_planes: clip_planes.clone(),
         };
 
         let mesh_a_id = render_db.add_object(mesh_a);
