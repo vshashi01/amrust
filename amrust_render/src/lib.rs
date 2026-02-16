@@ -3,7 +3,7 @@ use thiserror::Error;
 mod prelude;
 pub use prelude::*;
 
-use crate::{gpu_mesh::GpuMesh, instance::GpuInstance};
+use crate::{clip::ClipPlanes, gpu_mesh::GpuMesh, instance::GpuInstance};
 
 //export module
 pub mod bounding_box;
@@ -52,7 +52,7 @@ pub struct RenderData3d<'a> {
     pub mesh: &'a GpuMesh,
     pub instance: &'a GpuInstance,
     pub local_bind_groups: Vec<(&'a wgpu::BindGroup, u32)>,
-    pub clip_plane: Option<clip::ClipPlane>,
+    pub clip_plane: &'a ClipPlanes<1>,
 }
 
 #[cfg(test)]
@@ -349,11 +349,12 @@ mod tests {
             frame_view_data
                 .camera
                 .update(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
-            frame_view_data.set_clip_plane(clip::ClipPlane {
+            frame_view_data.set_clip_plane(&clip::ClipPlane {
                 axis: clip::ClipPlaneAxis::X,
                 axis_sign: 1.0,
+                is_enabled: true,
                 d: 0.0,
-                finite: false,
+                is_finite: false,
                 bounds_min: glam::Vec2::ZERO,
                 bounds_max: glam::Vec2::ZERO,
             });
@@ -380,9 +381,9 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            image_buffer
-                .save("tests/data/vertex_color_mesh_with_global_clip_plane.png")
-                .unwrap();
+            // image_buffer
+            //     .save("tests/data/vertex_color_mesh_with_global_clip_plane_actual.png")
+            //     .unwrap();
 
             let ref_image_data = image::open(PathBuf::from(
                 "tests/data/vertex_color_mesh_with_global_clip_plane.png",
@@ -400,6 +401,72 @@ mod tests {
             if let Some(Ordering::Greater) = pool.mean().partial_cmp(&FLIP_MEAN_ERROR) {
                 println!("Mean error {}", pool.mean());
                 panic!("Something is wrong with global clipping")
+            }
+        });
+    }
+
+    #[test]
+    fn test_box_with_vertex_color_global_and_local_clip_plane() {
+        pollster::block_on(async {
+            let renderer = renderer::Renderer::from_new_device().await.unwrap();
+
+            let mut frame_view_data =
+                renderer.create_frame_view_data(TEXTURE_WIDTH, TEXTURE_HEIGHT);
+            frame_view_data
+                .camera
+                .update(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
+            frame_view_data.set_clip_plane(&clip::ClipPlane {
+                axis: clip::ClipPlaneAxis::Y,
+                axis_sign: 1.0,
+                is_enabled: true,
+                d: -3.0,
+                is_finite: false,
+                bounds_min: glam::Vec2::ZERO,
+                bounds_max: glam::Vec2::ZERO,
+            });
+            renderer.write_frame_view_data_to_gpu(&frame_view_data);
+
+            let read_buffer =
+                renderer::create_read_buffer(&renderer.device, TEXTURE_WIDTH, TEXTURE_HEIGHT);
+
+            let mut render_db = TestRenderDb::new(&renderer.device);
+            let (_mesh_a_id, _mesh_b_id) =
+                set_two_colored_mesh_objects(&renderer.device, &mut render_db);
+
+            let render_data = render_db.get_renderables().collect::<Vec<_>>();
+            let image_buffer = renderer
+                .render_and_return_as_image_buffer(
+                    &render_data,
+                    &read_buffer,
+                    wgpu::Extent3d {
+                        width: TEXTURE_WIDTH,
+                        height: TEXTURE_HEIGHT,
+                        depth_or_array_layers: 1,
+                    },
+                    &frame_view_data,
+                )
+                .await
+                .unwrap();
+            image_buffer
+                .save("tests/data/vertex_color_mesh_with_global_and_local_clip_plane_actual.png")
+                .unwrap();
+
+            let ref_image_data = image::open(PathBuf::from(
+                "tests/data/vertex_color_mesh_with_global_and_local_clip_plane.png",
+            ))
+            .unwrap()
+            .into_rgba8();
+
+            let ref_image =
+                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &ref_image_data);
+            let test_image =
+                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &image_buffer);
+
+            let error_map = nv_flip::flip(ref_image, test_image, DEFAULT_PIXELS_PER_DEGREE);
+            let pool = nv_flip::FlipPool::from_image(&error_map);
+            if let Some(Ordering::Greater) = pool.mean().partial_cmp(&FLIP_MEAN_ERROR) {
+                println!("Mean error {}", pool.mean());
+                panic!("Something is wrong with global and local clipping")
             }
         });
     }
@@ -879,6 +946,7 @@ mod tests {
             gpu_mesh_id: multi_tex_mesh_id,
             instance: multi_tex_mesh_instance_buffer,
             local_resources: vec![(texture_array_bind_group, 3)],
+            clip_planes: ClipPlanes::new(device),
         };
         let _multi_tex_mesh_object_id = render_db.add_object(multi_tex_mesh_object);
 
@@ -890,6 +958,7 @@ mod tests {
                 .add_instance_stream(&material_colors)
                 .build(device),
             local_resources: vec![],
+            clip_planes: ClipPlanes::new(device),
         };
         let _multi_tex_mesh_wireframe_object_id =
             render_db.add_object(multi_tex_mesh_wireframe_object);
@@ -955,6 +1024,7 @@ mod tests {
             gpu_mesh_id: single_tex_mesh_id,
             instance: single_tex_mesh_instance_buffer,
             local_resources: vec![(happy_tree_bind_group_id, 3)],
+            clip_planes: ClipPlanes::new(device),
         };
         let _single_tex_mesh_object_id = render_db.add_object(single_tex_mesh_object);
 
@@ -966,6 +1036,7 @@ mod tests {
                 .add_instance_stream(&material_colors)
                 .build(device),
             local_resources: vec![],
+            clip_planes: ClipPlanes::new(device),
         };
         let _single_tex_mesh_wireframe_object_id =
             render_db.add_object(single_tex_mesh_wireframe_object);
@@ -1013,6 +1084,7 @@ mod tests {
             gpu_mesh_id: colored_mesh_id,
             instance: colored_mesh_instance_buffer,
             local_resources: vec![],
+            clip_planes: ClipPlanes::new(device),
         };
         let _colored_mesh_object_id = render_db.add_object(colored_mesh_object);
 
@@ -1024,10 +1096,89 @@ mod tests {
                 .add_instance_stream(&material_colors)
                 .build(device),
             local_resources: vec![],
+            clip_planes: ClipPlanes::new(device),
         };
         let _colored_mesh_wireframe_object_id = render_db.add_object(colored_mesh_wireframe_object);
 
         (_colored_mesh_object_id, _colored_mesh_wireframe_object_id)
+    }
+
+    fn set_two_colored_mesh_objects(
+        device: &wgpu::Device,
+        render_db: &mut TestRenderDb,
+    ) -> ((u32, u32), (u32, u32)) {
+        let colored_mesh = MeshBuilder::new()
+            .add_vertex_stream(POSITIONS)
+            .add_vertex_stream(COLORS)
+            .add_wireframe_index_stream(INDEXED_POSITIONS_BOX_EDGE_INDICES)
+            .add_mesh_index_stream(INDICES)
+            .build(device);
+        let colored_mesh_id = render_db.add_mesh(colored_mesh);
+
+        let material_color = [Material::new(0.0, 0.0, 1.0).to_data()];
+
+        let instance_a_surface = InstanceDataBuilder::new()
+            .add_instance_stream(&[Transformation(Mat4::IDENTITY).to_data()])
+            .add_instance_stream(&material_color)
+            .build(device);
+
+        let instance_a_wireframe = InstanceDataBuilder::new()
+            .add_instance_stream(&[Transformation(Mat4::IDENTITY).to_data()])
+            .add_instance_stream(&material_color)
+            .build(device);
+
+        let instance_b_surface = InstanceDataBuilder::new()
+            .add_instance_stream(&[
+                Transformation(Mat4::from_translation((3.0, 3.0, 0.0).into())).to_data(),
+            ])
+            .add_instance_stream(&material_color)
+            .build(device);
+
+        let instance_b_wireframe = InstanceDataBuilder::new()
+            .add_instance_stream(&[
+                Transformation(Mat4::from_translation((3.0, 3.0, 0.0).into())).to_data(),
+            ])
+            .add_instance_stream(&material_color)
+            .build(device);
+
+        let mesh_a = RenderObject {
+            renderable: Renderable3d::ColoredMesh,
+            gpu_mesh_id: colored_mesh_id,
+            instance: instance_a_surface,
+            local_resources: vec![],
+            clip_planes: ClipPlanes::new(device),
+        };
+
+        let wireframe_a = RenderObject {
+            renderable: Renderable3d::WireframeMesh,
+            gpu_mesh_id: colored_mesh_id,
+            instance: instance_a_wireframe,
+            local_resources: vec![],
+            clip_planes: ClipPlanes::new(device),
+        };
+
+        let mesh_b = RenderObject {
+            renderable: Renderable3d::ColoredMesh,
+            gpu_mesh_id: colored_mesh_id,
+            instance: instance_b_surface,
+            local_resources: vec![],
+            clip_planes: ClipPlanes::new(device),
+        };
+
+        let wireframe_b = RenderObject {
+            renderable: Renderable3d::WireframeMesh,
+            gpu_mesh_id: colored_mesh_id,
+            instance: instance_b_wireframe,
+            local_resources: vec![],
+            clip_planes: ClipPlanes::new(device),
+        };
+
+        let mesh_a_id = render_db.add_object(mesh_a);
+        let wireframe_a_id = render_db.add_object(wireframe_a);
+        let mesh_b_id = render_db.add_object(mesh_b);
+        let wireframe_b_id = render_db.add_object(wireframe_b);
+
+        ((mesh_a_id, wireframe_a_id), (mesh_b_id, wireframe_b_id))
     }
 
     fn set_colored_mesh_object_with_silhoutte(
@@ -1071,6 +1222,7 @@ mod tests {
             gpu_mesh_id: colored_mesh_id,
             instance: colored_mesh_instance_buffer,
             local_resources: vec![],
+            clip_planes: ClipPlanes::new(device),
         };
         let _colored_mesh_object_id = render_db.add_object(colored_mesh_object);
 
@@ -1082,6 +1234,7 @@ mod tests {
                 .add_instance_stream(&material_colors)
                 .build(device),
             local_resources: vec![],
+            clip_planes: ClipPlanes::new(device),
         };
         let _colored_mesh_wireframe_object_id = render_db.add_object(colored_mesh_wireframe_object);
 
@@ -1095,6 +1248,7 @@ mod tests {
                 .to_data()])
                 .build(device),
             local_resources: vec![],
+            clip_planes: ClipPlanes::new(device),
         };
         let _silhoutte_mesh_object_id = render_db.add_object(silhoutte_mesh_object);
         (
@@ -1156,6 +1310,7 @@ mod tests {
             gpu_mesh_id: colored_mesh_id,
             instance: colored_mesh_instance_buffer,
             local_resources: vec![],
+            clip_planes: ClipPlanes::new(device),
         };
         let _colored_mesh_object_id = render_db.add_object(colored_mesh_object);
 
@@ -1182,6 +1337,7 @@ mod tests {
                 ])
                 .build(device),
             local_resources: vec![],
+            clip_planes: ClipPlanes::new(device),
         };
         let _colored_mesh_wireframe_object_id = render_db.add_object(colored_mesh_wireframe_object);
 
@@ -1222,6 +1378,7 @@ mod tests {
             gpu_mesh_id: simple_mesh_id,
             instance: simple_mesh_instance_buffer,
             local_resources: vec![],
+            clip_planes: ClipPlanes::new(device),
         };
         let _simple_mesh_object_id = render_db.add_object(simple_mesh_object);
 
@@ -1236,6 +1393,7 @@ mod tests {
                 ])
                 .build(device),
             local_resources: vec![],
+            clip_planes: ClipPlanes::new(device),
         };
         let _simple_mesh_wireframe_object_id = render_db.add_object(simple_mesh_wireframe_object);
 
@@ -1274,6 +1432,7 @@ mod tests {
                 ])
                 .build(device),
             local_resources: vec![],
+            clip_planes: ClipPlanes::new(device),
         };
 
         render_db.add_object(simple_mesh_wireframe_object)
@@ -1307,6 +1466,7 @@ mod tests {
             gpu_mesh_id: simple_mesh_id,
             instance: simple_mesh_instance_buffer,
             local_resources: vec![],
+            clip_planes: ClipPlanes::new(device),
         };
 
         render_db.add_object(gizmo_object)
@@ -1331,6 +1491,7 @@ mod tests {
             gpu_mesh_id: simple_mesh_id,
             instance: simple_mesh_instance_buffer,
             local_resources: vec![],
+            clip_planes: ClipPlanes::new(device),
         };
 
         render_db.add_object(simple_mesh_object)
@@ -1341,6 +1502,7 @@ mod tests {
         pub instance: instance::GpuInstance,
         pub gpu_mesh_id: u32,
         pub local_resources: Vec<(u32, u32)>, // (index to local_bind_group, slot_index)
+        pub clip_planes: ClipPlanes<1>,
     }
 
     pub struct TestRenderDb {
@@ -1460,7 +1622,7 @@ mod tests {
                     mesh: gpu_mesh,
                     instance: &r.instance,
                     local_bind_groups: local_resources,
-                    clip_plane: None,
+                    clip_plane: &r.clip_planes,
                 }
             })
         }

@@ -1,11 +1,12 @@
-use amrust_render::{gpu_mesh::GpuMesh, instance, RenderData3d, Renderable3d};
-use slotmap::{new_key_type, SlotMap};
+use amrust_render::{RenderData3d, Renderable3d, clip::ClipPlanes, gpu_mesh::GpuMesh, instance};
+use slotmap::{SlotMap, new_key_type};
 
 pub struct RenderObject {
     pub renderable: Renderable3d,
     pub instance: instance::GpuInstance,
     pub gpu_mesh_id: RenderMeshId,
     pub local_resources: Vec<(u32, u32)>, // (index to local_bind_group, slot_index)
+    pub clip_planes: ClipPlanes<1>,
 }
 
 new_key_type! {
@@ -152,7 +153,7 @@ impl RenderDb {
                     mesh: gpu_mesh,
                     instance: &render_object.instance,
                     local_bind_groups: local_resources,
-                    clip_plane: None,
+                    clip_plane: &render_object.clip_planes,
                 })
             } else {
                 None

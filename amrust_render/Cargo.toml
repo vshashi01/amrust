@@ -13,6 +13,7 @@ glam = { workspace = true }
 image = { workspace = true, default-features = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
+tinyvec = { workspace = true }
 
 
 [dev-dependencies]

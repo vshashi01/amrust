@@ -27,6 +27,7 @@ env_logger = { version = "0.11.8" }
 #math or data processing libraries
 glam = { version = "0.30.3", features = ["rkyv"] }
 bytemuck = { version = "1.23.0" }
+tinyvec = { version = "1.10.0" }
 
 
 #(de)serialization libraries (XML, Image, Zip)

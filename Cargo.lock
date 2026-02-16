@@ -208,6 +208,7 @@ dependencies = [
  "nv-flip",
  "pollster",
  "thiserror 2.0.12",
+ "tinyvec",
  "wgpu",
 ]
 
@@ -241,6 +242,7 @@ dependencies = [
  "statig",
  "thiserror 2.0.12",
  "threemf2",
+ "tinyvec",
  "wgpu",
  "winit",
 ]

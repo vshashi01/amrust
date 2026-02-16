@@ -4,8 +4,9 @@ use slotmap::basic::Keys;
 use smol::lock::RwLock;
 
 use amrust_render::{
-    bounding_box::BoundingBox, gpu_mesh::MeshBuilder, instance::InstanceDataBuilder,
-    material::Material, transformation::TransformationData, vertex::Position3d,
+    bounding_box::BoundingBox, clip::ClipPlanes, gpu_mesh::MeshBuilder,
+    instance::InstanceDataBuilder, material::Material, transformation::TransformationData,
+    vertex::Position3d,
 };
 
 use crate::{
@@ -1170,6 +1171,7 @@ pub fn add_render_object(
             .add_instance_stream(material_data.as_slice())
             .build(device),
         local_resources: vec![],
+        clip_planes: ClipPlanes::new(device),
     };
     let colored_object_id = {
         let mut render_db = render_db.write_blocking();
@@ -1184,6 +1186,7 @@ pub fn add_render_object(
             .add_instance_stream(material_data.as_slice())
             .build(device),
         local_resources: vec![],
+        clip_planes: ClipPlanes::new(device),
     };
 
     let wireframe_object = {
@@ -1215,6 +1218,7 @@ fn add_bounding_box_wireframe(
             .add_instance_stream(&[Material::new(1.0, 1.0, 1.0).to_data()])
             .build(device),
         local_resources: vec![],
+        clip_planes: ClipPlanes::new(device),
     };
 
     render_db.add_object(wireframe_object)
