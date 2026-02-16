@@ -23,6 +23,7 @@ pub mod vertex;
 // internal module
 mod composite;
 mod constants;
+mod light;
 mod pipeline;
 mod render_pass;
 
@@ -67,12 +68,13 @@ mod tests {
         camera::{CameraData, OrthographicCameraData},
         gpu_mesh::{GpuMesh, MeshBuilder},
         instance::InstanceDataBuilder,
+        light::{NormalMatrixData, UseLightingData},
         material::Material,
         screen_space::SizeInPixel,
         transformation::Transformation,
     };
     use normalized_box::{
-        COLORS, INDEXED_POSITIONS_BOX_EDGE_INDICES, INDICES, ORDERED_POSITIONS,
+        COLORS, INDEXED_POSITIONS_BOX_EDGE_INDICES, INDICES, NORMALS, ORDERED_POSITIONS,
         ORDERED_POSITIONS_BOX_EDGE_INDICES, POSITIONS, TEX_COORDS, TRI_EDGE_INDICES, USE_TEXTURE,
     };
 
@@ -128,6 +130,104 @@ mod tests {
             if let Some(Ordering::Greater) = pool.mean().partial_cmp(&FLIP_MEAN_ERROR) {
                 println!("Mean error {}", pool.mean());
                 panic!("Something is wrong with the Wireframes")
+            }
+        });
+    }
+
+    #[test]
+    fn test_colored_mesh_mixed_lighting_instances() {
+        pollster::block_on(async {
+            let renderer = renderer::Renderer::from_new_device().await.unwrap();
+
+            let mut frame_view_data =
+                renderer.create_frame_view_data(TEXTURE_WIDTH, TEXTURE_HEIGHT);
+            frame_view_data
+                .camera
+                .update(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
+            renderer.write_frame_view_data_to_gpu(&frame_view_data);
+
+            let read_buffer =
+                renderer::create_read_buffer(&renderer.device, TEXTURE_WIDTH, TEXTURE_HEIGHT);
+
+            let mut render_db = TestRenderDb::new(&renderer.device);
+            let colored_mesh = MeshBuilder::new()
+                .add_vertex_stream(POSITIONS)
+                .add_vertex_stream(COLORS)
+                .add_vertex_stream(NORMALS)
+                .add_mesh_index_stream(INDICES)
+                .build(&renderer.device);
+            let colored_mesh_id = render_db.add_mesh(colored_mesh);
+
+            let transformations = [
+                Transformation(Mat4::from_translation((0.0, 5.0, 0.0).into())).to_data(),
+                Transformation(Mat4::from_translation((3.0, 5.0, 0.0).into())).to_data(),
+            ];
+
+            let normal_matrices = [
+                NormalMatrixData::from_model_matrix(
+                    Mat4::from_translation((0.0, 5.0, 0.0).into()),
+                    UseLightingData::YES,
+                ),
+                NormalMatrixData::from_model_matrix(
+                    Mat4::from_translation((3.0, 5.0, 0.0).into()),
+                    UseLightingData::NO,
+                ),
+            ];
+
+            let material_colors = [
+                Material::new(0.0, 0.8, 0.2).to_data(),
+                Material::new(0.2, 0.2, 1.0).to_data(),
+            ];
+
+            let colored_mesh_instance_buffer = InstanceDataBuilder::new()
+                .add_instance_stream(&transformations)
+                .add_instance_stream(&material_colors)
+                .add_instance_stream(&normal_matrices)
+                .build(&renderer.device);
+
+            let colored_mesh_object = RenderObject {
+                renderable: Renderable3d::ColoredMesh,
+                gpu_mesh_id: colored_mesh_id,
+                instance: colored_mesh_instance_buffer,
+                local_resources: vec![],
+                clip_planes: ClipPlanes::new(&renderer.device),
+            };
+            let _colored_mesh_object_id = render_db.add_object(colored_mesh_object);
+
+            let render_data = render_db.get_renderables().collect::<Vec<_>>();
+            let image_buffer = renderer
+                .render_and_return_as_image_buffer(
+                    &render_data,
+                    &read_buffer,
+                    wgpu::Extent3d {
+                        width: TEXTURE_WIDTH,
+                        height: TEXTURE_HEIGHT,
+                        depth_or_array_layers: 1,
+                    },
+                    &frame_view_data,
+                )
+                .await
+                .unwrap();
+
+            // image_buffer
+            //     .save("tests/data/colored_mesh_mixed_lighting.png")
+            //     .unwrap();
+
+            let ref_image_data =
+                image::open(PathBuf::from("tests/data/colored_mesh_mixed_lighting.png"))
+                    .unwrap()
+                    .into_rgba8();
+
+            let ref_image =
+                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &ref_image_data);
+            let test_image =
+                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &image_buffer);
+
+            let error_map = nv_flip::flip(ref_image, test_image, DEFAULT_PIXELS_PER_DEGREE);
+            let pool = nv_flip::FlipPool::from_image(&error_map);
+            if let Some(Ordering::Greater) = pool.mean().partial_cmp(&FLIP_MEAN_ERROR) {
+                println!("Mean error {}", pool.mean());
+                panic!("Something is wrong with the mixed lighting colors")
             }
         });
     }

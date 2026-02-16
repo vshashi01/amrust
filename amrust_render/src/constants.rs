@@ -1,8 +1,12 @@
 pub const VERTEX_COLORED_MESH_PIPELINE_KEY: &str = "Vertex_Colored_Mesh";
 pub const TEXTURE_MESH_PIPELINE_KEY: &str = "Single_Texture_Mesh";
 pub const ARRAY_TEXTURE_MESH_PIPELINE_KEY: &str = "Array_Texture_Mesh";
+pub const VERTEX_COLORED_MESH_PIPELINE_KEY_LIT: &str = "Vertex_Colored_Mesh_Lit";
+pub const TEXTURE_MESH_PIPELINE_KEY_LIT: &str = "Single_Texture_Mesh_Lit";
+pub const ARRAY_TEXTURE_MESH_PIPELINE_KEY_LIT: &str = "Array_Texture_Mesh_Lit";
 pub const WIREFRAME_MESH_PIPELINE_KEY: &str = "Mesh_Wireframe";
 pub const SOLID_COLORED_MESH_PIPELINE_KEY: &str = "Uniform_Color_Mesh";
+pub const SOLID_COLORED_MESH_PIPELINE_KEY_LIT: &str = "Uniform_Color_Mesh_Lit";
 pub const MESH_SILHOUETTE_PIPELINE_KEY: &str = "Mesh_Silhouette";
 pub const SCREEN_SPACE_MESH_PIPELINE_KEY: &str = "Screen_Space_Mesh";
 pub const SCREEN_SPACE_WIREFRAME_PIPELINE_KEY: &str = "Screen_Space_Wireframe";

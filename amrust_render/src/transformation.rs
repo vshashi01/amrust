@@ -1,6 +1,6 @@
-use glam::Mat4;
-
 use crate::prelude::*;
+
+use glam::Mat4;
 
 use crate::instance::InstanceFieldDescriptor;
 

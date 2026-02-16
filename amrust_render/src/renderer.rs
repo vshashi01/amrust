@@ -1,10 +1,11 @@
 use image::{ImageBuffer, Rgba};
 
-use crate::camera::CameraData;
+use crate::camera::{CameraData, CameraUniform};
 use crate::clip::ClipPlanes;
 use crate::composite::CompositeFragUniform;
-use crate::screen_space::{self, ScreenSpace};
-use crate::{Renderable3d, clip, composite, constants, prelude::*};
+use crate::light::{LightData, LightUniform};
+use crate::screen_space::{self, ScreenSpace, ScreenSpaceUniform};
+use crate::{Renderable3d, clip, composite, constants, light, prelude::*};
 
 use crate::{
     RenderData3d, WgpuError,
@@ -31,6 +32,7 @@ pub struct FrameViewData {
     pub camera: Camera,
     pub screen_space_data: ScreenSpace,
     pub clip_planes: ClipPlanes<MAX_CLIP_PLANE_COUNT>,
+    pub light: LightData,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,11 +83,19 @@ impl FrameViewData {
         let camera = Camera::new(device);
         let screen_space_data = ScreenSpace::new(device, initial_frame_width, initial_frame_height);
         let clip_planes = ClipPlanes::new(device);
+        let light = LightData::new_directional_light(
+            device,
+            glam::Vec3::new(0.0, -1.0, 0.0),
+            1.0,
+            glam::Vec3::new(1.0, 1.0, 1.0),
+            0.2,
+        );
 
         let bind_group = create_global_3d_render_pass_bind_group(
             device,
             camera.get_binding_reosurce(),
             screen_space_data.get_binding_resource(),
+            light.get_binding_resource(),
         );
 
         Self {
@@ -93,6 +103,7 @@ impl FrameViewData {
             screen_space_data,
             bind_group,
             clip_planes,
+            light,
         }
     }
 
@@ -110,6 +121,7 @@ impl FrameViewData {
         self.camera.write_buffer(queue);
         self.screen_space_data.write_buffer(queue);
         self.clip_planes.write_buffer(queue);
+        self.light.write_buffer(queue);
     }
 
     pub fn set_clip_plane(&mut self, clip_plane: &clip::ClipPlane) {
@@ -119,6 +131,10 @@ impl FrameViewData {
             }
         });
     }
+
+    // pub fn set_light(&mut self, light: LightUniform) {
+    //     self.light_uniform = light;
+    // }
 
     // pub fn clear_clip_plane(&mut self) {
     //     self.clip_plane = None;
@@ -279,6 +295,30 @@ impl Renderer {
             .set_depth_stencil(pipeline::create_depth_stencil_state())
             .build(&device, constants::TEXTURE_MESH_PIPELINE_KEY);
 
+        let standard_textured_vert_shader_source = wgpu::ShaderSource::Wgsl(
+            (include_str!("shaders/textured_vert_shader_lit.wgsl")).into(),
+        );
+        let single_texture_frag_shader_source =
+            wgpu::ShaderSource::Wgsl((include_str!("shaders/lit_texture_frag_shader.wgsl")).into());
+        let texture_surface_render_pipeline_lit = pipeline::PipelineBuilder::new()
+            .set_vertex_source(standard_textured_vert_shader_source, None)
+            .set_frag_source(single_texture_frag_shader_source, None)
+            .set_texture_format(texture_format)
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Color::layout::<1>())
+            .add_vertex_buffer_layout(vertex::TexCoords::layout::<2>())
+            .add_vertex_buffer_layout(vertex::UseTexture::layout::<3>())
+            .add_vertex_buffer_layout(vertex::Normal::layout::<4>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_vertex_buffer_layout(light::NormalMatrixData::layout::<10>())
+            .add_bind_group_layout(&global_bind_group_layout)
+            .add_bind_group_layout(&global_clip_bgl)
+            .add_bind_group_layout(&mesh_clip_bgl)
+            .add_bind_group_layout(&basic_texture_bind_group_layout)
+            .set_depth_stencil(pipeline::create_depth_stencil_state())
+            .build(&device, constants::TEXTURE_MESH_PIPELINE_KEY_LIT);
+
         let standard_textured_vert_shader_source =
             wgpu::ShaderSource::Wgsl((include_str!("shaders/textured_vert_shader.wgsl")).into());
         let array_textures_frag_shader_source = wgpu::ShaderSource::Wgsl(
@@ -301,6 +341,31 @@ impl Renderer {
             .set_depth_stencil(pipeline::create_depth_stencil_state())
             .build(&device, constants::ARRAY_TEXTURE_MESH_PIPELINE_KEY);
 
+        let standard_textured_vert_shader_source = wgpu::ShaderSource::Wgsl(
+            (include_str!("shaders/textured_vert_shader_lit.wgsl")).into(),
+        );
+        let array_textures_frag_shader_source = wgpu::ShaderSource::Wgsl(
+            (include_str!("shaders/lit_array_textures_frag_shader.wgsl")).into(),
+        );
+        let texture_array_surface_render_pipeline_lit = pipeline::PipelineBuilder::new()
+            .set_vertex_source(standard_textured_vert_shader_source, None)
+            .set_frag_source(array_textures_frag_shader_source, None)
+            .set_texture_format(texture_format)
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Color::layout::<1>())
+            .add_vertex_buffer_layout(vertex::TexCoords::layout::<2>())
+            .add_vertex_buffer_layout(vertex::UseTexture::layout::<3>())
+            .add_vertex_buffer_layout(vertex::Normal::layout::<4>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_vertex_buffer_layout(light::NormalMatrixData::layout::<10>())
+            .add_bind_group_layout(&global_bind_group_layout)
+            .add_bind_group_layout(&global_clip_bgl)
+            .add_bind_group_layout(&mesh_clip_bgl)
+            .add_bind_group_layout(&texture_array_bind_group_layout)
+            .set_depth_stencil(pipeline::create_depth_stencil_state())
+            .build(&device, constants::ARRAY_TEXTURE_MESH_PIPELINE_KEY_LIT);
+
         let colored_vert_shader_source =
             wgpu::ShaderSource::Wgsl((include_str!("shaders/colored_vert_shader.wgsl")).into());
         let colored_frag_shader_source =
@@ -319,6 +384,26 @@ impl Renderer {
             .set_depth_stencil(pipeline::create_depth_stencil_state())
             .build(&device, constants::VERTEX_COLORED_MESH_PIPELINE_KEY);
 
+        let colored_vert_shader_source =
+            wgpu::ShaderSource::Wgsl((include_str!("shaders/colored_vert_shader_lit.wgsl")).into());
+        let colored_frag_shader_source =
+            wgpu::ShaderSource::Wgsl(include_str!("shaders/lit_colored_frag_shader.wgsl").into());
+        let colored_surface_render_pipeline_lit = pipeline::PipelineBuilder::new()
+            .set_vertex_source(colored_vert_shader_source, None)
+            .set_frag_source(colored_frag_shader_source, None)
+            .set_texture_format(texture_format)
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Color::layout::<1>())
+            .add_vertex_buffer_layout(vertex::Normal::layout::<4>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_vertex_buffer_layout(light::NormalMatrixData::layout::<10>())
+            .add_bind_group_layout(&global_bind_group_layout)
+            .add_bind_group_layout(&global_clip_bgl)
+            .add_bind_group_layout(&mesh_clip_bgl)
+            .set_depth_stencil(pipeline::create_depth_stencil_state())
+            .build(&device, constants::VERTEX_COLORED_MESH_PIPELINE_KEY_LIT);
+
         let solid_source = wgpu::ShaderSource::Wgsl(
             (include_str!("shaders/material_color_vert_shader.wgsl")).into(),
         );
@@ -336,6 +421,26 @@ impl Renderer {
             .add_bind_group_layout(&mesh_clip_bgl)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
             .build(&device, constants::SOLID_COLORED_MESH_PIPELINE_KEY);
+
+        let solid_source = wgpu::ShaderSource::Wgsl(
+            (include_str!("shaders/material_color_vert_shader_lit.wgsl")).into(),
+        );
+        let colored_frag_shader_source =
+            wgpu::ShaderSource::Wgsl(include_str!("shaders/lit_colored_frag_shader.wgsl").into());
+        let solid_render_pipeline_lit = pipeline::PipelineBuilder::new()
+            .set_vertex_source(solid_source, None)
+            .set_frag_source(colored_frag_shader_source, None)
+            .set_texture_format(texture_format)
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Normal::layout::<4>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_vertex_buffer_layout(light::NormalMatrixData::layout::<10>())
+            .add_bind_group_layout(&global_bind_group_layout)
+            .add_bind_group_layout(&global_clip_bgl)
+            .add_bind_group_layout(&mesh_clip_bgl)
+            .set_depth_stencil(pipeline::create_depth_stencil_state())
+            .build(&device, constants::SOLID_COLORED_MESH_PIPELINE_KEY_LIT);
 
         let colored_vert_shader_source = wgpu::ShaderSource::Wgsl(
             (include_str!("shaders/material_color_vert_shader.wgsl")).into(),
@@ -485,6 +590,10 @@ impl Renderer {
             texture_surface_render_pipeline,
         );
         render_pipeline_cache.insert(
+            constants::TEXTURE_MESH_PIPELINE_KEY_LIT,
+            texture_surface_render_pipeline_lit,
+        );
+        render_pipeline_cache.insert(
             constants::WIREFRAME_MESH_PIPELINE_KEY,
             wireframe_render_pipeline,
         );
@@ -493,12 +602,24 @@ impl Renderer {
             colored_surface_render_pipeline,
         );
         render_pipeline_cache.insert(
+            constants::VERTEX_COLORED_MESH_PIPELINE_KEY_LIT,
+            colored_surface_render_pipeline_lit,
+        );
+        render_pipeline_cache.insert(
             constants::SOLID_COLORED_MESH_PIPELINE_KEY,
             solid_render_pipeline,
         );
         render_pipeline_cache.insert(
+            constants::SOLID_COLORED_MESH_PIPELINE_KEY_LIT,
+            solid_render_pipeline_lit,
+        );
+        render_pipeline_cache.insert(
             constants::ARRAY_TEXTURE_MESH_PIPELINE_KEY,
             texture_array_surface_render_pipeline,
+        );
+        render_pipeline_cache.insert(
+            constants::ARRAY_TEXTURE_MESH_PIPELINE_KEY_LIT,
+            texture_array_surface_render_pipeline_lit,
         );
         render_pipeline_cache.insert(
             constants::MESH_SILHOUETTE_PIPELINE_KEY,
@@ -1092,7 +1213,9 @@ pub fn create_global_3d_render_pass_bind_group_layout(
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: None,
+                    min_binding_size: Some(
+                        NonZero::new(CameraUniform::get_size() as wgpu::BufferAddress).unwrap(),
+                    ),
                 },
                 count: None,
             },
@@ -1103,7 +1226,23 @@ pub fn create_global_3d_render_pass_bind_group_layout(
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: None,
+                    min_binding_size: Some(
+                        NonZero::new(ScreenSpaceUniform::get_size() as wgpu::BufferAddress)
+                            .unwrap(),
+                    ),
+                },
+                count: None,
+            },
+            //light uniform
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(
+                        NonZero::new(LightUniform::get_size() as wgpu::BufferAddress).unwrap(),
+                    ),
                 },
                 count: None,
             },
@@ -1115,6 +1254,7 @@ pub fn create_global_3d_render_pass_bind_group(
     device: &wgpu::Device,
     camera_resource: wgpu::BindingResource<'_>,
     screen_space_resource: wgpu::BindingResource<'_>,
+    light_resource: wgpu::BindingResource<'_>,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("Global Bind Group"),
@@ -1129,6 +1269,11 @@ pub fn create_global_3d_render_pass_bind_group(
             wgpu::BindGroupEntry {
                 binding: 1,
                 resource: screen_space_resource,
+            },
+            //light uniform
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: light_resource,
             },
         ],
     })

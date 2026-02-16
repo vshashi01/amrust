@@ -1,4 +1,4 @@
-use crate::{RenderData3d, Renderable3d, material, screen_space, transformation, vertex};
+use crate::{RenderData3d, Renderable3d, light, material, screen_space, transformation, vertex};
 use crate::{constants, prelude::*};
 
 use std::collections::HashMap;
@@ -27,22 +27,55 @@ pub fn surface_3d_render_pass_with_depth<'a>(
     });
 
     for (mesh, instance, bind_groups_list, pipeline_key, clip_plane) in single_textured_objects {
+        let use_lit = mesh.vertex_stream::<vertex::Normal>().is_some()
+            && instance
+                .instance_data_stream::<light::NormalMatrixData>()
+                .is_some();
+        let pipeline_key = if use_lit {
+            match pipeline_key {
+                constants::TEXTURE_MESH_PIPELINE_KEY => constants::TEXTURE_MESH_PIPELINE_KEY_LIT,
+                constants::ARRAY_TEXTURE_MESH_PIPELINE_KEY => {
+                    constants::ARRAY_TEXTURE_MESH_PIPELINE_KEY_LIT
+                }
+                _ => pipeline_key,
+            }
+        } else {
+            pipeline_key
+        };
+
         render_pass.set_pipeline(render_pipeline_cache.get(pipeline_key).unwrap());
         let position_buffer = mesh.vertex_slice::<vertex::Position3d>();
         let color_buffer = mesh.vertex_slice::<vertex::Color>();
         let tex_coord_buffer = mesh.vertex_slice::<vertex::TexCoords>();
         let use_texture_buffer = mesh.vertex_slice::<vertex::UseTexture>();
+        let normal_buffer = if use_lit {
+            Some(mesh.vertex_slice::<vertex::Normal>())
+        } else {
+            None
+        };
 
         let transformation_buffer = instance.vertex_slice::<transformation::TransformationData>();
         let material_buffer = instance.vertex_slice::<material::RgbMaterialData>();
+        let normal_matrix_buffer = if use_lit {
+            Some(instance.vertex_slice::<light::NormalMatrixData>())
+        } else {
+            None
+        };
 
         render_pass.set_bind_group(2, clip_plane, &[]);
         render_pass.set_vertex_buffer(0, position_buffer);
         render_pass.set_vertex_buffer(1, color_buffer);
         render_pass.set_vertex_buffer(2, tex_coord_buffer);
         render_pass.set_vertex_buffer(3, use_texture_buffer);
-        render_pass.set_vertex_buffer(4, transformation_buffer);
-        render_pass.set_vertex_buffer(5, material_buffer);
+        if let Some(normal_buffer) = normal_buffer {
+            render_pass.set_vertex_buffer(4, normal_buffer);
+            render_pass.set_vertex_buffer(5, transformation_buffer);
+            render_pass.set_vertex_buffer(6, material_buffer);
+            render_pass.set_vertex_buffer(7, normal_matrix_buffer.unwrap());
+        } else {
+            render_pass.set_vertex_buffer(4, transformation_buffer);
+            render_pass.set_vertex_buffer(5, material_buffer);
+        }
 
         for pair in bind_groups_list.iter() {
             render_pass.set_bind_group(pair.1, pair.0, &[]);
@@ -67,22 +100,47 @@ pub fn surface_3d_render_pass_with_depth<'a>(
     });
 
     for (mesh, instance, clip_plane) in colored_objects {
+        let use_lit = mesh.vertex_stream::<vertex::Normal>().is_some()
+            && instance
+                .instance_data_stream::<light::NormalMatrixData>()
+                .is_some();
         render_pass.set_pipeline(
             render_pipeline_cache
-                .get(constants::VERTEX_COLORED_MESH_PIPELINE_KEY)
+                .get(if use_lit {
+                    constants::VERTEX_COLORED_MESH_PIPELINE_KEY_LIT
+                } else {
+                    constants::VERTEX_COLORED_MESH_PIPELINE_KEY
+                })
                 .unwrap(),
         );
         let position_buffer = mesh.vertex_slice::<vertex::Position3d>();
         let color_buffer = mesh.vertex_slice::<vertex::Color>();
+        let normal_buffer = if use_lit {
+            Some(mesh.vertex_slice::<vertex::Normal>())
+        } else {
+            None
+        };
 
         let transformation_buffer = instance.vertex_slice::<transformation::TransformationData>();
         let material_buffer = instance.vertex_slice::<material::RgbMaterialData>();
+        let normal_matrix_buffer = if use_lit {
+            Some(instance.vertex_slice::<light::NormalMatrixData>())
+        } else {
+            None
+        };
 
         render_pass.set_bind_group(2, clip_plane, &[]);
         render_pass.set_vertex_buffer(0, position_buffer);
         render_pass.set_vertex_buffer(1, color_buffer);
-        render_pass.set_vertex_buffer(2, transformation_buffer);
-        render_pass.set_vertex_buffer(3, material_buffer);
+        if let Some(normal_buffer) = normal_buffer {
+            render_pass.set_vertex_buffer(2, normal_buffer);
+            render_pass.set_vertex_buffer(3, transformation_buffer);
+            render_pass.set_vertex_buffer(4, material_buffer);
+            render_pass.set_vertex_buffer(5, normal_matrix_buffer.unwrap());
+        } else {
+            render_pass.set_vertex_buffer(2, transformation_buffer);
+            render_pass.set_vertex_buffer(3, material_buffer);
+        }
 
         if let Some(index_stream) = &mesh.mesh_index_stream {
             let index_buffer = mesh.buffer.slice(index_stream.offset..index_stream.end);
@@ -103,19 +161,44 @@ pub fn surface_3d_render_pass_with_depth<'a>(
     });
 
     for (mesh, instance, clip_plane) in simple_objects {
+        let use_lit = mesh.vertex_stream::<vertex::Normal>().is_some()
+            && instance
+                .instance_data_stream::<light::NormalMatrixData>()
+                .is_some();
         render_pass.set_pipeline(
             render_pipeline_cache
-                .get(constants::SOLID_COLORED_MESH_PIPELINE_KEY)
+                .get(if use_lit {
+                    constants::SOLID_COLORED_MESH_PIPELINE_KEY_LIT
+                } else {
+                    constants::SOLID_COLORED_MESH_PIPELINE_KEY
+                })
                 .unwrap(),
         );
         let position_buffer = mesh.vertex_slice::<vertex::Position3d>();
+        let normal_buffer = if use_lit {
+            Some(mesh.vertex_slice::<vertex::Normal>())
+        } else {
+            None
+        };
         let transformation_buffer = instance.vertex_slice::<transformation::TransformationData>();
         let material_buffer = instance.vertex_slice::<material::RgbMaterialData>();
+        let normal_matrix_buffer = if use_lit {
+            Some(instance.vertex_slice::<light::NormalMatrixData>())
+        } else {
+            None
+        };
 
         render_pass.set_bind_group(2, clip_plane, &[]);
         render_pass.set_vertex_buffer(0, position_buffer);
-        render_pass.set_vertex_buffer(1, transformation_buffer);
-        render_pass.set_vertex_buffer(2, material_buffer);
+        if let Some(normal_buffer) = normal_buffer {
+            render_pass.set_vertex_buffer(1, normal_buffer);
+            render_pass.set_vertex_buffer(2, transformation_buffer);
+            render_pass.set_vertex_buffer(3, material_buffer);
+            render_pass.set_vertex_buffer(4, normal_matrix_buffer.unwrap());
+        } else {
+            render_pass.set_vertex_buffer(1, transformation_buffer);
+            render_pass.set_vertex_buffer(2, material_buffer);
+        }
 
         render_pass.draw(0..mesh.vertex_count, 0..instance.instance_count);
     }

@@ -1,6 +1,6 @@
 #![allow(unused)]
 
-use crate::vertex::{Color, Position3d, TexCoords, UseTexture};
+use crate::vertex::{Color, Normal, Position3d, TexCoords, UseTexture};
 
 //
 //
@@ -143,6 +143,39 @@ pub const TEX_COORDS: &[TexCoords] = &[
     TexCoords([0.0, 1.0]),
     TexCoords([1.0, 0.0]),
     TexCoords([1.0, 1.0]),
+];
+
+pub const NORMALS: &[Normal] = &[
+    // back face
+    Normal([0.0, 0.0, -1.0]),
+    Normal([0.0, 0.0, -1.0]),
+    Normal([0.0, 0.0, -1.0]),
+    Normal([0.0, 0.0, -1.0]),
+    // front face
+    Normal([0.0, 0.0, 1.0]),
+    Normal([0.0, 0.0, 1.0]),
+    Normal([0.0, 0.0, 1.0]),
+    Normal([0.0, 0.0, 1.0]),
+    // bottom face
+    Normal([0.0, -1.0, 0.0]),
+    Normal([0.0, -1.0, 0.0]),
+    Normal([0.0, -1.0, 0.0]),
+    Normal([0.0, -1.0, 0.0]),
+    // top face
+    Normal([0.0, 1.0, 0.0]),
+    Normal([0.0, 1.0, 0.0]),
+    Normal([0.0, 1.0, 0.0]),
+    Normal([0.0, 1.0, 0.0]),
+    // right face
+    Normal([1.0, 0.0, 0.0]),
+    Normal([1.0, 0.0, 0.0]),
+    Normal([1.0, 0.0, 0.0]),
+    Normal([1.0, 0.0, 0.0]),
+    // left face
+    Normal([-1.0, 0.0, 0.0]),
+    Normal([-1.0, 0.0, 0.0]),
+    Normal([-1.0, 0.0, 0.0]),
+    Normal([-1.0, 0.0, 0.0]),
 ];
 
 pub const USE_TEXTURE: &[UseTexture] = &[

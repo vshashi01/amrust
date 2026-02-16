@@ -59,6 +59,24 @@ impl VertexDescriptor for Color {
 }
 
 #[repr(transparent)]
+#[derive(Debug, Copy, Clone, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct Normal(pub [f32; 3]);
+
+impl VertexDescriptor for Normal {
+    fn layout<const LOCATION: u32>() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Self>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x3,
+                offset: 0,
+                shader_location: LOCATION,
+            }],
+        }
+    }
+}
+
+#[repr(transparent)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct TexCoords(pub [f32; 2]);
 

@@ -8,6 +8,12 @@ pub struct ScreenSpaceUniform {
     screen_size: [f32; 2],
 }
 
+impl ScreenSpaceUniform {
+    pub fn get_size() -> usize {
+        std::mem::size_of::<Self>()
+    }
+}
+
 pub struct ScreenSpace {
     width: f32,
     height: f32,
