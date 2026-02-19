@@ -70,8 +70,7 @@ impl ClipPlane {
 #[derive(Debug, Clone)]
 pub struct ClipPlanes<const COUNT: usize> {
     clip_planes: tinyvec::ArrayVec<[ClipPlane; COUNT]>,
-    pub(crate) bind_group: wgpu::BindGroup,
-    buffers: [wgpu::Buffer; COUNT],
+    pub(crate) buffers: [wgpu::Buffer; COUNT],
 }
 
 impl<const COUNT: usize> ClipPlanes<COUNT> {
@@ -90,12 +89,8 @@ impl<const COUNT: usize> ClipPlanes<COUNT> {
             .try_into()
             .expect("Something wrong in Clip Planes length");
 
-        let layout = create_clip_bind_group_layout::<COUNT>(device);
-        let bind_group = create_clip_bind_group(device, &layout, &buffers);
-
         Self {
             clip_planes,
-            bind_group,
             buffers,
         }
     }
@@ -158,14 +153,53 @@ fn create_buffer(device: &wgpu::Device, uniforms: &[ClipUniform]) -> wgpu::Buffe
     })
 }
 
-pub(crate) fn create_clip_bind_group_layout<const COUNT: usize>(
+pub(crate) fn create_clip_bind_group_layout<const COUNT: usize, const BINDING_OFFSET: u32>(
     device: &wgpu::Device,
 ) -> wgpu::BindGroupLayout {
+    let entries = create_clip_bind_group_layout_entries::<COUNT, BINDING_OFFSET>();
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Clip Plane Bind Group Layout"),
+        entries: &entries,
+    })
+}
+
+pub fn create_clip_bind_group<const COUNT: usize, const BINDING_OFFSET: u32>(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    buffers: &[wgpu::Buffer; COUNT],
+) -> wgpu::BindGroup {
+    let entries = create_clip_bind_group_entries::<COUNT, BINDING_OFFSET>(buffers);
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Clip Plane Bind Group"),
+        layout,
+        entries: &entries,
+    })
+}
+
+pub fn create_clip_bind_group_entries<const COUNT: usize, const BINDING_OFFSET: u32>(
+    buffers: &[wgpu::Buffer; COUNT],
+) -> Vec<wgpu::BindGroupEntry<'_>> {
+    if buffers.len() != COUNT {
+        panic!("Clip plane bind resources does not match the clip plane count: {COUNT}");
+    } else {
+        buffers
+            .iter()
+            .enumerate()
+            .map(|(index, buffer)| wgpu::BindGroupEntry {
+                binding: (index as u32) + BINDING_OFFSET,
+                resource: buffer.as_entire_binding(),
+            })
+            .collect::<Vec<_>>()
+    }
+}
+
+pub fn create_clip_bind_group_layout_entries<const COUNT: usize, const BINDING_OFFSET: u32>()
+-> Vec<wgpu::BindGroupLayoutEntry> {
     let mut entries: Vec<BindGroupLayoutEntry> = Vec::new();
 
     for index in 0..COUNT {
         let entry = wgpu::BindGroupLayoutEntry {
-            binding: index as u32,
+            binding: (index as u32) + BINDING_OFFSET,
             visibility: wgpu::ShaderStages::FRAGMENT,
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
@@ -180,28 +214,5 @@ pub(crate) fn create_clip_bind_group_layout<const COUNT: usize>(
         entries.push(entry);
     }
 
-    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("Clip Plane Bind Group Layout"),
-        entries: &entries,
-    })
-}
-
-fn create_clip_bind_group<const COUNT: usize>(
-    device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
-    buffers: &[wgpu::Buffer; COUNT],
-) -> wgpu::BindGroup {
-    let entries = buffers
-        .iter()
-        .enumerate()
-        .map(|(index, buffer)| wgpu::BindGroupEntry {
-            binding: index as u32,
-            resource: buffer.as_entire_binding(),
-        })
-        .collect::<Vec<_>>();
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("Clip Plane Bind Group"),
-        layout,
-        entries: &entries,
-    })
+    entries
 }

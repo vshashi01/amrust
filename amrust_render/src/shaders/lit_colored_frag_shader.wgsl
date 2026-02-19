@@ -28,11 +28,12 @@ struct LightUniform {
 @group(0) @binding(2)
 var<uniform> light: LightUniform;
 
-@group(1) @binding(0)
+@group(0) @binding(3)
 var<uniform> view_clip: ClipUniform;
 
-@group(2) @binding(0)
+@group(1) @binding(0)
 var<uniform> mesh_clip: ClipUniform;
+
 
 fn clip_pass(clip: ClipUniform, world_pos: vec3<f32>) -> bool {
     if (clip.enabled == 0u) {

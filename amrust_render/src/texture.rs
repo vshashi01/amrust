@@ -107,7 +107,7 @@ impl DepthTexture {
     }
 }
 
-pub fn generate_basic_texture_sampler(device: &wgpu::Device) -> wgpu::Sampler {
+pub fn create_tex_sampler(device: &wgpu::Device) -> wgpu::Sampler {
     device.create_sampler(&wgpu::SamplerDescriptor {
         address_mode_u: wgpu::AddressMode::ClampToEdge,
         address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -119,20 +119,20 @@ pub fn generate_basic_texture_sampler(device: &wgpu::Device) -> wgpu::Sampler {
     })
 }
 
-pub fn generate_basic_texture_bind_group<const TEX_BINDING: u32, const SAMPLER_BINDING: u32>(
+pub fn create_single_texture_bg<const TEX_BINDING: u32, const SAMPLER_BINDING: u32>(
     device: &wgpu::Device,
-    texture: &Texture,
+    label: &str,
+    texture_view: &wgpu::TextureView,
     sampler: &wgpu::Sampler,
     layout: &wgpu::BindGroupLayout,
 ) -> wgpu::BindGroup {
-    let bind_group_label = texture.label.clone() + "Bind Group";
     device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some(bind_group_label.as_str()),
+        label: Some(label),
         layout,
         entries: &[
             wgpu::BindGroupEntry {
                 binding: TEX_BINDING,
-                resource: wgpu::BindingResource::TextureView(&texture.view),
+                resource: wgpu::BindingResource::TextureView(texture_view),
             },
             wgpu::BindGroupEntry {
                 binding: SAMPLER_BINDING,
@@ -142,7 +142,7 @@ pub fn generate_basic_texture_bind_group<const TEX_BINDING: u32, const SAMPLER_B
     })
 }
 
-pub fn generate_texture_bind_group_layout<const TEX_BINDING: u32, const SAMPLER_BINDING: u32>(
+pub fn creae_single_texture_bgl<const TEX_BINDING: u32, const SAMPLER_BINDING: u32>(
     device: &wgpu::Device,
     label: &str,
     filterable: bool,
@@ -174,7 +174,7 @@ pub fn generate_texture_bind_group_layout<const TEX_BINDING: u32, const SAMPLER_
     })
 }
 
-pub fn generate_texture_array_bind_group<const TEX_BINDING: u32, const SAMPLER_BINDING: u32>(
+pub fn create_array_texture_bg<const TEX_BINDING: u32, const SAMPLER_BINDING: u32>(
     device: &wgpu::Device,
     label: &str,
     texture_views: &[&wgpu::TextureView],
@@ -197,10 +197,7 @@ pub fn generate_texture_array_bind_group<const TEX_BINDING: u32, const SAMPLER_B
     })
 }
 
-pub fn generate_texture_array_bind_group_layout<
-    const TEX_BINDING: u32,
-    const SAMPLER_BINDING: u32,
->(
+pub fn create_array_texture_bgl<const TEX_BINDING: u32, const SAMPLER_BINDING: u32>(
     device: &wgpu::Device,
     label: &str,
     filterable: bool,

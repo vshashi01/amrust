@@ -1,3 +1,5 @@
+use std::num::NonZero;
+
 use thiserror::Error;
 
 mod prelude;
@@ -36,6 +38,13 @@ pub enum WgpuError {
     // AdapterError(#[from] wgpu::RequestAdapterError),
 }
 
+pub struct RenderData3d<'a> {
+    pub renderable: Renderable3d,
+    pub mesh: &'a GpuMesh,
+    pub instance: &'a GpuInstance,
+    pub local_resources: &'a RenderDataLocalResources,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Renderable3d {
     ColoredMesh,
@@ -48,12 +57,108 @@ pub enum Renderable3d {
     ScreenSpaceWireframeMesh { depth_testing: bool, order: u8 },
 }
 
-pub struct RenderData3d<'a> {
-    pub renderable: Renderable3d,
-    pub mesh: &'a GpuMesh,
-    pub instance: &'a GpuInstance,
-    pub local_bind_groups: Vec<(&'a wgpu::BindGroup, u32)>,
-    pub clip_plane: &'a ClipPlanes<1>,
+pub struct RenderDataLocalResources {
+    pub clip_plane: ClipPlanes<1>,
+    pub(crate) uniform_bg: wgpu::BindGroup,
+    pub(crate) texture_bg: Option<wgpu::BindGroup>,
+}
+
+impl RenderDataLocalResources {
+    pub fn clip_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+        clip::create_clip_bind_group_layout::<1, 0>(device)
+    }
+
+    pub fn textured_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+        texture::creae_single_texture_bgl::<0, 1>(
+            device,
+            "Mesh Local Textured Bind Group Layout",
+            true,
+        )
+    }
+
+    pub fn array_textured_layout(
+        device: &wgpu::Device,
+        count: NonZero<u32>,
+    ) -> wgpu::BindGroupLayout {
+        texture::create_array_texture_bgl::<0, 1>(
+            device,
+            "Mesh Local Array Texture BGL",
+            true,
+            count,
+        )
+    }
+
+    pub fn new_colored(device: &wgpu::Device, clip_plane: ClipPlanes<1>) -> Self {
+        let clip_layout = Self::clip_layout(device);
+        let clip_bind_group =
+            clip::create_clip_bind_group::<1, 0>(device, &clip_layout, &clip_plane.buffers);
+
+        Self {
+            clip_plane,
+            uniform_bg: clip_bind_group,
+            texture_bg: None,
+        }
+    }
+
+    pub fn new_textured(
+        device: &wgpu::Device,
+        clip_plane: ClipPlanes<1>,
+        texture_view: &wgpu::TextureView,
+        sampler: &wgpu::Sampler,
+    ) -> Self {
+        let clip_layout = Self::clip_layout(device);
+        let clip_bind_group =
+            clip::create_clip_bind_group::<1, 0>(device, &clip_layout, &clip_plane.buffers);
+
+        let res_layout = Self::textured_layout(device);
+        let resource_bind_group = texture::create_single_texture_bg::<0, 1>(
+            device,
+            "",
+            texture_view,
+            sampler,
+            &res_layout,
+        );
+
+        Self {
+            clip_plane,
+            uniform_bg: clip_bind_group,
+            texture_bg: Some(resource_bind_group),
+        }
+    }
+
+    pub fn new_array_textured<const TEXTURE_COUNT: u32>(
+        device: &wgpu::Device,
+        clip_plane: ClipPlanes<1>,
+        texture_views: &[&wgpu::TextureView],
+        sampler: &wgpu::Sampler,
+    ) -> Self {
+        if TEXTURE_COUNT > texture::MAX_BINDING_ARRAY_ELEMENTS_PER_SHADER_STAGE {
+            panic!(
+                "Too many textures in texture array: Max textures are {}",
+                texture::MAX_BINDING_ARRAY_ELEMENTS_PER_SHADER_STAGE
+            );
+        } else if TEXTURE_COUNT == 0 {
+            panic!("Zero texture in texture array is not supported")
+        }
+
+        let clip_layout = Self::clip_layout(device);
+        let clip_bind_group =
+            clip::create_clip_bind_group::<1, 0>(device, &clip_layout, &clip_plane.buffers);
+
+        let res_layout = Self::array_textured_layout(device, NonZero::new(TEXTURE_COUNT).unwrap());
+        let resource_bind_group = texture::create_array_texture_bg::<0, 1>(
+            device,
+            "Mesh Local Array Textured Bind Group",
+            texture_views,
+            sampler,
+            &res_layout,
+        );
+        Self {
+            clip_plane,
+            uniform_bg: clip_bind_group,
+            texture_bg: Some(resource_bind_group),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -189,9 +294,12 @@ mod tests {
                 renderable: Renderable3d::ColoredMesh,
                 gpu_mesh_id: colored_mesh_id,
                 instance: colored_mesh_instance_buffer,
-                local_resources: vec![],
-                clip_planes: ClipPlanes::new(&renderer.device),
+                mesh_local: RenderDataLocalResources::new_colored(
+                    &renderer.device,
+                    ClipPlanes::new(&renderer.device),
+                ),
             };
+
             let _colored_mesh_object_id = render_db.add_object(colored_mesh_object);
 
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
@@ -771,7 +879,6 @@ mod tests {
                 &renderer.device,
                 &renderer.queue,
                 &renderer.texture_sampler,
-                &renderer.texture_bind_group_layout,
                 &mut render_db,
             );
 
@@ -828,7 +935,6 @@ mod tests {
                 &renderer.device,
                 &renderer.queue,
                 &renderer.texture_sampler,
-                &renderer.texture_array_bind_group_layout,
                 &mut render_db,
             );
 
@@ -922,178 +1028,23 @@ mod tests {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         render_db: &mut TestRenderDb,
-        sampler: &wgpu::Sampler,
-        layout: &wgpu::BindGroupLayout,
-    ) -> (u32, u32) {
+    ) -> u32 {
         let tex = texture::Texture::from_bytes(device, queue, bytes, path).unwrap();
-        render_db.add_texture(tex, device, sampler, layout)
-    }
-
-    fn set_multi_tex_mesh_object(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        sampler: &wgpu::Sampler,
-        layout: &wgpu::BindGroupLayout,
-        render_db: &mut TestRenderDb,
-    ) -> (u32, u32) {
-        let (top_tex_id, _) = create_texture_and_texture_bind_group(
-            include_bytes!("resources/top-tex.png"),
-            "top-tex.png",
-            device,
-            queue,
-            render_db,
-            sampler,
-            layout,
-        );
-
-        let (right_tex_id, _) = create_texture_and_texture_bind_group(
-            include_bytes!("resources/right-tex.png"),
-            "right-tex.png",
-            device,
-            queue,
-            render_db,
-            sampler,
-            layout,
-        );
-
-        let (left_tex_id, _) = create_texture_and_texture_bind_group(
-            include_bytes!("resources/left-tex.png"),
-            "left-tex.png",
-            device,
-            queue,
-            render_db,
-            sampler,
-            layout,
-        );
-
-        let (bottom_tex_id, _) = create_texture_and_texture_bind_group(
-            include_bytes!("resources/bottom-tex.png"),
-            "bottom-tex.png",
-            device,
-            queue,
-            render_db,
-            sampler,
-            layout,
-        );
-
-        let (front_tex_id, _) = create_texture_and_texture_bind_group(
-            include_bytes!("resources/front-tex.png"),
-            "front-tex.png",
-            device,
-            queue,
-            render_db,
-            sampler,
-            layout,
-        );
-
-        let (back_tex_id, _) = create_texture_and_texture_bind_group(
-            include_bytes!("resources/back-tex.png"),
-            "back-tex.png",
-            device,
-            queue,
-            render_db,
-            sampler,
-            layout,
-        );
-
-        let texture_array_bind_group = render_db.create_texture_array(
-            &[
-                front_tex_id,
-                bottom_tex_id,
-                top_tex_id,
-                back_tex_id,
-                left_tex_id,
-                right_tex_id,
-            ],
-            device,
-            sampler,
-            layout,
-        );
-
-        let multi_tex_mesh = MeshBuilder::new()
-            .add_vertex_stream(POSITIONS)
-            .add_vertex_stream(COLORS)
-            .add_vertex_stream(TEX_COORDS)
-            .add_vertex_stream(&normalized_box::get_use_texture_vertices(
-                vertex::UseTexture::from_texture_index(3),
-                vertex::UseTexture::from_texture_index(0),
-                vertex::UseTexture::from_texture_index(1),
-                vertex::UseTexture::NO, //2
-                vertex::UseTexture::from_texture_index(5),
-                vertex::UseTexture::from_texture_index(4),
-                // vertex::UseTexture::from_texture_index(left_tex_id),
-            ))
-            .add_mesh_index_stream(INDICES)
-            .add_wireframe_index_stream(INDEXED_POSITIONS_BOX_EDGE_INDICES)
-            .build(device);
-        let multi_tex_mesh_id = render_db.add_mesh(multi_tex_mesh);
-
-        let transformations = [
-            Transformation(Mat4::from_translation((0.0, 5.0, 0.0).into())).to_data(),
-            Transformation(Mat4::from_axis_angle(
-                Vec3 {
-                    x: 0.0,
-                    y: 1.0,
-                    z: 0.0,
-                },
-                45.0_f32.to_radians(),
-            ))
-            .to_data(),
-        ];
-
-        let material_colors = [
-            Material::new(0.0, 0.0, 1.0).to_data(),
-            Material::new(0.0, 0.0, 1.0).to_data(),
-        ];
-
-        let multi_tex_mesh_instance_buffer = InstanceDataBuilder::new()
-            .add_instance_stream(&transformations)
-            .add_instance_stream(&material_colors)
-            .build(device);
-
-        let multi_tex_mesh_object = RenderObject {
-            renderable: Renderable3d::ArrayTexturedMesh,
-            gpu_mesh_id: multi_tex_mesh_id,
-            instance: multi_tex_mesh_instance_buffer,
-            local_resources: vec![(texture_array_bind_group, 3)],
-            clip_planes: ClipPlanes::new(device),
-        };
-        let _multi_tex_mesh_object_id = render_db.add_object(multi_tex_mesh_object);
-
-        let multi_tex_mesh_wireframe_object = RenderObject {
-            renderable: Renderable3d::WireframeMesh,
-            gpu_mesh_id: multi_tex_mesh_id,
-            instance: InstanceDataBuilder::new()
-                .add_instance_stream(&transformations)
-                .add_instance_stream(&material_colors)
-                .build(device),
-            local_resources: vec![],
-            clip_planes: ClipPlanes::new(device),
-        };
-        let _multi_tex_mesh_wireframe_object_id =
-            render_db.add_object(multi_tex_mesh_wireframe_object);
-
-        (
-            _multi_tex_mesh_object_id,
-            _multi_tex_mesh_wireframe_object_id,
-        )
+        render_db.add_texture(tex)
     }
 
     fn single_tex_mesh_object(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         sampler: &wgpu::Sampler,
-        layout: &wgpu::BindGroupLayout,
         render_db: &mut TestRenderDb,
     ) -> (u32, u32) {
-        let (_, happy_tree_bind_group_id) = create_texture_and_texture_bind_group(
+        let happy_tree_id = create_texture_and_texture_bind_group(
             include_bytes!("resources/happy-tree.png"),
             "happy-tree",
             device,
             queue,
             render_db,
-            sampler,
-            layout,
         );
 
         let single_tex_mesh = MeshBuilder::new()
@@ -1133,8 +1084,12 @@ mod tests {
             renderable: Renderable3d::TexturedMesh,
             gpu_mesh_id: single_tex_mesh_id,
             instance: single_tex_mesh_instance_buffer,
-            local_resources: vec![(happy_tree_bind_group_id, 3)],
-            clip_planes: ClipPlanes::new(device),
+            mesh_local: RenderDataLocalResources::new_textured(
+                device,
+                ClipPlanes::new(device),
+                render_db.get_texture_view(happy_tree_id),
+                sampler,
+            ),
         };
         let _single_tex_mesh_object_id = render_db.add_object(single_tex_mesh_object);
 
@@ -1145,8 +1100,7 @@ mod tests {
                 .add_instance_stream(&transformations)
                 .add_instance_stream(&material_colors)
                 .build(device),
-            local_resources: vec![],
-            clip_planes: ClipPlanes::new(device),
+            mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
         };
         let _single_tex_mesh_wireframe_object_id =
             render_db.add_object(single_tex_mesh_wireframe_object);
@@ -1154,6 +1108,141 @@ mod tests {
         (
             _single_tex_mesh_object_id,
             _single_tex_mesh_wireframe_object_id,
+        )
+    }
+
+    fn set_multi_tex_mesh_object(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        sampler: &wgpu::Sampler,
+        render_db: &mut TestRenderDb,
+    ) -> (u32, u32) {
+        let top_tex_id = create_texture_and_texture_bind_group(
+            include_bytes!("resources/top-tex.png"),
+            "top-tex.png",
+            device,
+            queue,
+            render_db,
+        );
+
+        let right_tex_id = create_texture_and_texture_bind_group(
+            include_bytes!("resources/right-tex.png"),
+            "right-tex.png",
+            device,
+            queue,
+            render_db,
+        );
+
+        let left_tex_id = create_texture_and_texture_bind_group(
+            include_bytes!("resources/left-tex.png"),
+            "left-tex.png",
+            device,
+            queue,
+            render_db,
+        );
+
+        let bottom_tex_id = create_texture_and_texture_bind_group(
+            include_bytes!("resources/bottom-tex.png"),
+            "bottom-tex.png",
+            device,
+            queue,
+            render_db,
+        );
+
+        let front_tex_id = create_texture_and_texture_bind_group(
+            include_bytes!("resources/front-tex.png"),
+            "front-tex.png",
+            device,
+            queue,
+            render_db,
+        );
+
+        let back_tex_id = create_texture_and_texture_bind_group(
+            include_bytes!("resources/back-tex.png"),
+            "back-tex.png",
+            device,
+            queue,
+            render_db,
+        );
+
+        let multi_tex_mesh = MeshBuilder::new()
+            .add_vertex_stream(POSITIONS)
+            .add_vertex_stream(COLORS)
+            .add_vertex_stream(TEX_COORDS)
+            .add_vertex_stream(&normalized_box::get_use_texture_vertices(
+                vertex::UseTexture::from_texture_index(3),
+                vertex::UseTexture::from_texture_index(0),
+                vertex::UseTexture::from_texture_index(1),
+                vertex::UseTexture::NO, //2
+                vertex::UseTexture::from_texture_index(5),
+                vertex::UseTexture::from_texture_index(4),
+                // vertex::UseTexture::from_texture_index(left_tex_id),
+            ))
+            .add_mesh_index_stream(INDICES)
+            .add_wireframe_index_stream(INDEXED_POSITIONS_BOX_EDGE_INDICES)
+            .build(device);
+        let multi_tex_mesh_id = render_db.add_mesh(multi_tex_mesh);
+
+        let texture_views = [
+            render_db.get_texture_view(front_tex_id),
+            render_db.get_texture_view(bottom_tex_id),
+            render_db.get_texture_view(top_tex_id),
+            render_db.get_texture_view(back_tex_id),
+            render_db.get_texture_view(left_tex_id),
+            render_db.get_texture_view(right_tex_id),
+        ];
+
+        let transformations = [
+            Transformation(Mat4::from_translation((0.0, 5.0, 0.0).into())).to_data(),
+            Transformation(Mat4::from_axis_angle(
+                Vec3 {
+                    x: 0.0,
+                    y: 1.0,
+                    z: 0.0,
+                },
+                45.0_f32.to_radians(),
+            ))
+            .to_data(),
+        ];
+
+        let material_colors = [
+            Material::new(0.0, 0.0, 1.0).to_data(),
+            Material::new(0.0, 0.0, 1.0).to_data(),
+        ];
+
+        let multi_tex_mesh_instance_buffer = InstanceDataBuilder::new()
+            .add_instance_stream(&transformations)
+            .add_instance_stream(&material_colors)
+            .build(device);
+
+        let multi_tex_mesh_object = RenderObject {
+            renderable: Renderable3d::ArrayTexturedMesh,
+            gpu_mesh_id: multi_tex_mesh_id,
+            instance: multi_tex_mesh_instance_buffer,
+            mesh_local: RenderDataLocalResources::new_array_textured::<6>(
+                device,
+                ClipPlanes::new(device),
+                &texture_views,
+                sampler,
+            ),
+        };
+        let _multi_tex_mesh_object_id = render_db.add_object(multi_tex_mesh_object);
+
+        let multi_tex_mesh_wireframe_object = RenderObject {
+            renderable: Renderable3d::WireframeMesh,
+            gpu_mesh_id: multi_tex_mesh_id,
+            instance: InstanceDataBuilder::new()
+                .add_instance_stream(&transformations)
+                .add_instance_stream(&material_colors)
+                .build(device),
+            mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
+        };
+        let _multi_tex_mesh_wireframe_object_id =
+            render_db.add_object(multi_tex_mesh_wireframe_object);
+
+        (
+            _multi_tex_mesh_object_id,
+            _multi_tex_mesh_wireframe_object_id,
         )
     }
 
@@ -1193,8 +1282,7 @@ mod tests {
             renderable: Renderable3d::ColoredMesh,
             gpu_mesh_id: colored_mesh_id,
             instance: colored_mesh_instance_buffer,
-            local_resources: vec![],
-            clip_planes: ClipPlanes::new(device),
+            mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
         };
         let _colored_mesh_object_id = render_db.add_object(colored_mesh_object);
 
@@ -1205,8 +1293,7 @@ mod tests {
                 .add_instance_stream(&transformations)
                 .add_instance_stream(&material_colors)
                 .build(device),
-            local_resources: vec![],
-            clip_planes: ClipPlanes::new(device),
+            mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
         };
         let _colored_mesh_wireframe_object_id = render_db.add_object(colored_mesh_wireframe_object);
 
@@ -1258,32 +1345,28 @@ mod tests {
             renderable: Renderable3d::ColoredMesh,
             gpu_mesh_id: colored_mesh_id,
             instance: instance_a_surface,
-            local_resources: vec![],
-            clip_planes: clip_planes.clone(),
+            mesh_local: RenderDataLocalResources::new_colored(device, clip_planes.clone()),
         };
 
         let wireframe_a = RenderObject {
             renderable: Renderable3d::WireframeMesh,
             gpu_mesh_id: colored_mesh_id,
             instance: instance_a_wireframe,
-            local_resources: vec![],
-            clip_planes: clip_planes.clone(),
+            mesh_local: RenderDataLocalResources::new_colored(device, clip_planes.clone()),
         };
 
         let mesh_b = RenderObject {
             renderable: Renderable3d::ColoredMesh,
             gpu_mesh_id: colored_mesh_id,
             instance: instance_b_surface,
-            local_resources: vec![],
-            clip_planes: clip_planes.clone(),
+            mesh_local: RenderDataLocalResources::new_colored(device, clip_planes.clone()),
         };
 
         let wireframe_b = RenderObject {
             renderable: Renderable3d::WireframeMesh,
             gpu_mesh_id: colored_mesh_id,
             instance: instance_b_wireframe,
-            local_resources: vec![],
-            clip_planes: clip_planes.clone(),
+            mesh_local: RenderDataLocalResources::new_colored(device, clip_planes.clone()),
         };
 
         let mesh_a_id = render_db.add_object(mesh_a);
@@ -1334,8 +1417,7 @@ mod tests {
             renderable: Renderable3d::ColoredMesh,
             gpu_mesh_id: colored_mesh_id,
             instance: colored_mesh_instance_buffer,
-            local_resources: vec![],
-            clip_planes: ClipPlanes::new(device),
+            mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
         };
         let _colored_mesh_object_id = render_db.add_object(colored_mesh_object);
 
@@ -1346,8 +1428,7 @@ mod tests {
                 .add_instance_stream(&transformations)
                 .add_instance_stream(&material_colors)
                 .build(device),
-            local_resources: vec![],
-            clip_planes: ClipPlanes::new(device),
+            mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
         };
         let _colored_mesh_wireframe_object_id = render_db.add_object(colored_mesh_wireframe_object);
 
@@ -1360,9 +1441,9 @@ mod tests {
                 ))
                 .to_data()])
                 .build(device),
-            local_resources: vec![],
-            clip_planes: ClipPlanes::new(device),
+            mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
         };
+
         let _silhoutte_mesh_object_id = render_db.add_object(silhoutte_mesh_object);
         (
             _colored_mesh_object_id,
@@ -1422,8 +1503,7 @@ mod tests {
             },
             gpu_mesh_id: colored_mesh_id,
             instance: colored_mesh_instance_buffer,
-            local_resources: vec![],
-            clip_planes: ClipPlanes::new(device),
+            mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
         };
         let _colored_mesh_object_id = render_db.add_object(colored_mesh_object);
 
@@ -1449,9 +1529,9 @@ mod tests {
                     material::UseMaterialData::YES,
                 ])
                 .build(device),
-            local_resources: vec![],
-            clip_planes: ClipPlanes::new(device),
+            mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
         };
+
         let _colored_mesh_wireframe_object_id = render_db.add_object(colored_mesh_wireframe_object);
 
         (_colored_mesh_object_id, _colored_mesh_wireframe_object_id)
@@ -1490,8 +1570,7 @@ mod tests {
             renderable: Renderable3d::Mesh,
             gpu_mesh_id: simple_mesh_id,
             instance: simple_mesh_instance_buffer,
-            local_resources: vec![],
-            clip_planes: ClipPlanes::new(device),
+            mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
         };
         let _simple_mesh_object_id = render_db.add_object(simple_mesh_object);
 
@@ -1505,9 +1584,9 @@ mod tests {
                     Material::new(0.0, 0.0, 1.0).to_data(),
                 ])
                 .build(device),
-            local_resources: vec![],
-            clip_planes: ClipPlanes::new(device),
+            mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
         };
+
         let _simple_mesh_wireframe_object_id = render_db.add_object(simple_mesh_wireframe_object);
 
         (_simple_mesh_object_id, _simple_mesh_wireframe_object_id)
@@ -1544,8 +1623,7 @@ mod tests {
                     Material::new(0.0, 0.0, 1.0).to_data(),
                 ])
                 .build(device),
-            local_resources: vec![],
-            clip_planes: ClipPlanes::new(device),
+            mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
         };
 
         render_db.add_object(simple_mesh_wireframe_object)
@@ -1578,8 +1656,7 @@ mod tests {
             },
             gpu_mesh_id: simple_mesh_id,
             instance: simple_mesh_instance_buffer,
-            local_resources: vec![],
-            clip_planes: ClipPlanes::new(device),
+            mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
         };
 
         render_db.add_object(gizmo_object)
@@ -1603,8 +1680,7 @@ mod tests {
             renderable: Renderable3d::Mesh,
             gpu_mesh_id: simple_mesh_id,
             instance: simple_mesh_instance_buffer,
-            local_resources: vec![],
-            clip_planes: ClipPlanes::new(device),
+            mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
         };
 
         render_db.add_object(simple_mesh_object)
@@ -1614,16 +1690,13 @@ mod tests {
         pub renderable: Renderable3d,
         pub instance: instance::GpuInstance,
         pub gpu_mesh_id: u32,
-        pub local_resources: Vec<(u32, u32)>, // (index to local_bind_group, slot_index)
-        pub clip_planes: ClipPlanes<1>,
+        pub mesh_local: RenderDataLocalResources,
     }
 
     pub struct TestRenderDb {
         textures: Vec<texture::Texture>,
         meshes: Vec<GpuMesh>,
         objects: Vec<RenderObject>,
-        // invisible_objects: HashSet<usize>,
-        local_bind_groups: Vec<wgpu::BindGroup>,
     }
 
     impl TestRenderDb {
@@ -1632,8 +1705,6 @@ mod tests {
                 textures: vec![],
                 meshes: vec![],
                 objects: vec![],
-                // invisible_objects: HashSet::new(),
-                local_bind_groups: vec![],
             };
 
             set_wcs_gizmo(device, &mut _self);
@@ -1641,49 +1712,14 @@ mod tests {
             _self
         }
 
-        // returns the texture id and the bind group id
-        fn add_texture(
-            &mut self,
-            texture: texture::Texture,
-            device: &wgpu::Device,
-            sampler: &wgpu::Sampler,
-            layout: &wgpu::BindGroupLayout,
-        ) -> (u32, u32) {
-            let bind_group = texture::generate_basic_texture_bind_group::<0, 1>(
-                device, &texture, sampler, layout,
-            );
-
+        // returns the texture id
+        fn add_texture(&mut self, texture: texture::Texture) -> u32 {
             self.textures.push(texture);
-            let bind_group_id = self.add_local_bind_group(bind_group);
-            let texture_id = (self.textures.len() - 1) as u32;
-
-            (texture_id, bind_group_id)
+            (self.textures.len() - 1) as u32
         }
 
-        // returns the bind group id for the texture array
-        fn create_texture_array(
-            &mut self,
-            texture_ids: &[u32],
-            device: &wgpu::Device,
-            sampler: &wgpu::Sampler,
-            layout: &wgpu::BindGroupLayout,
-        ) -> u32 {
-            let mut texture_views = Vec::<&wgpu::TextureView>::new();
-
-            for texture_id in texture_ids {
-                let texture = &self.textures[*texture_id as usize];
-                texture_views.push(&texture.view);
-            }
-
-            let bind_group = texture::generate_texture_array_bind_group::<0, 1>(
-                device,
-                "Array 1",
-                &texture_views,
-                sampler,
-                layout,
-            );
-
-            self.add_local_bind_group(bind_group)
+        fn get_texture_view(&self, id: u32) -> &wgpu::TextureView {
+            &self.textures[id as usize].view
         }
 
         fn add_mesh(&mut self, mesh: GpuMesh) -> u32 {
@@ -1698,44 +1734,15 @@ mod tests {
             (self.objects.len() - 1) as u32
         }
 
-        // fn clear_all(&mut self) {
-        //     self.objects.clear();
-        //     self.meshes.clear();
-        //     self.local_bind_groups.clear();
-        // }
-
-        // fn make_object_invisible(&mut self, object_id: usize) {
-        //     self.invisible_objects.insert(object_id);
-        // }
-
-        // fn make_object_visible(&mut self, object_id: &usize) {
-        //     self.invisible_objects.remove(object_id);
-        // }
-
-        fn add_local_bind_group(&mut self, bind_group: wgpu::BindGroup) -> u32 {
-            self.local_bind_groups.push(bind_group);
-
-            (self.local_bind_groups.len() - 1) as u32
-        }
-
         fn get_renderables<'a>(&'a self) -> impl Iterator<Item = RenderData3d<'a>> {
             self.objects.iter().map(|r| {
                 let gpu_mesh = self.meshes.get(r.gpu_mesh_id as usize).unwrap();
-                let local_resources = r
-                    .local_resources
-                    .iter()
-                    .map(|resource| {
-                        let bind_group = self.local_bind_groups.get(resource.0 as usize).unwrap();
-                        (bind_group, resource.1)
-                    })
-                    .collect::<Vec<_>>();
 
                 RenderData3d {
                     renderable: r.renderable.clone(),
                     mesh: gpu_mesh,
                     instance: &r.instance,
-                    local_bind_groups: local_resources,
-                    clip_plane: &r.clip_planes,
+                    local_resources: &r.mesh_local,
                 }
             })
         }

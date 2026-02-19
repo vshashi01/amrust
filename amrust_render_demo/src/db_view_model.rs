@@ -4,7 +4,7 @@ use slotmap::basic::Keys;
 use smol::lock::RwLock;
 
 use amrust_render::{
-    bounding_box::BoundingBox, clip::ClipPlanes, gpu_mesh::MeshBuilder,
+    RenderDataLocalResources, bounding_box::BoundingBox, clip::ClipPlanes, gpu_mesh::MeshBuilder,
     instance::InstanceDataBuilder, material::Material, transformation::TransformationData,
     vertex::Position3d,
 };
@@ -1170,8 +1170,7 @@ pub fn add_render_object(
             .add_instance_stream(transformation_data.as_slice())
             .add_instance_stream(material_data.as_slice())
             .build(device),
-        local_resources: vec![],
-        clip_planes: ClipPlanes::new(device),
+        mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
     };
     let colored_object_id = {
         let mut render_db = render_db.write_blocking();
@@ -1185,8 +1184,7 @@ pub fn add_render_object(
             .add_instance_stream(transformation_data.as_slice())
             .add_instance_stream(material_data.as_slice())
             .build(device),
-        local_resources: vec![],
-        clip_planes: ClipPlanes::new(device),
+        mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
     };
 
     let wireframe_object = {
@@ -1217,8 +1215,7 @@ fn add_bounding_box_wireframe(
             .add_instance_stream(&[TransformationData(Mat4::IDENTITY.to_cols_array_2d())])
             .add_instance_stream(&[Material::new(1.0, 1.0, 1.0).to_data()])
             .build(device),
-        local_resources: vec![],
-        clip_planes: ClipPlanes::new(device),
+        mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
     };
 
     render_db.add_object(wireframe_object)

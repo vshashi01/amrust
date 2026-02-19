@@ -1,12 +1,14 @@
-use amrust_render::{RenderData3d, Renderable3d, clip::ClipPlanes, gpu_mesh::GpuMesh, instance};
+use amrust_render::{
+    RenderData3d, RenderDataLocalResources, Renderable3d, clip::ClipPlanes, gpu_mesh::GpuMesh,
+    instance,
+};
 use slotmap::{SlotMap, new_key_type};
 
 pub struct RenderObject {
     pub renderable: Renderable3d,
     pub instance: instance::GpuInstance,
     pub gpu_mesh_id: RenderMeshId,
-    pub local_resources: Vec<(u32, u32)>, // (index to local_bind_group, slot_index)
-    pub clip_planes: ClipPlanes<1>,
+    pub mesh_local: RenderDataLocalResources,
 }
 
 new_key_type! {
@@ -22,8 +24,6 @@ pub struct RenderDb {
     meshes: SlotMap<RenderMeshId, GpuMesh>,
     objects: SlotMap<RenderObjectId, RenderObject>,
     // invisible_objects: HashSet<usize>,
-    local_bind_groups: Vec<wgpu::BindGroup>,
-
     objects_to_render: Vec<RenderObjectId>,
 }
 
@@ -34,7 +34,6 @@ impl RenderDb {
             meshes: SlotMap::with_key(),
             objects: SlotMap::with_key(),
             // invisible_objects: HashSet::new(),
-            local_bind_groups: vec![],
             objects_to_render: vec![],
         }
     }
@@ -117,7 +116,6 @@ impl RenderDb {
     pub fn clear_all(&mut self) {
         self.objects.clear();
         self.meshes.clear();
-        self.local_bind_groups.clear();
         self.objects_to_render.clear();
     }
 
@@ -139,21 +137,12 @@ impl RenderDb {
         self.objects.iter().filter_map(|(id, render_object)| {
             if self.objects_to_render.contains(&id) {
                 let gpu_mesh = self.meshes.get(render_object.gpu_mesh_id).unwrap();
-                let local_resources = render_object
-                    .local_resources
-                    .iter()
-                    .map(|resource| {
-                        let bind_group = self.local_bind_groups.get(resource.0 as usize).unwrap();
-                        (bind_group, resource.1)
-                    })
-                    .collect::<Vec<_>>();
 
                 Some(RenderData3d {
                     renderable: render_object.renderable.clone(),
                     mesh: gpu_mesh,
                     instance: &render_object.instance,
-                    local_bind_groups: local_resources,
-                    clip_plane: &render_object.clip_planes,
+                    local_resources: &render_object.mesh_local,
                 })
             } else {
                 None
