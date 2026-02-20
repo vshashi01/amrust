@@ -14,10 +14,19 @@ struct ClipUniform {
     bounds_max: vec2<f32>,
 }
 
+struct TransparencyUniform {
+    opacity: f32,
+    _pad: vec3<f32>,
+}
+
+
 @group(0) @binding(3)
 var<uniform> view_clip: ClipUniform;
 
 @group(1) @binding(0)
+var<uniform> transparency: TransparencyUniform;
+
+@group(1) @binding(1)
 var<uniform> mesh_clip: ClipUniform;
 
 

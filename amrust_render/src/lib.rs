@@ -1,11 +1,9 @@
-use std::num::NonZero;
-
 use thiserror::Error;
 
 mod prelude;
 pub use prelude::*;
 
-use crate::{clip::ClipPlanes, gpu_mesh::GpuMesh, instance::GpuInstance};
+use crate::{gpu_mesh::GpuMesh, instance::GpuInstance};
 
 //export module
 pub mod bounding_box;
@@ -16,10 +14,12 @@ pub mod instance;
 pub mod material;
 pub mod normalized_axis_gizmo;
 pub mod normalized_box;
+pub mod render_data_3d;
 pub mod renderer;
 pub mod screen_space;
 pub mod texture;
 pub mod transformation;
+pub mod transparency;
 pub mod vertex;
 
 // internal module
@@ -28,6 +28,8 @@ mod constants;
 mod light;
 mod pipeline;
 mod render_pass;
+
+pub use render_data_3d::RenderDataLocalResources;
 
 #[derive(Debug, Error)]
 pub enum WgpuError {
@@ -38,11 +40,13 @@ pub enum WgpuError {
     // AdapterError(#[from] wgpu::RequestAdapterError),
 }
 
+#[derive(Clone)]
 pub struct RenderData3d<'a> {
     pub renderable: Renderable3d,
     pub mesh: &'a GpuMesh,
     pub instance: &'a GpuInstance,
     pub local_resources: &'a RenderDataLocalResources,
+    // pub transparency: Transparency,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,110 +61,6 @@ pub enum Renderable3d {
     ScreenSpaceWireframeMesh { depth_testing: bool, order: u8 },
 }
 
-pub struct RenderDataLocalResources {
-    pub clip_plane: ClipPlanes<1>,
-    pub(crate) uniform_bg: wgpu::BindGroup,
-    pub(crate) texture_bg: Option<wgpu::BindGroup>,
-}
-
-impl RenderDataLocalResources {
-    pub fn clip_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
-        clip::create_clip_bind_group_layout::<1, 0>(device)
-    }
-
-    pub fn textured_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
-        texture::creae_single_texture_bgl::<0, 1>(
-            device,
-            "Mesh Local Textured Bind Group Layout",
-            true,
-        )
-    }
-
-    pub fn array_textured_layout(
-        device: &wgpu::Device,
-        count: NonZero<u32>,
-    ) -> wgpu::BindGroupLayout {
-        texture::create_array_texture_bgl::<0, 1>(
-            device,
-            "Mesh Local Array Texture BGL",
-            true,
-            count,
-        )
-    }
-
-    pub fn new_colored(device: &wgpu::Device, clip_plane: ClipPlanes<1>) -> Self {
-        let clip_layout = Self::clip_layout(device);
-        let clip_bind_group =
-            clip::create_clip_bind_group::<1, 0>(device, &clip_layout, &clip_plane.buffers);
-
-        Self {
-            clip_plane,
-            uniform_bg: clip_bind_group,
-            texture_bg: None,
-        }
-    }
-
-    pub fn new_textured(
-        device: &wgpu::Device,
-        clip_plane: ClipPlanes<1>,
-        texture_view: &wgpu::TextureView,
-        sampler: &wgpu::Sampler,
-    ) -> Self {
-        let clip_layout = Self::clip_layout(device);
-        let clip_bind_group =
-            clip::create_clip_bind_group::<1, 0>(device, &clip_layout, &clip_plane.buffers);
-
-        let res_layout = Self::textured_layout(device);
-        let resource_bind_group = texture::create_single_texture_bg::<0, 1>(
-            device,
-            "",
-            texture_view,
-            sampler,
-            &res_layout,
-        );
-
-        Self {
-            clip_plane,
-            uniform_bg: clip_bind_group,
-            texture_bg: Some(resource_bind_group),
-        }
-    }
-
-    pub fn new_array_textured<const TEXTURE_COUNT: u32>(
-        device: &wgpu::Device,
-        clip_plane: ClipPlanes<1>,
-        texture_views: &[&wgpu::TextureView],
-        sampler: &wgpu::Sampler,
-    ) -> Self {
-        if TEXTURE_COUNT > texture::MAX_BINDING_ARRAY_ELEMENTS_PER_SHADER_STAGE {
-            panic!(
-                "Too many textures in texture array: Max textures are {}",
-                texture::MAX_BINDING_ARRAY_ELEMENTS_PER_SHADER_STAGE
-            );
-        } else if TEXTURE_COUNT == 0 {
-            panic!("Zero texture in texture array is not supported")
-        }
-
-        let clip_layout = Self::clip_layout(device);
-        let clip_bind_group =
-            clip::create_clip_bind_group::<1, 0>(device, &clip_layout, &clip_plane.buffers);
-
-        let res_layout = Self::array_textured_layout(device, NonZero::new(TEXTURE_COUNT).unwrap());
-        let resource_bind_group = texture::create_array_texture_bg::<0, 1>(
-            device,
-            "Mesh Local Array Textured Bind Group",
-            texture_views,
-            sampler,
-            &res_layout,
-        );
-        Self {
-            clip_plane,
-            uniform_bg: clip_bind_group,
-            texture_bg: Some(resource_bind_group),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{cmp::Ordering, path::PathBuf};
@@ -171,12 +71,14 @@ mod tests {
     use super::*;
     use crate::{
         camera::{CameraData, OrthographicCameraData},
+        clip::ClipPlanes,
         gpu_mesh::{GpuMesh, MeshBuilder},
         instance::InstanceDataBuilder,
         light::{NormalMatrixData, UseLightingData},
         material::Material,
         screen_space::SizeInPixel,
         transformation::Transformation,
+        transparency::Transparency,
     };
     use normalized_box::{
         COLORS, INDEXED_POSITIONS_BOX_EDGE_INDICES, INDICES, NORMALS, ORDERED_POSITIONS,
@@ -297,6 +199,7 @@ mod tests {
                 mesh_local: RenderDataLocalResources::new_colored(
                     &renderer.device,
                     ClipPlanes::new(&renderer.device),
+                    Transparency::opaque(&renderer.device),
                 ),
             };
 
@@ -974,6 +877,170 @@ mod tests {
         });
     }
 
+    #[test]
+    fn test_transparent_colored_mesh() {
+        pollster::block_on(async {
+            let renderer = renderer::Renderer::from_new_device().await.unwrap();
+
+            let mut frame_view_data =
+                renderer.create_frame_view_data(TEXTURE_WIDTH, TEXTURE_HEIGHT);
+            frame_view_data
+                .camera
+                .update(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
+            renderer.write_frame_view_data_to_gpu(&frame_view_data);
+
+            let read_buffer =
+                renderer::create_read_buffer(&renderer.device, TEXTURE_WIDTH, TEXTURE_HEIGHT);
+
+            let mut render_db = TestRenderDb::new(&renderer.device);
+
+            // Create an opaque mesh in the background
+            let _opaque_mesh_id = set_simple_mesh(&renderer.device, &mut render_db);
+
+            // Create a transparent mesh in front with 50% opacity
+            let _transparent_mesh_id =
+                set_transparent_colored_mesh(&renderer.device, &mut render_db, 0.5);
+
+            let render_data = render_db.get_renderables().collect::<Vec<_>>();
+
+            let image_buffer = renderer
+                .render_and_return_as_image_buffer(
+                    &render_data,
+                    &read_buffer,
+                    wgpu::Extent3d {
+                        width: TEXTURE_WIDTH,
+                        height: TEXTURE_HEIGHT,
+                        depth_or_array_layers: 1,
+                    },
+                    &frame_view_data,
+                )
+                .await
+                .unwrap();
+            image_buffer
+                .save("tests/data/transparent_colored_mesh_new.png")
+                .unwrap();
+
+            let ref_image_data =
+                image::open(PathBuf::from("tests/data/transparent_colored_mesh.png"))
+                    .unwrap()
+                    .into_rgba8();
+
+            let ref_image =
+                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &ref_image_data);
+            let test_image =
+                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &image_buffer);
+
+            let error_map = nv_flip::flip(ref_image, test_image, DEFAULT_PIXELS_PER_DEGREE);
+            let pool = nv_flip::FlipPool::from_image(&error_map);
+            if let Some(Ordering::Greater) = pool.mean().partial_cmp(&FLIP_MEAN_ERROR) {
+                println!("Mean error {}", pool.mean());
+                panic!("Something is wrong with the Transparent Colored Mesh rendering")
+            }
+        });
+    }
+
+    #[test]
+    fn test_transparent_mesh_z_order_sorting() {
+        // Test that transparent meshes are correctly sorted by z_order
+        pollster::block_on(async {
+            let renderer = renderer::Renderer::from_new_device().await.unwrap();
+            let mut render_db = TestRenderDb::new(&renderer.device);
+
+            // Create two transparent meshes with different z_orders
+            let _ = set_transparent_colored_mesh_with_z_order(
+                &renderer.device,
+                &mut render_db,
+                0.5,
+                200,                          // Higher z_order (should render last/on top)
+                Material::new(1.0, 0.0, 0.0), // Red
+            );
+
+            let _ = set_transparent_colored_mesh_with_z_order(
+                &renderer.device,
+                &mut render_db,
+                0.5,
+                100,                          // Lower z_order (should render first/bottom)
+                Material::new(0.0, 0.0, 1.0), // Blue
+            );
+
+            let render_data: Vec<_> = render_db.get_renderables().collect();
+
+            // Verify both meshes are marked as transparent
+            assert_eq!(
+                render_data
+                    .iter()
+                    .filter(|d| d.local_resources.transparency.enabled)
+                    .count(),
+                2,
+                "Should have 2 transparent renderables"
+            );
+
+            // Verify z_orders are set correctly
+            let z_orders: Vec<u8> = render_data
+                .iter()
+                .filter(|d| d.local_resources.transparency.enabled)
+                .map(|d| d.local_resources.transparency.z_order)
+                .collect();
+
+            assert!(z_orders.contains(&200), "Should have mesh with z_order 200");
+            assert!(z_orders.contains(&100), "Should have mesh with z_order 100");
+
+            // Verify the render pass would sort them correctly
+            // (higher z_order should come after lower z_order in the sorted list)
+            let mut sorted_data = render_data.clone();
+            sorted_data.sort_by_key(|d| std::cmp::Reverse(d.local_resources.transparency.z_order));
+
+            // After sorting by Reverse(z_order), the first should be z_order 200
+            let first_transparent = sorted_data
+                .iter()
+                .find(|d| d.local_resources.transparency.enabled)
+                .unwrap();
+            assert_eq!(
+                first_transparent.local_resources.transparency.z_order, 200,
+                "Higher z_order should come first after Reverse sorting"
+            );
+        });
+    }
+
+    fn set_transparent_colored_mesh_with_z_order(
+        device: &wgpu::Device,
+        render_db: &mut TestRenderDb,
+        opacity: f32,
+        z_order: u8,
+        material: Material,
+    ) -> u32 {
+        let colored_mesh = MeshBuilder::new()
+            .add_vertex_stream(POSITIONS)
+            .add_vertex_stream(COLORS)
+            .add_mesh_index_stream(INDICES)
+            .build(device);
+        let colored_mesh_id = render_db.add_mesh(colored_mesh);
+
+        let transformations =
+            [Transformation(Mat4::from_translation((0.0, 0.0, 1.0).into())).to_data()];
+
+        let material_colors = [material.to_data()];
+
+        let colored_mesh_instance_buffer = InstanceDataBuilder::new()
+            .add_instance_stream(&transformations)
+            .add_instance_stream(&material_colors)
+            .build(device);
+
+        let transparency = Transparency::new(device, true, z_order, opacity);
+
+        let colored_mesh_object = RenderObject {
+            renderable: Renderable3d::ColoredMesh,
+            gpu_mesh_id: colored_mesh_id,
+            instance: colored_mesh_instance_buffer,
+            mesh_local: RenderDataLocalResources::new_colored(
+                device,
+                ClipPlanes::new(device),
+                transparency,
+            ),
+        };
+        render_db.add_object(colored_mesh_object)
+    }
+
     fn get_camera_data(width: u32, height: u32) -> OrthographicCameraData {
         let mut camera = OrthographicCameraData {
             aspect_ratio: width as f32 / height as f32,
@@ -1089,6 +1156,7 @@ mod tests {
                 ClipPlanes::new(device),
                 render_db.get_texture_view(happy_tree_id),
                 sampler,
+                Transparency::opaque(device),
             ),
         };
         let _single_tex_mesh_object_id = render_db.add_object(single_tex_mesh_object);
@@ -1100,7 +1168,11 @@ mod tests {
                 .add_instance_stream(&transformations)
                 .add_instance_stream(&material_colors)
                 .build(device),
-            mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
+            mesh_local: RenderDataLocalResources::new_colored(
+                device,
+                ClipPlanes::new(device),
+                Transparency::opaque(device),
+            ),
         };
         let _single_tex_mesh_wireframe_object_id =
             render_db.add_object(single_tex_mesh_wireframe_object);
@@ -1224,6 +1296,7 @@ mod tests {
                 ClipPlanes::new(device),
                 &texture_views,
                 sampler,
+                Transparency::opaque(device),
             ),
         };
         let _multi_tex_mesh_object_id = render_db.add_object(multi_tex_mesh_object);
@@ -1235,7 +1308,11 @@ mod tests {
                 .add_instance_stream(&transformations)
                 .add_instance_stream(&material_colors)
                 .build(device),
-            mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
+            mesh_local: RenderDataLocalResources::new_colored(
+                device,
+                ClipPlanes::new(device),
+                Transparency::opaque(device),
+            ),
         };
         let _multi_tex_mesh_wireframe_object_id =
             render_db.add_object(multi_tex_mesh_wireframe_object);
@@ -1282,7 +1359,11 @@ mod tests {
             renderable: Renderable3d::ColoredMesh,
             gpu_mesh_id: colored_mesh_id,
             instance: colored_mesh_instance_buffer,
-            mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
+            mesh_local: RenderDataLocalResources::new_colored(
+                device,
+                ClipPlanes::new(device),
+                Transparency::opaque(device),
+            ),
         };
         let _colored_mesh_object_id = render_db.add_object(colored_mesh_object);
 
@@ -1293,11 +1374,53 @@ mod tests {
                 .add_instance_stream(&transformations)
                 .add_instance_stream(&material_colors)
                 .build(device),
-            mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
+            mesh_local: RenderDataLocalResources::new_colored(
+                device,
+                ClipPlanes::new(device),
+                Transparency::opaque(device),
+            ),
         };
         let _colored_mesh_wireframe_object_id = render_db.add_object(colored_mesh_wireframe_object);
 
         (_colored_mesh_object_id, _colored_mesh_wireframe_object_id)
+    }
+
+    fn set_transparent_colored_mesh(
+        device: &wgpu::Device,
+        render_db: &mut TestRenderDb,
+        opacity: f32,
+    ) -> u32 {
+        let colored_mesh = MeshBuilder::new()
+            .add_vertex_stream(POSITIONS)
+            .add_vertex_stream(COLORS)
+            .add_mesh_index_stream(INDICES)
+            .build(device);
+        let colored_mesh_id = render_db.add_mesh(colored_mesh);
+
+        // Place transparent mesh in front (closer to camera, positive Z)
+        let transformations =
+            [Transformation(Mat4::from_translation((0.0, 0.0, 2.0).into())).to_data()];
+
+        let material_colors = [Material::new(1.0, 0.0, 0.0).to_data()]; // Red color
+
+        let colored_mesh_instance_buffer = InstanceDataBuilder::new()
+            .add_instance_stream(&transformations)
+            .add_instance_stream(&material_colors)
+            .build(device);
+
+        let transparency = Transparency::transparent(device, 128, opacity);
+
+        let colored_mesh_object = RenderObject {
+            renderable: Renderable3d::ColoredMesh,
+            gpu_mesh_id: colored_mesh_id,
+            instance: colored_mesh_instance_buffer,
+            mesh_local: RenderDataLocalResources::new_colored(
+                device,
+                ClipPlanes::new(device),
+                transparency,
+            ),
+        };
+        render_db.add_object(colored_mesh_object)
     }
 
     fn set_two_colored_mesh_objects(
@@ -1345,28 +1468,44 @@ mod tests {
             renderable: Renderable3d::ColoredMesh,
             gpu_mesh_id: colored_mesh_id,
             instance: instance_a_surface,
-            mesh_local: RenderDataLocalResources::new_colored(device, clip_planes.clone()),
+            mesh_local: RenderDataLocalResources::new_colored(
+                device,
+                clip_planes.clone(),
+                Transparency::opaque(device),
+            ),
         };
 
         let wireframe_a = RenderObject {
             renderable: Renderable3d::WireframeMesh,
             gpu_mesh_id: colored_mesh_id,
             instance: instance_a_wireframe,
-            mesh_local: RenderDataLocalResources::new_colored(device, clip_planes.clone()),
+            mesh_local: RenderDataLocalResources::new_colored(
+                device,
+                clip_planes.clone(),
+                Transparency::opaque(device),
+            ),
         };
 
         let mesh_b = RenderObject {
             renderable: Renderable3d::ColoredMesh,
             gpu_mesh_id: colored_mesh_id,
             instance: instance_b_surface,
-            mesh_local: RenderDataLocalResources::new_colored(device, clip_planes.clone()),
+            mesh_local: RenderDataLocalResources::new_colored(
+                device,
+                clip_planes.clone(),
+                Transparency::opaque(device),
+            ),
         };
 
         let wireframe_b = RenderObject {
             renderable: Renderable3d::WireframeMesh,
             gpu_mesh_id: colored_mesh_id,
             instance: instance_b_wireframe,
-            mesh_local: RenderDataLocalResources::new_colored(device, clip_planes.clone()),
+            mesh_local: RenderDataLocalResources::new_colored(
+                device,
+                clip_planes.clone(),
+                Transparency::opaque(device),
+            ),
         };
 
         let mesh_a_id = render_db.add_object(mesh_a);
@@ -1417,7 +1556,11 @@ mod tests {
             renderable: Renderable3d::ColoredMesh,
             gpu_mesh_id: colored_mesh_id,
             instance: colored_mesh_instance_buffer,
-            mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
+            mesh_local: RenderDataLocalResources::new_colored(
+                device,
+                ClipPlanes::new(device),
+                Transparency::opaque(device),
+            ),
         };
         let _colored_mesh_object_id = render_db.add_object(colored_mesh_object);
 
@@ -1428,7 +1571,11 @@ mod tests {
                 .add_instance_stream(&transformations)
                 .add_instance_stream(&material_colors)
                 .build(device),
-            mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
+            mesh_local: RenderDataLocalResources::new_colored(
+                device,
+                ClipPlanes::new(device),
+                Transparency::opaque(device),
+            ),
         };
         let _colored_mesh_wireframe_object_id = render_db.add_object(colored_mesh_wireframe_object);
 
@@ -1441,7 +1588,11 @@ mod tests {
                 ))
                 .to_data()])
                 .build(device),
-            mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
+            mesh_local: RenderDataLocalResources::new_colored(
+                device,
+                ClipPlanes::new(device),
+                Transparency::opaque(device),
+            ),
         };
 
         let _silhoutte_mesh_object_id = render_db.add_object(silhoutte_mesh_object);
@@ -1503,7 +1654,11 @@ mod tests {
             },
             gpu_mesh_id: colored_mesh_id,
             instance: colored_mesh_instance_buffer,
-            mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
+            mesh_local: RenderDataLocalResources::new_colored(
+                device,
+                ClipPlanes::new(device),
+                Transparency::opaque(device),
+            ),
         };
         let _colored_mesh_object_id = render_db.add_object(colored_mesh_object);
 
@@ -1529,7 +1684,11 @@ mod tests {
                     material::UseMaterialData::YES,
                 ])
                 .build(device),
-            mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
+            mesh_local: RenderDataLocalResources::new_colored(
+                device,
+                ClipPlanes::new(device),
+                Transparency::opaque(device),
+            ),
         };
 
         let _colored_mesh_wireframe_object_id = render_db.add_object(colored_mesh_wireframe_object);
@@ -1570,7 +1729,11 @@ mod tests {
             renderable: Renderable3d::Mesh,
             gpu_mesh_id: simple_mesh_id,
             instance: simple_mesh_instance_buffer,
-            mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
+            mesh_local: RenderDataLocalResources::new_colored(
+                device,
+                ClipPlanes::new(device),
+                Transparency::opaque(device),
+            ),
         };
         let _simple_mesh_object_id = render_db.add_object(simple_mesh_object);
 
@@ -1584,7 +1747,11 @@ mod tests {
                     Material::new(0.0, 0.0, 1.0).to_data(),
                 ])
                 .build(device),
-            mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
+            mesh_local: RenderDataLocalResources::new_colored(
+                device,
+                ClipPlanes::new(device),
+                Transparency::opaque(device),
+            ),
         };
 
         let _simple_mesh_wireframe_object_id = render_db.add_object(simple_mesh_wireframe_object);
@@ -1623,7 +1790,11 @@ mod tests {
                     Material::new(0.0, 0.0, 1.0).to_data(),
                 ])
                 .build(device),
-            mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
+            mesh_local: RenderDataLocalResources::new_colored(
+                device,
+                ClipPlanes::new(device),
+                Transparency::opaque(device),
+            ),
         };
 
         render_db.add_object(simple_mesh_wireframe_object)
@@ -1656,7 +1827,11 @@ mod tests {
             },
             gpu_mesh_id: simple_mesh_id,
             instance: simple_mesh_instance_buffer,
-            mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
+            mesh_local: RenderDataLocalResources::new_colored(
+                device,
+                ClipPlanes::new(device),
+                Transparency::opaque(device),
+            ),
         };
 
         render_db.add_object(gizmo_object)
@@ -1680,7 +1855,11 @@ mod tests {
             renderable: Renderable3d::Mesh,
             gpu_mesh_id: simple_mesh_id,
             instance: simple_mesh_instance_buffer,
-            mesh_local: RenderDataLocalResources::new_colored(device, ClipPlanes::new(device)),
+            mesh_local: RenderDataLocalResources::new_colored(
+                device,
+                ClipPlanes::new(device),
+                Transparency::opaque(device),
+            ),
         };
 
         render_db.add_object(simple_mesh_object)

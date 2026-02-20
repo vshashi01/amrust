@@ -1,3 +1,5 @@
+use std::num::NonZero;
+
 use crate::prelude::*;
 
 use tinyvec::ArrayVec;
@@ -153,22 +155,13 @@ fn create_buffer(device: &wgpu::Device, uniforms: &[ClipUniform]) -> wgpu::Buffe
     })
 }
 
-pub(crate) fn create_clip_bind_group_layout<const COUNT: usize, const BINDING_OFFSET: u32>(
-    device: &wgpu::Device,
-) -> wgpu::BindGroupLayout {
-    let entries = create_clip_bind_group_layout_entries::<COUNT, BINDING_OFFSET>();
-    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("Clip Plane Bind Group Layout"),
-        entries: &entries,
-    })
-}
-
 pub fn create_clip_bind_group<const COUNT: usize, const BINDING_OFFSET: u32>(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     buffers: &[wgpu::Buffer; COUNT],
 ) -> wgpu::BindGroup {
     let entries = create_clip_bind_group_entries::<COUNT, BINDING_OFFSET>(buffers);
+
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("Clip Plane Bind Group"),
         layout,
@@ -204,9 +197,7 @@ pub fn create_clip_bind_group_layout_entries<const COUNT: usize, const BINDING_O
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
                 has_dynamic_offset: false,
-                min_binding_size: Some(
-                    std::num::NonZero::new(ClipUniform::get_size() as wgpu::BufferAddress).unwrap(),
-                ),
+                min_binding_size: NonZero::new(ClipUniform::get_size() as wgpu::BufferAddress),
             },
             count: None,
         };

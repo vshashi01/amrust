@@ -8,6 +8,7 @@ pub struct PipelineBuilder<'a> {
     bind_group_layouts: Vec<&'a wgpu::BindGroupLayout>,
     vertex_buffer_layouts: Vec<wgpu::VertexBufferLayout<'static>>,
     depth_stencil: Option<wgpu::DepthStencilState>,
+    blend_state: Option<wgpu::BlendState>,
     primitive_topology: wgpu::PrimitiveTopology,
     texture_format: Option<wgpu::TextureFormat>,
 }
@@ -20,9 +21,15 @@ impl<'a> PipelineBuilder<'a> {
             bind_group_layouts: Vec::new(),
             vertex_buffer_layouts: Vec::new(),
             depth_stencil: None,
+            blend_state: None,
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
             texture_format: None,
         }
+    }
+
+    pub fn set_blend_state(&mut self, blend_state: wgpu::BlendState) -> &mut Self {
+        self.blend_state = Some(blend_state);
+        self
     }
 
     pub fn set_vertex_source(
@@ -125,10 +132,10 @@ impl<'a> PipelineBuilder<'a> {
                 entry_point: frag_entry_point.as_deref(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: self.texture_format.unwrap(),
-                    blend: Some(wgpu::BlendState {
+                    blend: Some(self.blend_state.unwrap_or(wgpu::BlendState {
                         alpha: wgpu::BlendComponent::REPLACE,
                         color: wgpu::BlendComponent::REPLACE,
-                    }),
+                    })),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: Default::default(),
@@ -164,6 +171,35 @@ pub fn create_depth_stencil_state() -> wgpu::DepthStencilState {
         format: texture::DepthTexture::DEPTH_FORMAT,
         depth_write_enabled: true,
         depth_compare: wgpu::CompareFunction::Less,
+        stencil: wgpu::StencilState::default(),
+        bias: wgpu::DepthBiasState {
+            constant: 0,
+            slope_scale: 0.0,
+            clamp: 0.0,
+        },
+    }
+}
+
+pub fn create_alpha_blend_state() -> wgpu::BlendState {
+    wgpu::BlendState {
+        alpha: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::SrcAlpha,
+            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+            operation: wgpu::BlendOperation::Add,
+        },
+        color: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::SrcAlpha,
+            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+            operation: wgpu::BlendOperation::Add,
+        },
+    }
+}
+
+pub fn create_depth_stencil_state_transparent() -> wgpu::DepthStencilState {
+    wgpu::DepthStencilState {
+        format: crate::texture::DepthTexture::DEPTH_FORMAT,
+        depth_write_enabled: false, // Don't write to depth buffer for transparent objects
+        depth_compare: wgpu::CompareFunction::LessEqual, // Read depth but allow equal depth
         stencil: wgpu::StencilState::default(),
         bias: wgpu::DepthBiasState {
             constant: 0,

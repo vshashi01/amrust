@@ -1,6 +1,6 @@
 use amrust_render::{
     RenderData3d, RenderDataLocalResources, Renderable3d, clip::ClipPlanes, gpu_mesh::GpuMesh,
-    instance,
+    instance, transparency::Transparency,
 };
 use slotmap::{SlotMap, new_key_type};
 

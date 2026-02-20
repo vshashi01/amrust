@@ -27,6 +27,11 @@ struct LightUniform {
     ambient: f32,
 }
 
+struct TransparencyUniform {
+    opacity: f32,
+    _pad: vec3<f32>,
+}
+
 @group(0) @binding(2)
 var<uniform> light: LightUniform;
 
@@ -34,7 +39,11 @@ var<uniform> light: LightUniform;
 var<uniform> view_clip: ClipUniform;
 
 @group(1) @binding(0)
+var<uniform> transparency: TransparencyUniform;
+
+@group(1) @binding(1)
 var<uniform> mesh_clip: ClipUniform;
+
 
 @group(2) @binding(0)
 var t_diffuse: texture_2d<f32>;
@@ -83,13 +92,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
 
-    let albedo = vec4<f32>(in.color, 1.0);
+    var albedo = vec4<f32>(in.color, 1.0);
     if (in.use_texture >= 0) {
-        let albedo = textureSample(t_diffuse, s_diffuse, in.tex_coords);
+        albedo = textureSample(t_diffuse, s_diffuse, in.tex_coords);
     } 
 
     if (in.use_lighting == 0) {
-        return albedo;
+        return vec4<f32>(albedo.rgb, albedo.a * transparency.opacity);
     }
 
     let n = normalize(in.world_normal);
@@ -98,5 +107,5 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let diffuse = max(dot(n, l), 0.0);
     let lit_color = albedo.rgb * (light.ambient + light.intensity * diffuse * light.color);
 
-    return vec4<f32>(lit_color, albedo.a);
+    return vec4<f32>(lit_color, albedo.a * transparency.opacity);
 }

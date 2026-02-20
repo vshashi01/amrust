@@ -259,6 +259,7 @@ impl Renderer {
     ) -> Result<Self, WgpuError> {
         let global_bind_group_layout =
             create_global_3d_render_pass_bind_group_layout::<MAX_CLIP_PLANE_COUNT>(device);
+        // All pipelines now use transparency-enabled layout since shaders expect it
         let mesh_local_clip_layout = crate::RenderDataLocalResources::clip_layout(device);
         let mesh_local_textured_layout = crate::RenderDataLocalResources::textured_layout(device);
         let mesh_local_array_textured_layout =
@@ -445,6 +446,216 @@ impl Renderer {
             .set_depth_stencil(pipeline::create_depth_stencil_state())
             .build(device, constants::WIREFRAME_MESH_PIPELINE_KEY);
 
+        // Transparent pipeline variants
+        // Recreate shader sources since they were moved
+        let standard_textured_vert_shader_source_transparent =
+            wgpu::ShaderSource::Wgsl((include_str!("shaders/textured_vert_shader.wgsl")).into());
+        let single_texture_frag_shader_source_transparent =
+            wgpu::ShaderSource::Wgsl((include_str!("shaders/texture_frag_shader.wgsl")).into());
+        let standard_textured_vert_shader_source_lit_transparent = wgpu::ShaderSource::Wgsl(
+            (include_str!("shaders/textured_vert_shader_lit.wgsl")).into(),
+        );
+        let single_texture_frag_shader_source_lit_transparent =
+            wgpu::ShaderSource::Wgsl((include_str!("shaders/lit_texture_frag_shader.wgsl")).into());
+        let array_textures_frag_shader_source_transparent = wgpu::ShaderSource::Wgsl(
+            (include_str!("shaders/array_textures_frag_shader.wgsl")).into(),
+        );
+        let array_textures_frag_shader_source_lit_transparent = wgpu::ShaderSource::Wgsl(
+            (include_str!("shaders/lit_array_textures_frag_shader.wgsl")).into(),
+        );
+        let colored_vert_shader_source_transparent =
+            wgpu::ShaderSource::Wgsl((include_str!("shaders/colored_vert_shader.wgsl")).into());
+        let colored_frag_shader_source_transparent =
+            wgpu::ShaderSource::Wgsl(include_str!("shaders/colored_frag_shader.wgsl").into());
+        let colored_vert_shader_source_lit_transparent =
+            wgpu::ShaderSource::Wgsl((include_str!("shaders/colored_vert_shader_lit.wgsl")).into());
+        let colored_frag_shader_source_lit_transparent =
+            wgpu::ShaderSource::Wgsl(include_str!("shaders/lit_colored_frag_shader.wgsl").into());
+        let solid_vert_shader_source_transparent = wgpu::ShaderSource::Wgsl(
+            (include_str!("shaders/material_color_vert_shader.wgsl")).into(),
+        );
+        let solid_vert_shader_source_lit_transparent = wgpu::ShaderSource::Wgsl(
+            (include_str!("shaders/material_color_vert_shader_lit.wgsl")).into(),
+        );
+
+        let transparent_texture_surface_render_pipeline = pipeline::PipelineBuilder::new()
+            .set_vertex_source(standard_textured_vert_shader_source_transparent, None)
+            .set_frag_source(single_texture_frag_shader_source_transparent, None)
+            .set_texture_format(texture_format)
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Color::layout::<1>())
+            .add_vertex_buffer_layout(vertex::TexCoords::layout::<2>())
+            .add_vertex_buffer_layout(vertex::UseTexture::layout::<3>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_bind_group_layout(&global_bind_group_layout)
+            .add_bind_group_layout(&mesh_local_clip_layout)
+            .add_bind_group_layout(&mesh_local_textured_layout)
+            .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+            .set_blend_state(pipeline::create_alpha_blend_state())
+            .build(device, constants::TRANSPARENT_TEXTURE_MESH_PIPELINE_KEY);
+
+        let transparent_texture_surface_render_pipeline_lit = pipeline::PipelineBuilder::new()
+            .set_vertex_source(standard_textured_vert_shader_source_lit_transparent, None)
+            .set_frag_source(single_texture_frag_shader_source_lit_transparent, None)
+            .set_texture_format(texture_format)
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Color::layout::<1>())
+            .add_vertex_buffer_layout(vertex::TexCoords::layout::<2>())
+            .add_vertex_buffer_layout(vertex::UseTexture::layout::<3>())
+            .add_vertex_buffer_layout(vertex::Normal::layout::<4>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_vertex_buffer_layout(light::NormalMatrixData::layout::<10>())
+            .add_bind_group_layout(&global_bind_group_layout)
+            .add_bind_group_layout(&mesh_local_clip_layout)
+            .add_bind_group_layout(&mesh_local_textured_layout)
+            .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+            .set_blend_state(pipeline::create_alpha_blend_state())
+            .build(device, constants::TRANSPARENT_TEXTURE_MESH_PIPELINE_KEY_LIT);
+
+        let transparent_texture_array_surface_render_pipeline = pipeline::PipelineBuilder::new()
+            .set_vertex_source(
+                wgpu::ShaderSource::Wgsl(
+                    (include_str!("shaders/textured_vert_shader.wgsl")).into(),
+                ),
+                None,
+            )
+            .set_frag_source(array_textures_frag_shader_source_transparent, None)
+            .set_texture_format(texture_format)
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Color::layout::<1>())
+            .add_vertex_buffer_layout(vertex::TexCoords::layout::<2>())
+            .add_vertex_buffer_layout(vertex::UseTexture::layout::<3>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_bind_group_layout(&global_bind_group_layout)
+            .add_bind_group_layout(&mesh_local_clip_layout)
+            .add_bind_group_layout(&mesh_local_array_textured_layout)
+            .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+            .set_blend_state(pipeline::create_alpha_blend_state())
+            .build(
+                device,
+                constants::TRANSPARENT_ARRAY_TEXTURE_MESH_PIPELINE_KEY,
+            );
+
+        let transparent_texture_array_surface_render_pipeline_lit =
+            pipeline::PipelineBuilder::new()
+                .set_vertex_source(
+                    wgpu::ShaderSource::Wgsl(
+                        (include_str!("shaders/textured_vert_shader_lit.wgsl")).into(),
+                    ),
+                    None,
+                )
+                .set_frag_source(array_textures_frag_shader_source_lit_transparent, None)
+                .set_texture_format(texture_format)
+                .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+                .add_vertex_buffer_layout(vertex::Color::layout::<1>())
+                .add_vertex_buffer_layout(vertex::TexCoords::layout::<2>())
+                .add_vertex_buffer_layout(vertex::UseTexture::layout::<3>())
+                .add_vertex_buffer_layout(vertex::Normal::layout::<4>())
+                .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+                .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+                .add_vertex_buffer_layout(light::NormalMatrixData::layout::<10>())
+                .add_bind_group_layout(&global_bind_group_layout)
+                .add_bind_group_layout(&mesh_local_clip_layout)
+                .add_bind_group_layout(&mesh_local_array_textured_layout)
+                .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+                .set_blend_state(pipeline::create_alpha_blend_state())
+                .build(
+                    device,
+                    constants::TRANSPARENT_ARRAY_TEXTURE_MESH_PIPELINE_KEY_LIT,
+                );
+
+        let transparent_colored_surface_render_pipeline = pipeline::PipelineBuilder::new()
+            .set_vertex_source(colored_vert_shader_source_transparent.clone(), None)
+            .set_frag_source(colored_frag_shader_source_transparent.clone(), None)
+            .set_texture_format(texture_format)
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Color::layout::<1>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_bind_group_layout(&global_bind_group_layout)
+            .add_bind_group_layout(&mesh_local_clip_layout)
+            .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+            .set_blend_state(pipeline::create_alpha_blend_state())
+            .build(
+                device,
+                constants::TRANSPARENT_VERTEX_COLORED_MESH_PIPELINE_KEY,
+            );
+
+        let transparent_colored_surface_render_pipeline_lit = pipeline::PipelineBuilder::new()
+            .set_vertex_source(colored_vert_shader_source_lit_transparent.clone(), None)
+            .set_frag_source(colored_frag_shader_source_lit_transparent.clone(), None)
+            .set_texture_format(texture_format)
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Color::layout::<1>())
+            .add_vertex_buffer_layout(vertex::Normal::layout::<4>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_vertex_buffer_layout(light::NormalMatrixData::layout::<10>())
+            .add_bind_group_layout(&global_bind_group_layout)
+            .add_bind_group_layout(&mesh_local_clip_layout)
+            .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+            .set_blend_state(pipeline::create_alpha_blend_state())
+            .build(
+                device,
+                constants::TRANSPARENT_VERTEX_COLORED_MESH_PIPELINE_KEY_LIT,
+            );
+
+        let transparent_solid_render_pipeline = pipeline::PipelineBuilder::new()
+            .set_vertex_source(solid_vert_shader_source_transparent.clone(), None)
+            .set_frag_source(colored_frag_shader_source_transparent.clone(), None)
+            .set_texture_format(texture_format)
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_bind_group_layout(&global_bind_group_layout)
+            .add_bind_group_layout(&mesh_local_clip_layout)
+            .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+            .set_blend_state(pipeline::create_alpha_blend_state())
+            .build(
+                device,
+                constants::TRANSPARENT_SOLID_COLORED_MESH_PIPELINE_KEY,
+            );
+
+        let transparent_solid_render_pipeline_lit = pipeline::PipelineBuilder::new()
+            .set_vertex_source(solid_vert_shader_source_lit_transparent, None)
+            .set_frag_source(colored_frag_shader_source_lit_transparent.clone(), None)
+            .set_texture_format(texture_format)
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Normal::layout::<4>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_vertex_buffer_layout(light::NormalMatrixData::layout::<10>())
+            .add_bind_group_layout(&global_bind_group_layout)
+            .add_bind_group_layout(&mesh_local_clip_layout)
+            .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+            .set_blend_state(pipeline::create_alpha_blend_state())
+            .build(
+                device,
+                constants::TRANSPARENT_SOLID_COLORED_MESH_PIPELINE_KEY_LIT,
+            );
+
+        // Recreate material color shader sources for transparent wireframe
+        let material_color_vert_source_transparent = wgpu::ShaderSource::Wgsl(
+            (include_str!("shaders/material_color_vert_shader.wgsl")).into(),
+        );
+
+        let transparent_wireframe_render_pipeline = pipeline::PipelineBuilder::new()
+            .set_vertex_source(material_color_vert_source_transparent, None)
+            .set_frag_source(colored_frag_shader_source_transparent.clone(), None)
+            .set_texture_format(texture_format)
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_bind_group_layout(&global_bind_group_layout)
+            .add_bind_group_layout(&mesh_local_clip_layout)
+            .set_topology(wgpu::PrimitiveTopology::LineList)
+            .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+            .set_blend_state(pipeline::create_alpha_blend_state())
+            .build(device, constants::TRANSPARENT_WIREFRAME_MESH_PIPELINE_KEY);
+
         let basic_vert_source =
             wgpu::ShaderSource::Wgsl((include_str!("shaders/basic_vert_shader.wgsl")).into());
         let silhoutte_frag_shader_source = wgpu::ShaderSource::Wgsl(
@@ -620,6 +831,44 @@ impl Renderer {
         render_pipeline_cache.insert(
             constants::SCREEN_SPACE_WIREFRAME_WITHOUT_DEPTH_PIPELINE_KEY,
             screen_space_wireframe_mesh_render_pipeline_without_depth,
+        );
+
+        // Insert transparent pipelines into cache
+        render_pipeline_cache.insert(
+            constants::TRANSPARENT_TEXTURE_MESH_PIPELINE_KEY,
+            transparent_texture_surface_render_pipeline,
+        );
+        render_pipeline_cache.insert(
+            constants::TRANSPARENT_TEXTURE_MESH_PIPELINE_KEY_LIT,
+            transparent_texture_surface_render_pipeline_lit,
+        );
+        render_pipeline_cache.insert(
+            constants::TRANSPARENT_ARRAY_TEXTURE_MESH_PIPELINE_KEY,
+            transparent_texture_array_surface_render_pipeline,
+        );
+        render_pipeline_cache.insert(
+            constants::TRANSPARENT_ARRAY_TEXTURE_MESH_PIPELINE_KEY_LIT,
+            transparent_texture_array_surface_render_pipeline_lit,
+        );
+        render_pipeline_cache.insert(
+            constants::TRANSPARENT_VERTEX_COLORED_MESH_PIPELINE_KEY,
+            transparent_colored_surface_render_pipeline,
+        );
+        render_pipeline_cache.insert(
+            constants::TRANSPARENT_VERTEX_COLORED_MESH_PIPELINE_KEY_LIT,
+            transparent_colored_surface_render_pipeline_lit,
+        );
+        render_pipeline_cache.insert(
+            constants::TRANSPARENT_SOLID_COLORED_MESH_PIPELINE_KEY,
+            transparent_solid_render_pipeline,
+        );
+        render_pipeline_cache.insert(
+            constants::TRANSPARENT_SOLID_COLORED_MESH_PIPELINE_KEY_LIT,
+            transparent_solid_render_pipeline_lit,
+        );
+        render_pipeline_cache.insert(
+            constants::TRANSPARENT_WIREFRAME_MESH_PIPELINE_KEY,
+            transparent_wireframe_render_pipeline,
         );
 
         let composite_frag_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1047,46 +1296,107 @@ impl Renderer {
         frame_view_data: &FrameViewData,
         color_load: wgpu::LoadOp<wgpu::Color>,
     ) {
-        let render_pass_desc = wgpu::RenderPassDescriptor {
-            label: Some("Surface Render Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &color_data.texture_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: color_load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &depth_texture.view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Store,
+        // Separate opaque and transparent renderables
+        let opaque_renderables: Vec<_> = render_view
+            .render_data
+            .iter()
+            .filter(|d| !d.local_resources.transparency.enabled)
+            .cloned()
+            .collect();
+
+        let transparent_renderables: Vec<_> = render_view
+            .render_data
+            .iter()
+            .filter(|d| d.local_resources.transparency.enabled)
+            .cloned()
+            .collect();
+
+        // Opaque pass - always runs to clear the screen and depth buffer
+        // Render pass is created unconditionally to ensure clear happens
+        {
+            let render_pass_desc = wgpu::RenderPassDescriptor {
+                label: Some("Opaque Surface Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &color_data.texture_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: color_load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth_texture.view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
                 }),
-                stencil_ops: None,
-            }),
-            occlusion_query_set: None,
-            timestamp_writes: None,
-        };
-        let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            };
+            let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
 
-        Self::apply_viewport_rect(&mut render_pass, render_view.rect);
-        render_pass.set_bind_group(0, &frame_view_data.bind_group, &[]);
-        // set up global bind groups
-        for (i, bind_group) in self.global_bind_groups.iter().enumerate() {
-            render_pass.set_bind_group((i + 3) as u32, bind_group, &[]);
+            Self::apply_viewport_rect(&mut render_pass, render_view.rect);
+            render_pass.set_bind_group(0, &frame_view_data.bind_group, &[]);
+            // set up global bind groups
+            for (i, bind_group) in self.global_bind_groups.iter().enumerate() {
+                render_pass.set_bind_group((i + 3) as u32, bind_group, &[]);
+            }
+
+            // Only draw opaque objects if they exist
+            if !opaque_renderables.is_empty() {
+                render_pass::surface_3d_render_pass_with_depth(
+                    &opaque_renderables,
+                    &self.render_pipeline_cache,
+                    &mut render_pass,
+                );
+                render_pass::wireframe_3d_render_pass(
+                    &opaque_renderables,
+                    &self.render_pipeline_cache,
+                    &mut render_pass,
+                );
+            }
+        } // render_pass is dropped here, releasing the borrow on encoder
+
+        // Transparent pass - reads depth but doesn't write, with alpha blending
+        if !transparent_renderables.is_empty() {
+            let render_pass_desc = wgpu::RenderPassDescriptor {
+                label: Some("Transparent Surface Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &color_data.texture_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load, // Load from opaque pass
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth_texture.view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load, // Load existing depth
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            };
+            let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
+
+            Self::apply_viewport_rect(&mut render_pass, render_view.rect);
+            render_pass.set_bind_group(0, &frame_view_data.bind_group, &[]);
+            // set up global bind groups
+            for (i, bind_group) in self.global_bind_groups.iter().enumerate() {
+                render_pass.set_bind_group((i + 3) as u32, bind_group, &[]);
+            }
+
+            render_pass::transparent_mesh_pass(
+                &transparent_renderables,
+                &self.render_pipeline_cache,
+                &mut render_pass,
+            );
         }
-
-        render_pass::surface_3d_render_pass_with_depth(
-            render_view.render_data,
-            &self.render_pipeline_cache,
-            &mut render_pass,
-        );
-        render_pass::wireframe_3d_render_pass(
-            render_view.render_data,
-            &self.render_pipeline_cache,
-            &mut render_pass,
-        );
     }
 
     fn apply_viewport_rect(render_pass: &mut wgpu::RenderPass<'_>, rect: Option<ViewportRect>) {
