@@ -916,9 +916,9 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            image_buffer
-                .save("tests/data/transparent_colored_mesh_new.png")
-                .unwrap();
+            // image_buffer
+            //     .save("tests/data/transparent_colored_mesh_new.png")
+            //     .unwrap();
 
             let ref_image_data =
                 image::open(PathBuf::from("tests/data/transparent_colored_mesh.png"))
