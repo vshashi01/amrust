@@ -15,6 +15,16 @@ pub const SCREEN_SPACE_WIREFRAME_WITHOUT_DEPTH_PIPELINE_KEY: &str =
     "Screen_Space_Wireframe_Without_Depth";
 pub const COMPOSITE_PASS_PIPELINE: &str = "Composite_Pass_Pipeline";
 
+// No-cull pipeline variants (for meshes that support cull mode toggle)
+pub const NO_CULL_VERTEX_COLORED_MESH_PIPELINE_KEY: &str = "No_Cull_Vertex_Colored_Mesh";
+pub const NO_CULL_TEXTURE_MESH_PIPELINE_KEY: &str = "No_Cull_Single_Texture_Mesh";
+pub const NO_CULL_ARRAY_TEXTURE_MESH_PIPELINE_KEY: &str = "No_Cull_Array_Texture_Mesh";
+pub const NO_CULL_VERTEX_COLORED_MESH_PIPELINE_KEY_LIT: &str = "No_Cull_Vertex_Colored_Mesh_Lit";
+pub const NO_CULL_TEXTURE_MESH_PIPELINE_KEY_LIT: &str = "No_Cull_Single_Texture_Mesh_Lit";
+pub const NO_CULL_ARRAY_TEXTURE_MESH_PIPELINE_KEY_LIT: &str = "No_Cull_Array_Texture_Mesh_Lit";
+pub const NO_CULL_SOLID_COLORED_MESH_PIPELINE_KEY: &str = "No_Cull_Uniform_Color_Mesh";
+pub const NO_CULL_SOLID_COLORED_MESH_PIPELINE_KEY_LIT: &str = "No_Cull_Uniform_Color_Mesh_Lit";
+
 // Transparent pipeline keys
 pub const TRANSPARENT_VERTEX_COLORED_MESH_PIPELINE_KEY: &str = "Transparent_Vertex_Colored_Mesh";
 pub const TRANSPARENT_TEXTURE_MESH_PIPELINE_KEY: &str = "Transparent_Single_Texture_Mesh";
@@ -28,3 +38,21 @@ pub const TRANSPARENT_WIREFRAME_MESH_PIPELINE_KEY: &str = "Transparent_Mesh_Wire
 pub const TRANSPARENT_SOLID_COLORED_MESH_PIPELINE_KEY: &str = "Transparent_Uniform_Color_Mesh";
 pub const TRANSPARENT_SOLID_COLORED_MESH_PIPELINE_KEY_LIT: &str =
     "Transparent_Uniform_Color_Mesh_Lit";
+
+// Transparent no-cull pipeline variants
+pub const NO_CULL_TRANSPARENT_VERTEX_COLORED_MESH_PIPELINE_KEY: &str =
+    "No_Cull_Transparent_Vertex_Colored_Mesh";
+pub const NO_CULL_TRANSPARENT_TEXTURE_MESH_PIPELINE_KEY: &str =
+    "No_Cull_Transparent_Single_Texture_Mesh";
+pub const NO_CULL_TRANSPARENT_ARRAY_TEXTURE_MESH_PIPELINE_KEY: &str =
+    "No_Cull_Transparent_Array_Texture_Mesh";
+pub const NO_CULL_TRANSPARENT_VERTEX_COLORED_MESH_PIPELINE_KEY_LIT: &str =
+    "No_Cull_Transparent_Vertex_Colored_Mesh_Lit";
+pub const NO_CULL_TRANSPARENT_TEXTURE_MESH_PIPELINE_KEY_LIT: &str =
+    "No_Cull_Transparent_Single_Texture_Mesh_Lit";
+pub const NO_CULL_TRANSPARENT_ARRAY_TEXTURE_MESH_PIPELINE_KEY_LIT: &str =
+    "No_Cull_Transparent_Array_Texture_Mesh_Lit";
+pub const NO_CULL_TRANSPARENT_SOLID_COLORED_MESH_PIPELINE_KEY: &str =
+    "No_Cull_Transparent_Uniform_Color_Mesh";
+pub const NO_CULL_TRANSPARENT_SOLID_COLORED_MESH_PIPELINE_KEY_LIT: &str =
+    "No_Cull_Transparent_Uniform_Color_Mesh_Lit";

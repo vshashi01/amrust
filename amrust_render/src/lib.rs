@@ -46,7 +46,7 @@ pub struct RenderData3d<'a> {
     pub mesh: &'a GpuMesh,
     pub instance: &'a GpuInstance,
     pub local_resources: &'a RenderDataLocalResources,
-    // pub transparency: Transparency,
+    pub triangle_face_mode: Option<TriangleFaceMode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +59,12 @@ pub enum Renderable3d {
     SilhouetteMesh,
     ScreenSpaceColoredMesh { depth_testing: bool, order: u8 },
     ScreenSpaceWireframeMesh { depth_testing: bool, order: u8 },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TriangleFaceMode {
+    FrontAndBack,
+    FrontOnly,
 }
 
 #[cfg(test)]
@@ -201,6 +207,7 @@ mod tests {
                     ClipPlanes::new(&renderer.device),
                     Transparency::opaque(&renderer.device),
                 ),
+                cull_mode: None,
             };
 
             let _colored_mesh_object_id = render_db.add_object(colored_mesh_object);
@@ -312,7 +319,7 @@ mod tests {
 
             let mut render_db = TestRenderDb::new(&renderer.device);
             let (_mesh_object_id, _wireframe_object_id) =
-                set_colored_mesh_object(&renderer.device, &mut render_db);
+                set_colored_mesh_object(&renderer.device, None, &mut render_db);
 
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
             let image_buffer = renderer
@@ -367,7 +374,7 @@ mod tests {
 
             let mut main_render_db = TestRenderDb::new(&renderer.device);
             let (_mesh_object_id, _wireframe_object_id) =
-                set_colored_mesh_object(&renderer.device, &mut main_render_db);
+                set_colored_mesh_object(&renderer.device, None, &mut main_render_db);
             let main_render_data = main_render_db.get_renderables().collect::<Vec<_>>();
 
             let mut secondary_render_db = TestRenderDb::new(&renderer.device);
@@ -476,7 +483,7 @@ mod tests {
 
             let mut render_db = TestRenderDb::new(&renderer.device);
             let (_mesh_object_id, _wireframe_object_id) =
-                set_colored_mesh_object(&renderer.device, &mut render_db);
+                set_colored_mesh_object(&renderer.device, None, &mut render_db);
 
             let render_data = render_db.get_renderables().collect::<Vec<_>>();
             let image_buffer = renderer
@@ -588,6 +595,146 @@ mod tests {
             if let Some(Ordering::Greater) = pool.mean().partial_cmp(&FLIP_MEAN_ERROR) {
                 println!("Mean error {}", pool.mean());
                 panic!("Something is wrong with global and local clipping")
+            }
+        });
+    }
+
+    #[test]
+    fn test_box_with_global_no_cull_and_global_clip_plane() {
+        pollster::block_on(async {
+            let renderer = renderer::Renderer::from_new_device().await.unwrap();
+
+            let mut frame_view_data =
+                renderer.create_frame_view_data(TEXTURE_WIDTH, TEXTURE_HEIGHT);
+
+            // Set no cull mode - this is the key test feature
+            frame_view_data.triangle_face_mode = TriangleFaceMode::FrontAndBack;
+
+            frame_view_data
+                .camera
+                .update(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
+            frame_view_data.set_clip_plane(&clip::ClipPlane {
+                axis: clip::ClipPlaneAxis::X,
+                axis_sign: 1.0,
+                is_enabled: true,
+                d: 0.0,
+                is_finite: false,
+                bounds_min: glam::Vec2::ZERO,
+                bounds_max: glam::Vec2::ZERO,
+            });
+            renderer.write_frame_view_data_to_gpu(&frame_view_data);
+
+            let read_buffer =
+                renderer::create_read_buffer(&renderer.device, TEXTURE_WIDTH, TEXTURE_HEIGHT);
+
+            let mut render_db = TestRenderDb::new(&renderer.device);
+            let (_mesh_object_id, _wireframe_object_id) =
+                set_colored_mesh_object(&renderer.device, None, &mut render_db);
+
+            let render_data = render_db.get_renderables().collect::<Vec<_>>();
+            let image_buffer = renderer
+                .render_and_return_as_image_buffer(
+                    &render_data,
+                    &read_buffer,
+                    wgpu::Extent3d {
+                        width: TEXTURE_WIDTH,
+                        height: TEXTURE_HEIGHT,
+                        depth_or_array_layers: 1,
+                    },
+                    &frame_view_data,
+                )
+                .await
+                .unwrap();
+            // Uncomment to save reference image
+            // image_buffer
+            //     .save("tests/data/vertex_color_mesh_with_no_cull_and_global_clip_plane_actual.png")
+            //     .unwrap();
+
+            let ref_image_data = image::open(PathBuf::from(
+                "tests/data/vertex_color_mesh_with_no_cull_and_global_clip_plane.png",
+            ))
+            .unwrap()
+            .into_rgba8();
+
+            let ref_image =
+                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &ref_image_data);
+            let test_image =
+                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &image_buffer);
+
+            let error_map = nv_flip::flip(ref_image, test_image, DEFAULT_PIXELS_PER_DEGREE);
+            let pool = nv_flip::FlipPool::from_image(&error_map);
+            if let Some(Ordering::Greater) = pool.mean().partial_cmp(&FLIP_MEAN_ERROR) {
+                println!("Mean error {}", pool.mean());
+                panic!("Something is wrong with no culling and global clipping")
+            }
+        });
+    }
+
+    #[test]
+    fn test_box_with_local_no_cull_and_global_clip_plane() {
+        pollster::block_on(async {
+            let renderer = renderer::Renderer::from_new_device().await.unwrap();
+
+            let mut frame_view_data =
+                renderer.create_frame_view_data(TEXTURE_WIDTH, TEXTURE_HEIGHT);
+            frame_view_data.triangle_face_mode = TriangleFaceMode::FrontOnly;
+
+            frame_view_data
+                .camera
+                .update(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
+            frame_view_data.set_clip_plane(&clip::ClipPlane {
+                axis: clip::ClipPlaneAxis::X,
+                axis_sign: 1.0,
+                is_enabled: true,
+                d: 0.0,
+                is_finite: false,
+                bounds_min: glam::Vec2::ZERO,
+                bounds_max: glam::Vec2::ZERO,
+            });
+            renderer.write_frame_view_data_to_gpu(&frame_view_data);
+
+            let read_buffer =
+                renderer::create_read_buffer(&renderer.device, TEXTURE_WIDTH, TEXTURE_HEIGHT);
+
+            let mut render_db = TestRenderDb::new(&renderer.device);
+            let (_mesh_object_id, _wireframe_object_id) =
+                set_colored_mesh_object(&renderer.device, Some(true), &mut render_db);
+
+            let render_data = render_db.get_renderables().collect::<Vec<_>>();
+            let image_buffer = renderer
+                .render_and_return_as_image_buffer(
+                    &render_data,
+                    &read_buffer,
+                    wgpu::Extent3d {
+                        width: TEXTURE_WIDTH,
+                        height: TEXTURE_HEIGHT,
+                        depth_or_array_layers: 1,
+                    },
+                    &frame_view_data,
+                )
+                .await
+                .unwrap();
+            // Uncomment to save reference image
+            // image_buffer
+            //     .save("tests/data/vertex_color_mesh_with_no_cull_and_global_clip_plane_actual.png")
+            //     .unwrap();
+
+            let ref_image_data = image::open(PathBuf::from(
+                "tests/data/vertex_color_mesh_with_no_cull_and_global_clip_plane.png",
+            ))
+            .unwrap()
+            .into_rgba8();
+
+            let ref_image =
+                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &ref_image_data);
+            let test_image =
+                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &image_buffer);
+
+            let error_map = nv_flip::flip(ref_image, test_image, DEFAULT_PIXELS_PER_DEGREE);
+            let pool = nv_flip::FlipPool::from_image(&error_map);
+            if let Some(Ordering::Greater) = pool.mean().partial_cmp(&FLIP_MEAN_ERROR) {
+                println!("Mean error {}", pool.mean());
+                panic!("Something is wrong with no culling and global clipping")
             }
         });
     }
@@ -1037,6 +1184,7 @@ mod tests {
                 ClipPlanes::new(device),
                 transparency,
             ),
+            cull_mode: None,
         };
         render_db.add_object(colored_mesh_object)
     }
@@ -1158,6 +1306,7 @@ mod tests {
                 sampler,
                 Transparency::opaque(device),
             ),
+            cull_mode: None,
         };
         let _single_tex_mesh_object_id = render_db.add_object(single_tex_mesh_object);
 
@@ -1173,6 +1322,7 @@ mod tests {
                 ClipPlanes::new(device),
                 Transparency::opaque(device),
             ),
+            cull_mode: None,
         };
         let _single_tex_mesh_wireframe_object_id =
             render_db.add_object(single_tex_mesh_wireframe_object);
@@ -1298,6 +1448,7 @@ mod tests {
                 sampler,
                 Transparency::opaque(device),
             ),
+            cull_mode: None,
         };
         let _multi_tex_mesh_object_id = render_db.add_object(multi_tex_mesh_object);
 
@@ -1313,6 +1464,7 @@ mod tests {
                 ClipPlanes::new(device),
                 Transparency::opaque(device),
             ),
+            cull_mode: None,
         };
         let _multi_tex_mesh_wireframe_object_id =
             render_db.add_object(multi_tex_mesh_wireframe_object);
@@ -1323,7 +1475,11 @@ mod tests {
         )
     }
 
-    fn set_colored_mesh_object(device: &wgpu::Device, render_db: &mut TestRenderDb) -> (u32, u32) {
+    fn set_colored_mesh_object(
+        device: &wgpu::Device,
+        set_show_back_face_local: Option<bool>,
+        render_db: &mut TestRenderDb,
+    ) -> (u32, u32) {
         let colored_mesh = MeshBuilder::new()
             .add_vertex_stream(POSITIONS)
             .add_vertex_stream(COLORS)
@@ -1364,6 +1520,15 @@ mod tests {
                 ClipPlanes::new(device),
                 Transparency::opaque(device),
             ),
+            cull_mode: if let Some(show_back_face_local) = set_show_back_face_local {
+                if show_back_face_local {
+                    Some(TriangleFaceMode::FrontAndBack)
+                } else {
+                    None
+                }
+            } else {
+                None
+            },
         };
         let _colored_mesh_object_id = render_db.add_object(colored_mesh_object);
 
@@ -1379,6 +1544,7 @@ mod tests {
                 ClipPlanes::new(device),
                 Transparency::opaque(device),
             ),
+            cull_mode: None,
         };
         let _colored_mesh_wireframe_object_id = render_db.add_object(colored_mesh_wireframe_object);
 
@@ -1419,6 +1585,7 @@ mod tests {
                 ClipPlanes::new(device),
                 transparency,
             ),
+            cull_mode: None,
         };
         render_db.add_object(colored_mesh_object)
     }
@@ -1473,6 +1640,7 @@ mod tests {
                 clip_planes.clone(),
                 Transparency::opaque(device),
             ),
+            cull_mode: None,
         };
 
         let wireframe_a = RenderObject {
@@ -1484,6 +1652,7 @@ mod tests {
                 clip_planes.clone(),
                 Transparency::opaque(device),
             ),
+            cull_mode: None,
         };
 
         let mesh_b = RenderObject {
@@ -1495,6 +1664,7 @@ mod tests {
                 clip_planes.clone(),
                 Transparency::opaque(device),
             ),
+            cull_mode: None,
         };
 
         let wireframe_b = RenderObject {
@@ -1506,6 +1676,7 @@ mod tests {
                 clip_planes.clone(),
                 Transparency::opaque(device),
             ),
+            cull_mode: None,
         };
 
         let mesh_a_id = render_db.add_object(mesh_a);
@@ -1561,6 +1732,7 @@ mod tests {
                 ClipPlanes::new(device),
                 Transparency::opaque(device),
             ),
+            cull_mode: None,
         };
         let _colored_mesh_object_id = render_db.add_object(colored_mesh_object);
 
@@ -1576,6 +1748,7 @@ mod tests {
                 ClipPlanes::new(device),
                 Transparency::opaque(device),
             ),
+            cull_mode: None,
         };
         let _colored_mesh_wireframe_object_id = render_db.add_object(colored_mesh_wireframe_object);
 
@@ -1593,6 +1766,7 @@ mod tests {
                 ClipPlanes::new(device),
                 Transparency::opaque(device),
             ),
+            cull_mode: None,
         };
 
         let _silhoutte_mesh_object_id = render_db.add_object(silhoutte_mesh_object);
@@ -1659,6 +1833,7 @@ mod tests {
                 ClipPlanes::new(device),
                 Transparency::opaque(device),
             ),
+            cull_mode: None,
         };
         let _colored_mesh_object_id = render_db.add_object(colored_mesh_object);
 
@@ -1689,6 +1864,7 @@ mod tests {
                 ClipPlanes::new(device),
                 Transparency::opaque(device),
             ),
+            cull_mode: None,
         };
 
         let _colored_mesh_wireframe_object_id = render_db.add_object(colored_mesh_wireframe_object);
@@ -1734,6 +1910,7 @@ mod tests {
                 ClipPlanes::new(device),
                 Transparency::opaque(device),
             ),
+            cull_mode: None,
         };
         let _simple_mesh_object_id = render_db.add_object(simple_mesh_object);
 
@@ -1752,6 +1929,7 @@ mod tests {
                 ClipPlanes::new(device),
                 Transparency::opaque(device),
             ),
+            cull_mode: None,
         };
 
         let _simple_mesh_wireframe_object_id = render_db.add_object(simple_mesh_wireframe_object);
@@ -1795,6 +1973,7 @@ mod tests {
                 ClipPlanes::new(device),
                 Transparency::opaque(device),
             ),
+            cull_mode: None,
         };
 
         render_db.add_object(simple_mesh_wireframe_object)
@@ -1832,6 +2011,7 @@ mod tests {
                 ClipPlanes::new(device),
                 Transparency::opaque(device),
             ),
+            cull_mode: None,
         };
 
         render_db.add_object(gizmo_object)
@@ -1860,6 +2040,7 @@ mod tests {
                 ClipPlanes::new(device),
                 Transparency::opaque(device),
             ),
+            cull_mode: None,
         };
 
         render_db.add_object(simple_mesh_object)
@@ -1870,6 +2051,7 @@ mod tests {
         pub instance: instance::GpuInstance,
         pub gpu_mesh_id: u32,
         pub mesh_local: RenderDataLocalResources,
+        pub cull_mode: Option<TriangleFaceMode>,
     }
 
     pub struct TestRenderDb {
@@ -1922,6 +2104,7 @@ mod tests {
                     mesh: gpu_mesh,
                     instance: &r.instance,
                     local_resources: &r.mesh_local,
+                    triangle_face_mode: r.cull_mode,
                 }
             })
         }

@@ -1,6 +1,6 @@
 use amrust_render::{
-    RenderData3d, RenderDataLocalResources, Renderable3d, clip::ClipPlanes, gpu_mesh::GpuMesh,
-    instance, transparency::Transparency,
+    RenderData3d, RenderDataLocalResources, Renderable3d, TriangleFaceMode, clip::ClipPlanes,
+    gpu_mesh::GpuMesh, instance, transparency::Transparency,
 };
 use slotmap::{SlotMap, new_key_type};
 
@@ -143,6 +143,7 @@ impl RenderDb {
                     mesh: gpu_mesh,
                     instance: &render_object.instance,
                     local_resources: &render_object.mesh_local,
+                    triangle_face_mode: None,
                 })
             } else {
                 None

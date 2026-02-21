@@ -8,7 +8,7 @@ use crate::screen_space::{self, ScreenSpace, ScreenSpaceUniform};
 use crate::{Renderable3d, clip, composite, constants, light, prelude::*};
 
 use crate::{
-    RenderData3d, WgpuError,
+    RenderData3d, TriangleFaceMode, WgpuError,
     camera::Camera,
     instance::InstanceFieldDescriptor,
     material, pipeline, render_pass, texture, transformation,
@@ -33,6 +33,7 @@ pub struct FrameViewData {
     pub screen_space_data: ScreenSpace,
     pub clip_planes: ClipPlanes<MAX_CLIP_PLANE_COUNT>,
     pub light: LightData,
+    pub triangle_face_mode: TriangleFaceMode,
 }
 
 impl FrameViewData {
@@ -62,6 +63,7 @@ impl FrameViewData {
             bind_group,
             clip_planes,
             light,
+            triangle_face_mode: TriangleFaceMode::FrontOnly,
         }
     }
 
@@ -356,6 +358,102 @@ impl Renderer {
             .set_depth_stencil(pipeline::create_depth_stencil_state())
             .build(device, constants::ARRAY_TEXTURE_MESH_PIPELINE_KEY_LIT);
 
+        // No-cull variants for textured meshes
+        let standard_textured_vert_shader_source =
+            wgpu::ShaderSource::Wgsl((include_str!("shaders/textured_vert_shader.wgsl")).into());
+        let single_texture_frag_shader_source =
+            wgpu::ShaderSource::Wgsl((include_str!("shaders/texture_frag_shader.wgsl")).into());
+        let no_cull_texture_surface_render_pipeline = pipeline::PipelineBuilder::new()
+            .set_vertex_source(standard_textured_vert_shader_source, None)
+            .set_frag_source(single_texture_frag_shader_source, None)
+            .set_texture_format(texture_format)
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Color::layout::<1>())
+            .add_vertex_buffer_layout(vertex::TexCoords::layout::<2>())
+            .add_vertex_buffer_layout(vertex::UseTexture::layout::<3>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_bind_group_layout(&global_bind_group_layout)
+            .add_bind_group_layout(&mesh_local_clip_layout)
+            .add_bind_group_layout(&mesh_local_textured_layout)
+            .set_depth_stencil(pipeline::create_depth_stencil_state())
+            .set_cull_mode(TriangleFaceMode::FrontAndBack)
+            .build(device, constants::NO_CULL_TEXTURE_MESH_PIPELINE_KEY);
+
+        let standard_textured_vert_shader_source = wgpu::ShaderSource::Wgsl(
+            (include_str!("shaders/textured_vert_shader_lit.wgsl")).into(),
+        );
+        let single_texture_frag_shader_source =
+            wgpu::ShaderSource::Wgsl((include_str!("shaders/lit_texture_frag_shader.wgsl")).into());
+        let no_cull_texture_surface_render_pipeline_lit = pipeline::PipelineBuilder::new()
+            .set_vertex_source(standard_textured_vert_shader_source, None)
+            .set_frag_source(single_texture_frag_shader_source, None)
+            .set_texture_format(texture_format)
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Color::layout::<1>())
+            .add_vertex_buffer_layout(vertex::TexCoords::layout::<2>())
+            .add_vertex_buffer_layout(vertex::UseTexture::layout::<3>())
+            .add_vertex_buffer_layout(vertex::Normal::layout::<4>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_vertex_buffer_layout(light::NormalMatrixData::layout::<10>())
+            .add_bind_group_layout(&global_bind_group_layout)
+            .add_bind_group_layout(&mesh_local_clip_layout)
+            .add_bind_group_layout(&mesh_local_textured_layout)
+            .set_depth_stencil(pipeline::create_depth_stencil_state())
+            .set_cull_mode(TriangleFaceMode::FrontAndBack)
+            .build(device, constants::NO_CULL_TEXTURE_MESH_PIPELINE_KEY_LIT);
+
+        let standard_textured_vert_shader_source =
+            wgpu::ShaderSource::Wgsl((include_str!("shaders/textured_vert_shader.wgsl")).into());
+        let array_textures_frag_shader_source = wgpu::ShaderSource::Wgsl(
+            (include_str!("shaders/array_textures_frag_shader.wgsl")).into(),
+        );
+        let no_cull_texture_array_surface_render_pipeline = pipeline::PipelineBuilder::new()
+            .set_vertex_source(standard_textured_vert_shader_source, None)
+            .set_frag_source(array_textures_frag_shader_source, None)
+            .set_texture_format(texture_format)
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Color::layout::<1>())
+            .add_vertex_buffer_layout(vertex::TexCoords::layout::<2>())
+            .add_vertex_buffer_layout(vertex::UseTexture::layout::<3>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_bind_group_layout(&global_bind_group_layout)
+            .add_bind_group_layout(&mesh_local_clip_layout)
+            .add_bind_group_layout(&mesh_local_array_textured_layout)
+            .set_depth_stencil(pipeline::create_depth_stencil_state())
+            .set_cull_mode(TriangleFaceMode::FrontAndBack)
+            .build(device, constants::NO_CULL_ARRAY_TEXTURE_MESH_PIPELINE_KEY);
+
+        let standard_textured_vert_shader_source = wgpu::ShaderSource::Wgsl(
+            (include_str!("shaders/textured_vert_shader_lit.wgsl")).into(),
+        );
+        let array_textures_frag_shader_source = wgpu::ShaderSource::Wgsl(
+            (include_str!("shaders/lit_array_textures_frag_shader.wgsl")).into(),
+        );
+        let no_cull_texture_array_surface_render_pipeline_lit = pipeline::PipelineBuilder::new()
+            .set_vertex_source(standard_textured_vert_shader_source, None)
+            .set_frag_source(array_textures_frag_shader_source, None)
+            .set_texture_format(texture_format)
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Color::layout::<1>())
+            .add_vertex_buffer_layout(vertex::TexCoords::layout::<2>())
+            .add_vertex_buffer_layout(vertex::UseTexture::layout::<3>())
+            .add_vertex_buffer_layout(vertex::Normal::layout::<4>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_vertex_buffer_layout(light::NormalMatrixData::layout::<10>())
+            .add_bind_group_layout(&global_bind_group_layout)
+            .add_bind_group_layout(&mesh_local_clip_layout)
+            .add_bind_group_layout(&mesh_local_array_textured_layout)
+            .set_depth_stencil(pipeline::create_depth_stencil_state())
+            .set_cull_mode(TriangleFaceMode::FrontAndBack)
+            .build(
+                device,
+                constants::NO_CULL_ARRAY_TEXTURE_MESH_PIPELINE_KEY_LIT,
+            );
+
         let colored_vert_shader_source =
             wgpu::ShaderSource::Wgsl((include_str!("shaders/colored_vert_shader.wgsl")).into());
         let colored_frag_shader_source =
@@ -445,6 +543,89 @@ impl Renderer {
             .set_topology(wgpu::PrimitiveTopology::LineList)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
             .build(device, constants::WIREFRAME_MESH_PIPELINE_KEY);
+
+        // No-cull variants for colored and solid meshes
+        let colored_vert_shader_source =
+            wgpu::ShaderSource::Wgsl((include_str!("shaders/colored_vert_shader.wgsl")).into());
+        let colored_frag_shader_source =
+            wgpu::ShaderSource::Wgsl(include_str!("shaders/colored_frag_shader.wgsl").into());
+        let no_cull_colored_surface_render_pipeline = pipeline::PipelineBuilder::new()
+            .set_vertex_source(colored_vert_shader_source, None)
+            .set_frag_source(colored_frag_shader_source, None)
+            .set_texture_format(texture_format)
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Color::layout::<1>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_bind_group_layout(&global_bind_group_layout)
+            .add_bind_group_layout(&mesh_local_clip_layout)
+            .set_depth_stencil(pipeline::create_depth_stencil_state())
+            .set_cull_mode(TriangleFaceMode::FrontAndBack)
+            .build(device, constants::NO_CULL_VERTEX_COLORED_MESH_PIPELINE_KEY);
+
+        let colored_vert_shader_source =
+            wgpu::ShaderSource::Wgsl((include_str!("shaders/colored_vert_shader_lit.wgsl")).into());
+        let colored_frag_shader_source =
+            wgpu::ShaderSource::Wgsl(include_str!("shaders/lit_colored_frag_shader.wgsl").into());
+        let no_cull_colored_surface_render_pipeline_lit = pipeline::PipelineBuilder::new()
+            .set_vertex_source(colored_vert_shader_source, None)
+            .set_frag_source(colored_frag_shader_source, None)
+            .set_texture_format(texture_format)
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Color::layout::<1>())
+            .add_vertex_buffer_layout(vertex::Normal::layout::<4>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_vertex_buffer_layout(light::NormalMatrixData::layout::<10>())
+            .add_bind_group_layout(&global_bind_group_layout)
+            .add_bind_group_layout(&mesh_local_clip_layout)
+            .set_depth_stencil(pipeline::create_depth_stencil_state())
+            .set_cull_mode(TriangleFaceMode::FrontAndBack)
+            .build(
+                device,
+                constants::NO_CULL_VERTEX_COLORED_MESH_PIPELINE_KEY_LIT,
+            );
+
+        let solid_source = wgpu::ShaderSource::Wgsl(
+            (include_str!("shaders/material_color_vert_shader.wgsl")).into(),
+        );
+        let colored_frag_shader_source =
+            wgpu::ShaderSource::Wgsl(include_str!("shaders/colored_frag_shader.wgsl").into());
+        let no_cull_solid_render_pipeline = pipeline::PipelineBuilder::new()
+            .set_vertex_source(solid_source, None)
+            .set_frag_source(colored_frag_shader_source, None)
+            .set_texture_format(texture_format)
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_bind_group_layout(&global_bind_group_layout)
+            .add_bind_group_layout(&mesh_local_clip_layout)
+            .set_depth_stencil(pipeline::create_depth_stencil_state())
+            .set_cull_mode(TriangleFaceMode::FrontAndBack)
+            .build(device, constants::NO_CULL_SOLID_COLORED_MESH_PIPELINE_KEY);
+
+        let solid_source = wgpu::ShaderSource::Wgsl(
+            (include_str!("shaders/material_color_vert_shader_lit.wgsl")).into(),
+        );
+        let colored_frag_shader_source =
+            wgpu::ShaderSource::Wgsl(include_str!("shaders/lit_colored_frag_shader.wgsl").into());
+        let no_cull_solid_render_pipeline_lit = pipeline::PipelineBuilder::new()
+            .set_vertex_source(solid_source, None)
+            .set_frag_source(colored_frag_shader_source, None)
+            .set_texture_format(texture_format)
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Normal::layout::<4>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_vertex_buffer_layout(light::NormalMatrixData::layout::<10>())
+            .add_bind_group_layout(&global_bind_group_layout)
+            .add_bind_group_layout(&mesh_local_clip_layout)
+            .set_depth_stencil(pipeline::create_depth_stencil_state())
+            .set_cull_mode(TriangleFaceMode::FrontAndBack)
+            .build(
+                device,
+                constants::NO_CULL_SOLID_COLORED_MESH_PIPELINE_KEY_LIT,
+            );
 
         // Transparent pipeline variants
         // Recreate shader sources since they were moved
@@ -655,6 +836,216 @@ impl Renderer {
             .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
             .set_blend_state(pipeline::create_alpha_blend_state())
             .build(device, constants::TRANSPARENT_WIREFRAME_MESH_PIPELINE_KEY);
+
+        // No-cull transparent pipeline variants
+        let standard_textured_vert_shader_source_no_cull =
+            wgpu::ShaderSource::Wgsl((include_str!("shaders/textured_vert_shader.wgsl")).into());
+        let single_texture_frag_shader_source_no_cull =
+            wgpu::ShaderSource::Wgsl((include_str!("shaders/texture_frag_shader.wgsl")).into());
+        let no_cull_transparent_texture_surface_render_pipeline = pipeline::PipelineBuilder::new()
+            .set_vertex_source(standard_textured_vert_shader_source_no_cull, None)
+            .set_frag_source(single_texture_frag_shader_source_no_cull, None)
+            .set_texture_format(texture_format)
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Color::layout::<1>())
+            .add_vertex_buffer_layout(vertex::TexCoords::layout::<2>())
+            .add_vertex_buffer_layout(vertex::UseTexture::layout::<3>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_bind_group_layout(&global_bind_group_layout)
+            .add_bind_group_layout(&mesh_local_clip_layout)
+            .add_bind_group_layout(&mesh_local_textured_layout)
+            .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+            .set_blend_state(pipeline::create_alpha_blend_state())
+            .set_cull_mode(TriangleFaceMode::FrontAndBack)
+            .build(
+                device,
+                constants::NO_CULL_TRANSPARENT_TEXTURE_MESH_PIPELINE_KEY,
+            );
+
+        let standard_textured_vert_shader_source_lit_no_cull = wgpu::ShaderSource::Wgsl(
+            (include_str!("shaders/textured_vert_shader_lit.wgsl")).into(),
+        );
+        let single_texture_frag_shader_source_lit_no_cull =
+            wgpu::ShaderSource::Wgsl((include_str!("shaders/lit_texture_frag_shader.wgsl")).into());
+        let no_cull_transparent_texture_surface_render_pipeline_lit =
+            pipeline::PipelineBuilder::new()
+                .set_vertex_source(standard_textured_vert_shader_source_lit_no_cull, None)
+                .set_frag_source(single_texture_frag_shader_source_lit_no_cull, None)
+                .set_texture_format(texture_format)
+                .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+                .add_vertex_buffer_layout(vertex::Color::layout::<1>())
+                .add_vertex_buffer_layout(vertex::TexCoords::layout::<2>())
+                .add_vertex_buffer_layout(vertex::UseTexture::layout::<3>())
+                .add_vertex_buffer_layout(vertex::Normal::layout::<4>())
+                .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+                .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+                .add_vertex_buffer_layout(light::NormalMatrixData::layout::<10>())
+                .add_bind_group_layout(&global_bind_group_layout)
+                .add_bind_group_layout(&mesh_local_clip_layout)
+                .add_bind_group_layout(&mesh_local_textured_layout)
+                .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+                .set_blend_state(pipeline::create_alpha_blend_state())
+                .set_cull_mode(TriangleFaceMode::FrontAndBack)
+                .build(
+                    device,
+                    constants::NO_CULL_TRANSPARENT_TEXTURE_MESH_PIPELINE_KEY_LIT,
+                );
+
+        let array_textures_frag_shader_source_no_cull = wgpu::ShaderSource::Wgsl(
+            (include_str!("shaders/array_textures_frag_shader.wgsl")).into(),
+        );
+        let no_cull_transparent_texture_array_surface_render_pipeline =
+            pipeline::PipelineBuilder::new()
+                .set_vertex_source(
+                    wgpu::ShaderSource::Wgsl(
+                        (include_str!("shaders/textured_vert_shader.wgsl")).into(),
+                    ),
+                    None,
+                )
+                .set_frag_source(array_textures_frag_shader_source_no_cull, None)
+                .set_texture_format(texture_format)
+                .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+                .add_vertex_buffer_layout(vertex::Color::layout::<1>())
+                .add_vertex_buffer_layout(vertex::TexCoords::layout::<2>())
+                .add_vertex_buffer_layout(vertex::UseTexture::layout::<3>())
+                .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+                .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+                .add_bind_group_layout(&global_bind_group_layout)
+                .add_bind_group_layout(&mesh_local_clip_layout)
+                .add_bind_group_layout(&mesh_local_array_textured_layout)
+                .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+                .set_blend_state(pipeline::create_alpha_blend_state())
+                .set_cull_mode(TriangleFaceMode::FrontAndBack)
+                .build(
+                    device,
+                    constants::NO_CULL_TRANSPARENT_ARRAY_TEXTURE_MESH_PIPELINE_KEY,
+                );
+
+        let array_textures_frag_shader_source_lit_no_cull = wgpu::ShaderSource::Wgsl(
+            (include_str!("shaders/lit_array_textures_frag_shader.wgsl")).into(),
+        );
+        let no_cull_transparent_texture_array_surface_render_pipeline_lit =
+            pipeline::PipelineBuilder::new()
+                .set_vertex_source(
+                    wgpu::ShaderSource::Wgsl(
+                        (include_str!("shaders/textured_vert_shader_lit.wgsl")).into(),
+                    ),
+                    None,
+                )
+                .set_frag_source(array_textures_frag_shader_source_lit_no_cull, None)
+                .set_texture_format(texture_format)
+                .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+                .add_vertex_buffer_layout(vertex::Color::layout::<1>())
+                .add_vertex_buffer_layout(vertex::TexCoords::layout::<2>())
+                .add_vertex_buffer_layout(vertex::UseTexture::layout::<3>())
+                .add_vertex_buffer_layout(vertex::Normal::layout::<4>())
+                .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+                .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+                .add_vertex_buffer_layout(light::NormalMatrixData::layout::<10>())
+                .add_bind_group_layout(&global_bind_group_layout)
+                .add_bind_group_layout(&mesh_local_clip_layout)
+                .add_bind_group_layout(&mesh_local_array_textured_layout)
+                .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+                .set_blend_state(pipeline::create_alpha_blend_state())
+                .set_cull_mode(TriangleFaceMode::FrontAndBack)
+                .build(
+                    device,
+                    constants::NO_CULL_TRANSPARENT_ARRAY_TEXTURE_MESH_PIPELINE_KEY_LIT,
+                );
+
+        let colored_vert_shader_source_no_cull =
+            wgpu::ShaderSource::Wgsl((include_str!("shaders/colored_vert_shader.wgsl")).into());
+        let colored_frag_shader_source_no_cull =
+            wgpu::ShaderSource::Wgsl(include_str!("shaders/colored_frag_shader.wgsl").into());
+        let no_cull_transparent_colored_surface_render_pipeline = pipeline::PipelineBuilder::new()
+            .set_vertex_source(colored_vert_shader_source_no_cull, None)
+            .set_frag_source(colored_frag_shader_source_no_cull, None)
+            .set_texture_format(texture_format)
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Color::layout::<1>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_bind_group_layout(&global_bind_group_layout)
+            .add_bind_group_layout(&mesh_local_clip_layout)
+            .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+            .set_blend_state(pipeline::create_alpha_blend_state())
+            .set_cull_mode(TriangleFaceMode::FrontAndBack)
+            .build(
+                device,
+                constants::NO_CULL_TRANSPARENT_VERTEX_COLORED_MESH_PIPELINE_KEY,
+            );
+
+        let colored_vert_shader_source_lit_no_cull =
+            wgpu::ShaderSource::Wgsl((include_str!("shaders/colored_vert_shader_lit.wgsl")).into());
+        let colored_frag_shader_source_lit_no_cull =
+            wgpu::ShaderSource::Wgsl(include_str!("shaders/lit_colored_frag_shader.wgsl").into());
+        let no_cull_transparent_colored_surface_render_pipeline_lit =
+            pipeline::PipelineBuilder::new()
+                .set_vertex_source(colored_vert_shader_source_lit_no_cull, None)
+                .set_frag_source(colored_frag_shader_source_lit_no_cull, None)
+                .set_texture_format(texture_format)
+                .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+                .add_vertex_buffer_layout(vertex::Color::layout::<1>())
+                .add_vertex_buffer_layout(vertex::Normal::layout::<4>())
+                .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+                .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+                .add_vertex_buffer_layout(light::NormalMatrixData::layout::<10>())
+                .add_bind_group_layout(&global_bind_group_layout)
+                .add_bind_group_layout(&mesh_local_clip_layout)
+                .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+                .set_blend_state(pipeline::create_alpha_blend_state())
+                .set_cull_mode(TriangleFaceMode::FrontAndBack)
+                .build(
+                    device,
+                    constants::NO_CULL_TRANSPARENT_VERTEX_COLORED_MESH_PIPELINE_KEY_LIT,
+                );
+
+        let solid_vert_shader_source_no_cull = wgpu::ShaderSource::Wgsl(
+            (include_str!("shaders/material_color_vert_shader.wgsl")).into(),
+        );
+        let solid_frag_shader_source_no_cull =
+            wgpu::ShaderSource::Wgsl(include_str!("shaders/colored_frag_shader.wgsl").into());
+        let no_cull_transparent_solid_render_pipeline = pipeline::PipelineBuilder::new()
+            .set_vertex_source(solid_vert_shader_source_no_cull, None)
+            .set_frag_source(solid_frag_shader_source_no_cull, None)
+            .set_texture_format(texture_format)
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_bind_group_layout(&global_bind_group_layout)
+            .add_bind_group_layout(&mesh_local_clip_layout)
+            .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+            .set_blend_state(pipeline::create_alpha_blend_state())
+            .set_cull_mode(TriangleFaceMode::FrontAndBack)
+            .build(
+                device,
+                constants::NO_CULL_TRANSPARENT_SOLID_COLORED_MESH_PIPELINE_KEY,
+            );
+
+        let solid_vert_shader_source_lit_no_cull = wgpu::ShaderSource::Wgsl(
+            (include_str!("shaders/material_color_vert_shader_lit.wgsl")).into(),
+        );
+        let solid_frag_shader_source_lit_no_cull =
+            wgpu::ShaderSource::Wgsl(include_str!("shaders/lit_colored_frag_shader.wgsl").into());
+        let no_cull_transparent_solid_render_pipeline_lit = pipeline::PipelineBuilder::new()
+            .set_vertex_source(solid_vert_shader_source_lit_no_cull, None)
+            .set_frag_source(solid_frag_shader_source_lit_no_cull, None)
+            .set_texture_format(texture_format)
+            .add_vertex_buffer_layout(vertex::Position3d::layout::<0>())
+            .add_vertex_buffer_layout(vertex::Normal::layout::<4>())
+            .add_vertex_buffer_layout(transformation::TransformationData::layout::<5>())
+            .add_vertex_buffer_layout(material::RgbMaterialData::layout::<9>())
+            .add_vertex_buffer_layout(light::NormalMatrixData::layout::<10>())
+            .add_bind_group_layout(&global_bind_group_layout)
+            .add_bind_group_layout(&mesh_local_clip_layout)
+            .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+            .set_blend_state(pipeline::create_alpha_blend_state())
+            .set_cull_mode(TriangleFaceMode::FrontAndBack)
+            .build(
+                device,
+                constants::NO_CULL_TRANSPARENT_SOLID_COLORED_MESH_PIPELINE_KEY_LIT,
+            );
 
         let basic_vert_source =
             wgpu::ShaderSource::Wgsl((include_str!("shaders/basic_vert_shader.wgsl")).into());
@@ -869,6 +1260,72 @@ impl Renderer {
         render_pipeline_cache.insert(
             constants::TRANSPARENT_WIREFRAME_MESH_PIPELINE_KEY,
             transparent_wireframe_render_pipeline,
+        );
+
+        // Insert no-cull pipelines into cache
+        render_pipeline_cache.insert(
+            constants::NO_CULL_TEXTURE_MESH_PIPELINE_KEY,
+            no_cull_texture_surface_render_pipeline,
+        );
+        render_pipeline_cache.insert(
+            constants::NO_CULL_TEXTURE_MESH_PIPELINE_KEY_LIT,
+            no_cull_texture_surface_render_pipeline_lit,
+        );
+        render_pipeline_cache.insert(
+            constants::NO_CULL_ARRAY_TEXTURE_MESH_PIPELINE_KEY,
+            no_cull_texture_array_surface_render_pipeline,
+        );
+        render_pipeline_cache.insert(
+            constants::NO_CULL_ARRAY_TEXTURE_MESH_PIPELINE_KEY_LIT,
+            no_cull_texture_array_surface_render_pipeline_lit,
+        );
+        render_pipeline_cache.insert(
+            constants::NO_CULL_VERTEX_COLORED_MESH_PIPELINE_KEY,
+            no_cull_colored_surface_render_pipeline,
+        );
+        render_pipeline_cache.insert(
+            constants::NO_CULL_VERTEX_COLORED_MESH_PIPELINE_KEY_LIT,
+            no_cull_colored_surface_render_pipeline_lit,
+        );
+        render_pipeline_cache.insert(
+            constants::NO_CULL_SOLID_COLORED_MESH_PIPELINE_KEY,
+            no_cull_solid_render_pipeline,
+        );
+        render_pipeline_cache.insert(
+            constants::NO_CULL_SOLID_COLORED_MESH_PIPELINE_KEY_LIT,
+            no_cull_solid_render_pipeline_lit,
+        );
+        render_pipeline_cache.insert(
+            constants::NO_CULL_TRANSPARENT_TEXTURE_MESH_PIPELINE_KEY,
+            no_cull_transparent_texture_surface_render_pipeline,
+        );
+        render_pipeline_cache.insert(
+            constants::NO_CULL_TRANSPARENT_TEXTURE_MESH_PIPELINE_KEY_LIT,
+            no_cull_transparent_texture_surface_render_pipeline_lit,
+        );
+        render_pipeline_cache.insert(
+            constants::NO_CULL_TRANSPARENT_ARRAY_TEXTURE_MESH_PIPELINE_KEY,
+            no_cull_transparent_texture_array_surface_render_pipeline,
+        );
+        render_pipeline_cache.insert(
+            constants::NO_CULL_TRANSPARENT_ARRAY_TEXTURE_MESH_PIPELINE_KEY_LIT,
+            no_cull_transparent_texture_array_surface_render_pipeline_lit,
+        );
+        render_pipeline_cache.insert(
+            constants::NO_CULL_TRANSPARENT_VERTEX_COLORED_MESH_PIPELINE_KEY,
+            no_cull_transparent_colored_surface_render_pipeline,
+        );
+        render_pipeline_cache.insert(
+            constants::NO_CULL_TRANSPARENT_VERTEX_COLORED_MESH_PIPELINE_KEY_LIT,
+            no_cull_transparent_colored_surface_render_pipeline_lit,
+        );
+        render_pipeline_cache.insert(
+            constants::NO_CULL_TRANSPARENT_SOLID_COLORED_MESH_PIPELINE_KEY,
+            no_cull_transparent_solid_render_pipeline,
+        );
+        render_pipeline_cache.insert(
+            constants::NO_CULL_TRANSPARENT_SOLID_COLORED_MESH_PIPELINE_KEY_LIT,
+            no_cull_transparent_solid_render_pipeline_lit,
         );
 
         let composite_frag_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1350,6 +1807,7 @@ impl Renderer {
                     &opaque_renderables,
                     &self.render_pipeline_cache,
                     &mut render_pass,
+                    frame_view_data.triangle_face_mode,
                 );
                 render_pass::wireframe_3d_render_pass(
                     &opaque_renderables,
@@ -1395,6 +1853,7 @@ impl Renderer {
                 &transparent_renderables,
                 &self.render_pipeline_cache,
                 &mut render_pass,
+                frame_view_data.triangle_face_mode,
             );
         }
     }

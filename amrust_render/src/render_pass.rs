@@ -1,12 +1,168 @@
-use crate::{RenderData3d, Renderable3d, light, material, screen_space, transformation, vertex};
+use crate::{
+    RenderData3d, Renderable3d, TriangleFaceMode, light, material, screen_space, transformation,
+    vertex,
+};
 use crate::{constants, prelude::*};
 
 use std::collections::HashMap;
+
+/// Resolves the pipeline key based on cull mode and lit status
+fn resolve_pipeline_key(
+    base_key: &'static str,
+    cull_mode: TriangleFaceMode,
+    use_lit: bool,
+) -> &'static str {
+    match (base_key, cull_mode, use_lit) {
+        // Textured mesh
+        (constants::TEXTURE_MESH_PIPELINE_KEY, TriangleFaceMode::FrontOnly, false) => {
+            constants::TEXTURE_MESH_PIPELINE_KEY
+        }
+        (constants::TEXTURE_MESH_PIPELINE_KEY, TriangleFaceMode::FrontOnly, true) => {
+            constants::TEXTURE_MESH_PIPELINE_KEY_LIT
+        }
+        (constants::TEXTURE_MESH_PIPELINE_KEY, TriangleFaceMode::FrontAndBack, false) => {
+            constants::NO_CULL_TEXTURE_MESH_PIPELINE_KEY
+        }
+        (constants::TEXTURE_MESH_PIPELINE_KEY, TriangleFaceMode::FrontAndBack, true) => {
+            constants::NO_CULL_TEXTURE_MESH_PIPELINE_KEY_LIT
+        }
+        // Array textured mesh
+        (constants::ARRAY_TEXTURE_MESH_PIPELINE_KEY, TriangleFaceMode::FrontOnly, false) => {
+            constants::ARRAY_TEXTURE_MESH_PIPELINE_KEY
+        }
+        (constants::ARRAY_TEXTURE_MESH_PIPELINE_KEY, TriangleFaceMode::FrontOnly, true) => {
+            constants::ARRAY_TEXTURE_MESH_PIPELINE_KEY_LIT
+        }
+        (constants::ARRAY_TEXTURE_MESH_PIPELINE_KEY, TriangleFaceMode::FrontAndBack, false) => {
+            constants::NO_CULL_ARRAY_TEXTURE_MESH_PIPELINE_KEY
+        }
+        (constants::ARRAY_TEXTURE_MESH_PIPELINE_KEY, TriangleFaceMode::FrontAndBack, true) => {
+            constants::NO_CULL_ARRAY_TEXTURE_MESH_PIPELINE_KEY_LIT
+        }
+        // Vertex colored mesh
+        (constants::VERTEX_COLORED_MESH_PIPELINE_KEY, TriangleFaceMode::FrontOnly, false) => {
+            constants::VERTEX_COLORED_MESH_PIPELINE_KEY
+        }
+        (constants::VERTEX_COLORED_MESH_PIPELINE_KEY, TriangleFaceMode::FrontOnly, true) => {
+            constants::VERTEX_COLORED_MESH_PIPELINE_KEY_LIT
+        }
+        (constants::VERTEX_COLORED_MESH_PIPELINE_KEY, TriangleFaceMode::FrontAndBack, false) => {
+            constants::NO_CULL_VERTEX_COLORED_MESH_PIPELINE_KEY
+        }
+        (constants::VERTEX_COLORED_MESH_PIPELINE_KEY, TriangleFaceMode::FrontAndBack, true) => {
+            constants::NO_CULL_VERTEX_COLORED_MESH_PIPELINE_KEY_LIT
+        }
+        // Solid colored mesh
+        (constants::SOLID_COLORED_MESH_PIPELINE_KEY, TriangleFaceMode::FrontOnly, false) => {
+            constants::SOLID_COLORED_MESH_PIPELINE_KEY
+        }
+        (constants::SOLID_COLORED_MESH_PIPELINE_KEY, TriangleFaceMode::FrontOnly, true) => {
+            constants::SOLID_COLORED_MESH_PIPELINE_KEY_LIT
+        }
+        (constants::SOLID_COLORED_MESH_PIPELINE_KEY, TriangleFaceMode::FrontAndBack, false) => {
+            constants::NO_CULL_SOLID_COLORED_MESH_PIPELINE_KEY
+        }
+        (constants::SOLID_COLORED_MESH_PIPELINE_KEY, TriangleFaceMode::FrontAndBack, true) => {
+            constants::NO_CULL_SOLID_COLORED_MESH_PIPELINE_KEY_LIT
+        }
+        // Transparent textured mesh
+        (constants::TRANSPARENT_TEXTURE_MESH_PIPELINE_KEY, TriangleFaceMode::FrontOnly, false) => {
+            constants::TRANSPARENT_TEXTURE_MESH_PIPELINE_KEY
+        }
+        (constants::TRANSPARENT_TEXTURE_MESH_PIPELINE_KEY, TriangleFaceMode::FrontOnly, true) => {
+            constants::TRANSPARENT_TEXTURE_MESH_PIPELINE_KEY_LIT
+        }
+        (
+            constants::TRANSPARENT_TEXTURE_MESH_PIPELINE_KEY,
+            TriangleFaceMode::FrontAndBack,
+            false,
+        ) => constants::NO_CULL_TRANSPARENT_TEXTURE_MESH_PIPELINE_KEY,
+        (
+            constants::TRANSPARENT_TEXTURE_MESH_PIPELINE_KEY,
+            TriangleFaceMode::FrontAndBack,
+            true,
+        ) => constants::NO_CULL_TRANSPARENT_TEXTURE_MESH_PIPELINE_KEY_LIT,
+        // Transparent array textured mesh
+        (
+            constants::TRANSPARENT_ARRAY_TEXTURE_MESH_PIPELINE_KEY,
+            TriangleFaceMode::FrontOnly,
+            false,
+        ) => constants::TRANSPARENT_ARRAY_TEXTURE_MESH_PIPELINE_KEY,
+        (
+            constants::TRANSPARENT_ARRAY_TEXTURE_MESH_PIPELINE_KEY,
+            TriangleFaceMode::FrontOnly,
+            true,
+        ) => constants::TRANSPARENT_ARRAY_TEXTURE_MESH_PIPELINE_KEY_LIT,
+        (
+            constants::TRANSPARENT_ARRAY_TEXTURE_MESH_PIPELINE_KEY,
+            TriangleFaceMode::FrontAndBack,
+            false,
+        ) => constants::NO_CULL_TRANSPARENT_ARRAY_TEXTURE_MESH_PIPELINE_KEY,
+        (
+            constants::TRANSPARENT_ARRAY_TEXTURE_MESH_PIPELINE_KEY,
+            TriangleFaceMode::FrontAndBack,
+            true,
+        ) => constants::NO_CULL_TRANSPARENT_ARRAY_TEXTURE_MESH_PIPELINE_KEY_LIT,
+        // Transparent vertex colored mesh
+        (
+            constants::TRANSPARENT_VERTEX_COLORED_MESH_PIPELINE_KEY,
+            TriangleFaceMode::FrontOnly,
+            false,
+        ) => constants::TRANSPARENT_VERTEX_COLORED_MESH_PIPELINE_KEY,
+        (
+            constants::TRANSPARENT_VERTEX_COLORED_MESH_PIPELINE_KEY,
+            TriangleFaceMode::FrontOnly,
+            true,
+        ) => constants::TRANSPARENT_VERTEX_COLORED_MESH_PIPELINE_KEY_LIT,
+        (
+            constants::TRANSPARENT_VERTEX_COLORED_MESH_PIPELINE_KEY,
+            TriangleFaceMode::FrontAndBack,
+            false,
+        ) => constants::NO_CULL_TRANSPARENT_VERTEX_COLORED_MESH_PIPELINE_KEY,
+        (
+            constants::TRANSPARENT_VERTEX_COLORED_MESH_PIPELINE_KEY,
+            TriangleFaceMode::FrontAndBack,
+            true,
+        ) => constants::NO_CULL_TRANSPARENT_VERTEX_COLORED_MESH_PIPELINE_KEY_LIT,
+        // Transparent solid colored mesh
+        (
+            constants::TRANSPARENT_SOLID_COLORED_MESH_PIPELINE_KEY,
+            TriangleFaceMode::FrontOnly,
+            false,
+        ) => constants::TRANSPARENT_SOLID_COLORED_MESH_PIPELINE_KEY,
+        (
+            constants::TRANSPARENT_SOLID_COLORED_MESH_PIPELINE_KEY,
+            TriangleFaceMode::FrontOnly,
+            true,
+        ) => constants::TRANSPARENT_SOLID_COLORED_MESH_PIPELINE_KEY_LIT,
+        (
+            constants::TRANSPARENT_SOLID_COLORED_MESH_PIPELINE_KEY,
+            TriangleFaceMode::FrontAndBack,
+            false,
+        ) => constants::NO_CULL_TRANSPARENT_SOLID_COLORED_MESH_PIPELINE_KEY,
+        (
+            constants::TRANSPARENT_SOLID_COLORED_MESH_PIPELINE_KEY,
+            TriangleFaceMode::FrontAndBack,
+            true,
+        ) => constants::NO_CULL_TRANSPARENT_SOLID_COLORED_MESH_PIPELINE_KEY_LIT,
+        // Default fallback
+        _ => base_key,
+    }
+}
+
+/// Resolves cull mode for a renderable: uses object's override if set, otherwise uses frame default
+fn resolve_cull_mode(
+    render_data: &RenderData3d,
+    frame_cull_mode: TriangleFaceMode,
+) -> TriangleFaceMode {
+    render_data.triangle_face_mode.unwrap_or(frame_cull_mode)
+}
 
 pub fn surface_3d_render_pass_with_depth<'a>(
     renderables: &[RenderData3d<'a>],
     render_pipeline_cache: &HashMap<&'static str, wgpu::RenderPipeline>,
     render_pass: &mut wgpu::RenderPass<'_>,
+    frame_cull_mode: TriangleFaceMode,
 ) {
     let single_textured_objects = renderables.iter().filter_map(|o| match o.renderable {
         Renderable3d::TexturedMesh => Some((
@@ -14,32 +170,24 @@ pub fn surface_3d_render_pass_with_depth<'a>(
             o.instance,
             o.local_resources,
             constants::TEXTURE_MESH_PIPELINE_KEY,
+            resolve_cull_mode(o, frame_cull_mode),
         )),
         Renderable3d::ArrayTexturedMesh => Some((
             o.mesh,
             o.instance,
             o.local_resources,
             constants::ARRAY_TEXTURE_MESH_PIPELINE_KEY,
+            resolve_cull_mode(o, frame_cull_mode),
         )),
         _ => None,
     });
 
-    for (mesh, instance, mesh_local, pipeline_key) in single_textured_objects {
+    for (mesh, instance, mesh_local, base_pipeline_key, cull_mode) in single_textured_objects {
         let use_lit = mesh.vertex_stream::<vertex::Normal>().is_some()
             && instance
                 .instance_data_stream::<light::NormalMatrixData>()
                 .is_some();
-        let pipeline_key = if use_lit {
-            match pipeline_key {
-                constants::TEXTURE_MESH_PIPELINE_KEY => constants::TEXTURE_MESH_PIPELINE_KEY_LIT,
-                constants::ARRAY_TEXTURE_MESH_PIPELINE_KEY => {
-                    constants::ARRAY_TEXTURE_MESH_PIPELINE_KEY_LIT
-                }
-                _ => pipeline_key,
-            }
-        } else {
-            pipeline_key
-        };
+        let pipeline_key = resolve_pipeline_key(base_pipeline_key, cull_mode, use_lit);
 
         render_pass.set_pipeline(render_pipeline_cache.get(pipeline_key).unwrap());
         let position_buffer = mesh.vertex_slice::<vertex::Position3d>();
@@ -91,26 +239,28 @@ pub fn surface_3d_render_pass_with_depth<'a>(
 
     let colored_objects = renderables.iter().filter_map(|o| {
         if let Renderable3d::ColoredMesh = &o.renderable {
-            Some((o.mesh, o.instance, &o.local_resources))
+            Some((
+                o.mesh,
+                o.instance,
+                &o.local_resources,
+                resolve_cull_mode(o, frame_cull_mode),
+            ))
         } else {
             None
         }
     });
 
-    for (mesh, instance, mesh_local) in colored_objects {
+    for (mesh, instance, mesh_local, cull_mode) in colored_objects {
         let use_lit = mesh.vertex_stream::<vertex::Normal>().is_some()
             && instance
                 .instance_data_stream::<light::NormalMatrixData>()
                 .is_some();
-        render_pass.set_pipeline(
-            render_pipeline_cache
-                .get(if use_lit {
-                    constants::VERTEX_COLORED_MESH_PIPELINE_KEY_LIT
-                } else {
-                    constants::VERTEX_COLORED_MESH_PIPELINE_KEY
-                })
-                .unwrap(),
+        let pipeline_key = resolve_pipeline_key(
+            constants::VERTEX_COLORED_MESH_PIPELINE_KEY,
+            cull_mode,
+            use_lit,
         );
+        render_pass.set_pipeline(render_pipeline_cache.get(pipeline_key).unwrap());
         let position_buffer = mesh.vertex_slice::<vertex::Position3d>();
         let color_buffer = mesh.vertex_slice::<vertex::Color>();
         let normal_buffer = if use_lit {
@@ -152,26 +302,28 @@ pub fn surface_3d_render_pass_with_depth<'a>(
 
     let simple_objects = renderables.iter().filter_map(|o| {
         if let Renderable3d::Mesh = &o.renderable {
-            Some((o.mesh, o.instance, &o.local_resources))
+            Some((
+                o.mesh,
+                o.instance,
+                &o.local_resources,
+                resolve_cull_mode(o, frame_cull_mode),
+            ))
         } else {
             None
         }
     });
 
-    for (mesh, instance, mesh_local) in simple_objects {
+    for (mesh, instance, mesh_local, cull_mode) in simple_objects {
         let use_lit = mesh.vertex_stream::<vertex::Normal>().is_some()
             && instance
                 .instance_data_stream::<light::NormalMatrixData>()
                 .is_some();
-        render_pass.set_pipeline(
-            render_pipeline_cache
-                .get(if use_lit {
-                    constants::SOLID_COLORED_MESH_PIPELINE_KEY_LIT
-                } else {
-                    constants::SOLID_COLORED_MESH_PIPELINE_KEY
-                })
-                .unwrap(),
+        let pipeline_key = resolve_pipeline_key(
+            constants::SOLID_COLORED_MESH_PIPELINE_KEY,
+            cull_mode,
+            use_lit,
         );
+        render_pass.set_pipeline(render_pipeline_cache.get(pipeline_key).unwrap());
         let position_buffer = mesh.vertex_slice::<vertex::Position3d>();
         let normal_buffer = if use_lit {
             Some(mesh.vertex_slice::<vertex::Normal>())
@@ -426,6 +578,7 @@ pub fn transparent_mesh_pass<'a>(
     renderables: &[RenderData3d<'a>],
     render_pipeline_cache: &HashMap<&'static str, wgpu::RenderPipeline>,
     render_pass: &mut wgpu::RenderPass<'_>,
+    frame_cull_mode: TriangleFaceMode,
 ) {
     // Filter and collect transparent renderables, sorted by z_order (back-to-front)
     let mut transparent_renderables: Vec<_> = renderables
@@ -446,34 +599,24 @@ pub fn transparent_mesh_pass<'a>(
                 o.instance,
                 o.local_resources,
                 constants::TRANSPARENT_TEXTURE_MESH_PIPELINE_KEY,
+                resolve_cull_mode(o, frame_cull_mode),
             )),
             Renderable3d::ArrayTexturedMesh => Some((
                 o.mesh,
                 o.instance,
                 o.local_resources,
                 constants::TRANSPARENT_ARRAY_TEXTURE_MESH_PIPELINE_KEY,
+                resolve_cull_mode(o, frame_cull_mode),
             )),
             _ => None,
         });
 
-    for (mesh, instance, mesh_local, pipeline_key) in textured_objects {
+    for (mesh, instance, mesh_local, base_pipeline_key, cull_mode) in textured_objects {
         let use_lit = mesh.vertex_stream::<vertex::Normal>().is_some()
             && instance
                 .instance_data_stream::<light::NormalMatrixData>()
                 .is_some();
-        let pipeline_key = if use_lit {
-            match pipeline_key {
-                constants::TRANSPARENT_TEXTURE_MESH_PIPELINE_KEY => {
-                    constants::TRANSPARENT_TEXTURE_MESH_PIPELINE_KEY_LIT
-                }
-                constants::TRANSPARENT_ARRAY_TEXTURE_MESH_PIPELINE_KEY => {
-                    constants::TRANSPARENT_ARRAY_TEXTURE_MESH_PIPELINE_KEY_LIT
-                }
-                _ => pipeline_key,
-            }
-        } else {
-            pipeline_key
-        };
+        let pipeline_key = resolve_pipeline_key(base_pipeline_key, cull_mode, use_lit);
 
         render_pass.set_pipeline(render_pipeline_cache.get(pipeline_key).unwrap());
         let position_buffer = mesh.vertex_slice::<vertex::Position3d>();
@@ -525,26 +668,28 @@ pub fn transparent_mesh_pass<'a>(
     // Render colored meshes
     let colored_objects = transparent_renderables.iter().filter_map(|o| {
         if let Renderable3d::ColoredMesh = &o.renderable {
-            Some((o.mesh, o.instance, &o.local_resources))
+            Some((
+                o.mesh,
+                o.instance,
+                &o.local_resources,
+                resolve_cull_mode(o, frame_cull_mode),
+            ))
         } else {
             None
         }
     });
 
-    for (mesh, instance, mesh_local) in colored_objects {
+    for (mesh, instance, mesh_local, cull_mode) in colored_objects {
         let use_lit = mesh.vertex_stream::<vertex::Normal>().is_some()
             && instance
                 .instance_data_stream::<light::NormalMatrixData>()
                 .is_some();
-        render_pass.set_pipeline(
-            render_pipeline_cache
-                .get(if use_lit {
-                    constants::TRANSPARENT_VERTEX_COLORED_MESH_PIPELINE_KEY_LIT
-                } else {
-                    constants::TRANSPARENT_VERTEX_COLORED_MESH_PIPELINE_KEY
-                })
-                .unwrap(),
+        let pipeline_key = resolve_pipeline_key(
+            constants::TRANSPARENT_VERTEX_COLORED_MESH_PIPELINE_KEY,
+            cull_mode,
+            use_lit,
         );
+        render_pass.set_pipeline(render_pipeline_cache.get(pipeline_key).unwrap());
         let position_buffer = mesh.vertex_slice::<vertex::Position3d>();
         let color_buffer = mesh.vertex_slice::<vertex::Color>();
         let normal_buffer = if use_lit {
@@ -586,26 +731,28 @@ pub fn transparent_mesh_pass<'a>(
     // Render solid/uniform colored meshes
     let solid_objects = transparent_renderables.iter().filter_map(|o| {
         if let Renderable3d::Mesh = &o.renderable {
-            Some((o.mesh, o.instance, &o.local_resources))
+            Some((
+                o.mesh,
+                o.instance,
+                &o.local_resources,
+                resolve_cull_mode(o, frame_cull_mode),
+            ))
         } else {
             None
         }
     });
 
-    for (mesh, instance, mesh_local) in solid_objects {
+    for (mesh, instance, mesh_local, cull_mode) in solid_objects {
         let use_lit = mesh.vertex_stream::<vertex::Normal>().is_some()
             && instance
                 .instance_data_stream::<light::NormalMatrixData>()
                 .is_some();
-        render_pass.set_pipeline(
-            render_pipeline_cache
-                .get(if use_lit {
-                    constants::TRANSPARENT_SOLID_COLORED_MESH_PIPELINE_KEY_LIT
-                } else {
-                    constants::TRANSPARENT_SOLID_COLORED_MESH_PIPELINE_KEY
-                })
-                .unwrap(),
+        let pipeline_key = resolve_pipeline_key(
+            constants::TRANSPARENT_SOLID_COLORED_MESH_PIPELINE_KEY,
+            cull_mode,
+            use_lit,
         );
+        render_pass.set_pipeline(render_pipeline_cache.get(pipeline_key).unwrap());
         let position_buffer = mesh.vertex_slice::<vertex::Position3d>();
         let normal_buffer = if use_lit {
             Some(mesh.vertex_slice::<vertex::Normal>())

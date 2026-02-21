@@ -1,6 +1,6 @@
 use crate::prelude::*;
 
-use crate::texture;
+use crate::{TriangleFaceMode, texture};
 
 pub struct PipelineBuilder<'a> {
     vertex_source: Option<(wgpu::ShaderSource<'static>, Option<String>)>,
@@ -11,6 +11,7 @@ pub struct PipelineBuilder<'a> {
     blend_state: Option<wgpu::BlendState>,
     primitive_topology: wgpu::PrimitiveTopology,
     texture_format: Option<wgpu::TextureFormat>,
+    triangle_face_mode: TriangleFaceMode,
 }
 
 impl<'a> PipelineBuilder<'a> {
@@ -24,7 +25,13 @@ impl<'a> PipelineBuilder<'a> {
             blend_state: None,
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
             texture_format: None,
+            triangle_face_mode: TriangleFaceMode::FrontOnly,
         }
+    }
+
+    pub fn set_cull_mode(&mut self, triangle_face_mode: TriangleFaceMode) -> &mut Self {
+        self.triangle_face_mode = triangle_face_mode;
+        self
     }
 
     pub fn set_blend_state(&mut self, blend_state: wgpu::BlendState) -> &mut Self {
@@ -144,7 +151,10 @@ impl<'a> PipelineBuilder<'a> {
                 topology: self.primitive_topology,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
+                cull_mode: match self.triangle_face_mode {
+                    TriangleFaceMode::FrontOnly => Some(wgpu::Face::Back),
+                    TriangleFaceMode::FrontAndBack => None,
+                },
                 // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
                 polygon_mode: wgpu::PolygonMode::Fill,
                 // Requires Features::DEPTH_CLIP_CONTROL
