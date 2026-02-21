@@ -30,6 +30,11 @@ struct TransparencyUniform {
     _pad: vec3<f32>,
 }
 
+struct BackMaterialUniform {
+    color: vec3<f32>,
+    enabled: i32,
+}
+
 @group(0) @binding(2)
 var<uniform> light: LightUniform;
 
@@ -41,6 +46,9 @@ var<uniform> transparency: TransparencyUniform;
 
 @group(1) @binding(1)
 var<uniform> mesh_clip: ClipUniform;
+
+@group(1) @binding(2)
+var<uniform> back_material: BackMaterialUniform;
 
 
 
@@ -80,12 +88,17 @@ fn clip_pass(clip: ClipUniform, world_pos: vec3<f32>) -> bool {
 }
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_main(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
     if (!clip_pass(view_clip, in.world_pos) || !clip_pass(mesh_clip, in.world_pos)) {
         discard;
     }
 
-    let albedo = in.color;
+    var albedo = in.color;
+    // If back-facing and back material is enabled, use back material color
+    if (!is_front && back_material.enabled == 1) {
+        albedo = back_material.color;
+    }
+    
     if (in.use_lighting == 0) {
         return vec4<f32>(albedo, transparency.opacity);
     }

@@ -1,10 +1,21 @@
+use crate::{constants, material::BackMaterialUniform, prelude::*};
 use crate::{
-    RenderData3d, Renderable3d, TriangleFaceMode, light, material, screen_space, transformation,
-    vertex,
+    light, material, screen_space, transformation, vertex, RenderData3d, Renderable3d,
+    TriangleFaceMode,
 };
-use crate::{constants, prelude::*};
 
 use std::collections::HashMap;
+
+/// Resolves back material for a renderable: uses object's override if set, otherwise uses frame default
+fn resolve_back_material(
+    render_data: &RenderData3d,
+    frame_back_material: Option<BackMaterialUniform>,
+) -> BackMaterialUniform {
+    render_data
+        .back_material
+        .or(frame_back_material)
+        .unwrap_or_else(BackMaterialUniform::disabled)
+}
 
 /// Resolves the pipeline key based on cull mode and lit status
 fn resolve_pipeline_key(
@@ -163,6 +174,8 @@ pub fn surface_3d_render_pass_with_depth<'a>(
     render_pipeline_cache: &HashMap<&'static str, wgpu::RenderPipeline>,
     render_pass: &mut wgpu::RenderPass<'_>,
     frame_cull_mode: TriangleFaceMode,
+    frame_back_material: Option<BackMaterialUniform>,
+    queue: &wgpu::Queue,
 ) {
     let single_textured_objects = renderables.iter().filter_map(|o| match o.renderable {
         Renderable3d::TexturedMesh => Some((
@@ -244,13 +257,16 @@ pub fn surface_3d_render_pass_with_depth<'a>(
                 o.instance,
                 &o.local_resources,
                 resolve_cull_mode(o, frame_cull_mode),
+                resolve_back_material(o, frame_back_material),
             ))
         } else {
             None
         }
     });
 
-    for (mesh, instance, mesh_local, cull_mode) in colored_objects {
+    for (mesh, instance, mesh_local, cull_mode, back_material) in colored_objects {
+        // Update back material uniform before drawing
+        mesh_local.update_back_material(queue, back_material);
         let use_lit = mesh.vertex_stream::<vertex::Normal>().is_some()
             && instance
                 .instance_data_stream::<light::NormalMatrixData>()
@@ -307,13 +323,16 @@ pub fn surface_3d_render_pass_with_depth<'a>(
                 o.instance,
                 &o.local_resources,
                 resolve_cull_mode(o, frame_cull_mode),
+                resolve_back_material(o, frame_back_material),
             ))
         } else {
             None
         }
     });
 
-    for (mesh, instance, mesh_local, cull_mode) in simple_objects {
+    for (mesh, instance, mesh_local, cull_mode, back_material) in simple_objects {
+        // Update back material uniform before drawing
+        mesh_local.update_back_material(queue, back_material);
         let use_lit = mesh.vertex_stream::<vertex::Normal>().is_some()
             && instance
                 .instance_data_stream::<light::NormalMatrixData>()
@@ -579,6 +598,8 @@ pub fn transparent_mesh_pass<'a>(
     render_pipeline_cache: &HashMap<&'static str, wgpu::RenderPipeline>,
     render_pass: &mut wgpu::RenderPass<'_>,
     frame_cull_mode: TriangleFaceMode,
+    frame_back_material: Option<BackMaterialUniform>,
+    queue: &wgpu::Queue,
 ) {
     // Filter and collect transparent renderables, sorted by z_order (back-to-front)
     let mut transparent_renderables: Vec<_> = renderables
@@ -673,13 +694,16 @@ pub fn transparent_mesh_pass<'a>(
                 o.instance,
                 &o.local_resources,
                 resolve_cull_mode(o, frame_cull_mode),
+                resolve_back_material(o, frame_back_material),
             ))
         } else {
             None
         }
     });
 
-    for (mesh, instance, mesh_local, cull_mode) in colored_objects {
+    for (mesh, instance, mesh_local, cull_mode, back_material) in colored_objects {
+        // Update back material uniform before drawing
+        mesh_local.update_back_material(queue, back_material);
         let use_lit = mesh.vertex_stream::<vertex::Normal>().is_some()
             && instance
                 .instance_data_stream::<light::NormalMatrixData>()
@@ -736,13 +760,16 @@ pub fn transparent_mesh_pass<'a>(
                 o.instance,
                 &o.local_resources,
                 resolve_cull_mode(o, frame_cull_mode),
+                resolve_back_material(o, frame_back_material),
             ))
         } else {
             None
         }
     });
 
-    for (mesh, instance, mesh_local, cull_mode) in solid_objects {
+    for (mesh, instance, mesh_local, cull_mode, back_material) in solid_objects {
+        // Update back material uniform before drawing
+        mesh_local.update_back_material(queue, back_material);
         let use_lit = mesh.vertex_stream::<vertex::Normal>().is_some()
             && instance
                 .instance_data_stream::<light::NormalMatrixData>()

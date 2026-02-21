@@ -144,6 +144,7 @@ impl RenderDb {
                     instance: &render_object.instance,
                     local_resources: &render_object.mesh_local,
                     triangle_face_mode: None,
+                    back_material: None,
                 })
             } else {
                 None

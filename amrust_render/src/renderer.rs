@@ -11,7 +11,8 @@ use crate::{
     RenderData3d, TriangleFaceMode, WgpuError,
     camera::Camera,
     instance::InstanceFieldDescriptor,
-    material, pipeline, render_pass, texture, transformation,
+    material::{self, BackMaterialUniform},
+    pipeline, render_pass, texture, transformation,
     vertex::{self, VertexDescriptor},
 };
 
@@ -34,6 +35,7 @@ pub struct FrameViewData {
     pub clip_planes: ClipPlanes<MAX_CLIP_PLANE_COUNT>,
     pub light: LightData,
     pub triangle_face_mode: TriangleFaceMode,
+    pub back_material: Option<BackMaterialUniform>,
 }
 
 impl FrameViewData {
@@ -64,6 +66,7 @@ impl FrameViewData {
             clip_planes,
             light,
             triangle_face_mode: TriangleFaceMode::FrontOnly,
+            back_material: None,
         }
     }
 
@@ -1808,6 +1811,8 @@ impl Renderer {
                     &self.render_pipeline_cache,
                     &mut render_pass,
                     frame_view_data.triangle_face_mode,
+                    frame_view_data.back_material,
+                    &self.queue,
                 );
                 render_pass::wireframe_3d_render_pass(
                     &opaque_renderables,
@@ -1854,6 +1859,8 @@ impl Renderer {
                 &self.render_pipeline_cache,
                 &mut render_pass,
                 frame_view_data.triangle_face_mode,
+                frame_view_data.back_material,
+                &self.queue,
             );
         }
     }

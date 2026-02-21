@@ -47,6 +47,7 @@ pub struct RenderData3d<'a> {
     pub instance: &'a GpuInstance,
     pub local_resources: &'a RenderDataLocalResources,
     pub triangle_face_mode: Option<TriangleFaceMode>,
+    pub back_material: Option<material::BackMaterialUniform>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -208,6 +209,7 @@ mod tests {
                     Transparency::opaque(&renderer.device),
                 ),
                 cull_mode: None,
+                back_material: None,
             };
 
             let _colored_mesh_object_id = render_db.add_object(colored_mesh_object);
@@ -740,6 +742,83 @@ mod tests {
     }
 
     #[test]
+    fn test_box_with_back_material_and_global_clip_plane() {
+        pollster::block_on(async {
+            let renderer = renderer::Renderer::from_new_device().await.unwrap();
+
+            let mut frame_view_data =
+                renderer.create_frame_view_data(TEXTURE_WIDTH, TEXTURE_HEIGHT);
+
+            // Set global back material - red color for back faces
+            frame_view_data.back_material = Some(material::BackMaterialUniform::new(
+                [1.0, 0.0, 0.0], // Red
+                true,
+            ));
+            // Enable no-cull so we can see back faces
+            frame_view_data.triangle_face_mode = TriangleFaceMode::FrontAndBack;
+
+            frame_view_data
+                .camera
+                .update(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
+            frame_view_data.set_clip_plane(&clip::ClipPlane {
+                axis: clip::ClipPlaneAxis::X,
+                axis_sign: 1.0,
+                is_enabled: true,
+                d: 0.0,
+                is_finite: false,
+                bounds_min: glam::Vec2::ZERO,
+                bounds_max: glam::Vec2::ZERO,
+            });
+            renderer.write_frame_view_data_to_gpu(&frame_view_data);
+
+            let read_buffer =
+                renderer::create_read_buffer(&renderer.device, TEXTURE_WIDTH, TEXTURE_HEIGHT);
+
+            let mut render_db = TestRenderDb::new(&renderer.device);
+            // Create mesh without local back material override
+            let (_mesh_object_id, _wireframe_object_id) =
+                set_colored_mesh_object(&renderer.device, None, &mut render_db);
+
+            let render_data = render_db.get_renderables().collect::<Vec<_>>();
+            let image_buffer = renderer
+                .render_and_return_as_image_buffer(
+                    &render_data,
+                    &read_buffer,
+                    wgpu::Extent3d {
+                        width: TEXTURE_WIDTH,
+                        height: TEXTURE_HEIGHT,
+                        depth_or_array_layers: 1,
+                    },
+                    &frame_view_data,
+                )
+                .await
+                .unwrap();
+            // Uncomment to save reference image
+            // image_buffer
+            //     .save("tests/data/vertex_color_mesh_with_back_material_actual.png")
+            //     .unwrap();
+
+            let ref_image_data = image::open(PathBuf::from(
+                "tests/data/vertex_color_mesh_with_back_material.png",
+            ))
+            .unwrap()
+            .into_rgba8();
+
+            let ref_image =
+                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &ref_image_data);
+            let test_image =
+                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &image_buffer);
+
+            let error_map = nv_flip::flip(ref_image, test_image, DEFAULT_PIXELS_PER_DEGREE);
+            let pool = nv_flip::FlipPool::from_image(&error_map);
+            if let Some(Ordering::Greater) = pool.mean().partial_cmp(&FLIP_MEAN_ERROR) {
+                println!("Mean error {}", pool.mean());
+                panic!("Something is wrong with back material rendering")
+            }
+        });
+    }
+
+    #[test]
     fn test_box_with_vertex_color_and_silhoutte() {
         pollster::block_on(async {
             let mut renderer = renderer::Renderer::from_new_device().await.unwrap();
@@ -1185,6 +1264,7 @@ mod tests {
                 transparency,
             ),
             cull_mode: None,
+            back_material: None,
         };
         render_db.add_object(colored_mesh_object)
     }
@@ -1307,6 +1387,7 @@ mod tests {
                 Transparency::opaque(device),
             ),
             cull_mode: None,
+            back_material: None,
         };
         let _single_tex_mesh_object_id = render_db.add_object(single_tex_mesh_object);
 
@@ -1323,6 +1404,7 @@ mod tests {
                 Transparency::opaque(device),
             ),
             cull_mode: None,
+            back_material: None,
         };
         let _single_tex_mesh_wireframe_object_id =
             render_db.add_object(single_tex_mesh_wireframe_object);
@@ -1449,6 +1531,7 @@ mod tests {
                 Transparency::opaque(device),
             ),
             cull_mode: None,
+            back_material: None,
         };
         let _multi_tex_mesh_object_id = render_db.add_object(multi_tex_mesh_object);
 
@@ -1465,6 +1548,7 @@ mod tests {
                 Transparency::opaque(device),
             ),
             cull_mode: None,
+            back_material: None,
         };
         let _multi_tex_mesh_wireframe_object_id =
             render_db.add_object(multi_tex_mesh_wireframe_object);
@@ -1529,6 +1613,7 @@ mod tests {
             } else {
                 None
             },
+            back_material: None,
         };
         let _colored_mesh_object_id = render_db.add_object(colored_mesh_object);
 
@@ -1545,6 +1630,7 @@ mod tests {
                 Transparency::opaque(device),
             ),
             cull_mode: None,
+            back_material: None,
         };
         let _colored_mesh_wireframe_object_id = render_db.add_object(colored_mesh_wireframe_object);
 
@@ -1586,6 +1672,7 @@ mod tests {
                 transparency,
             ),
             cull_mode: None,
+            back_material: None,
         };
         render_db.add_object(colored_mesh_object)
     }
@@ -1641,6 +1728,7 @@ mod tests {
                 Transparency::opaque(device),
             ),
             cull_mode: None,
+            back_material: None,
         };
 
         let wireframe_a = RenderObject {
@@ -1653,6 +1741,7 @@ mod tests {
                 Transparency::opaque(device),
             ),
             cull_mode: None,
+            back_material: None,
         };
 
         let mesh_b = RenderObject {
@@ -1665,6 +1754,7 @@ mod tests {
                 Transparency::opaque(device),
             ),
             cull_mode: None,
+            back_material: None,
         };
 
         let wireframe_b = RenderObject {
@@ -1677,6 +1767,7 @@ mod tests {
                 Transparency::opaque(device),
             ),
             cull_mode: None,
+            back_material: None,
         };
 
         let mesh_a_id = render_db.add_object(mesh_a);
@@ -1733,6 +1824,7 @@ mod tests {
                 Transparency::opaque(device),
             ),
             cull_mode: None,
+            back_material: None,
         };
         let _colored_mesh_object_id = render_db.add_object(colored_mesh_object);
 
@@ -1749,6 +1841,7 @@ mod tests {
                 Transparency::opaque(device),
             ),
             cull_mode: None,
+            back_material: None,
         };
         let _colored_mesh_wireframe_object_id = render_db.add_object(colored_mesh_wireframe_object);
 
@@ -1767,6 +1860,7 @@ mod tests {
                 Transparency::opaque(device),
             ),
             cull_mode: None,
+            back_material: None,
         };
 
         let _silhoutte_mesh_object_id = render_db.add_object(silhoutte_mesh_object);
@@ -1834,6 +1928,7 @@ mod tests {
                 Transparency::opaque(device),
             ),
             cull_mode: None,
+            back_material: None,
         };
         let _colored_mesh_object_id = render_db.add_object(colored_mesh_object);
 
@@ -1865,6 +1960,7 @@ mod tests {
                 Transparency::opaque(device),
             ),
             cull_mode: None,
+            back_material: None,
         };
 
         let _colored_mesh_wireframe_object_id = render_db.add_object(colored_mesh_wireframe_object);
@@ -1911,6 +2007,7 @@ mod tests {
                 Transparency::opaque(device),
             ),
             cull_mode: None,
+            back_material: None,
         };
         let _simple_mesh_object_id = render_db.add_object(simple_mesh_object);
 
@@ -1930,6 +2027,7 @@ mod tests {
                 Transparency::opaque(device),
             ),
             cull_mode: None,
+            back_material: None,
         };
 
         let _simple_mesh_wireframe_object_id = render_db.add_object(simple_mesh_wireframe_object);
@@ -1974,6 +2072,7 @@ mod tests {
                 Transparency::opaque(device),
             ),
             cull_mode: None,
+            back_material: None,
         };
 
         render_db.add_object(simple_mesh_wireframe_object)
@@ -2012,6 +2111,7 @@ mod tests {
                 Transparency::opaque(device),
             ),
             cull_mode: None,
+            back_material: None,
         };
 
         render_db.add_object(gizmo_object)
@@ -2041,6 +2141,7 @@ mod tests {
                 Transparency::opaque(device),
             ),
             cull_mode: None,
+            back_material: None,
         };
 
         render_db.add_object(simple_mesh_object)
@@ -2052,6 +2153,7 @@ mod tests {
         pub gpu_mesh_id: u32,
         pub mesh_local: RenderDataLocalResources,
         pub cull_mode: Option<TriangleFaceMode>,
+        pub back_material: Option<material::BackMaterialUniform>,
     }
 
     pub struct TestRenderDb {
@@ -2105,6 +2207,7 @@ mod tests {
                     instance: &r.instance,
                     local_resources: &r.mesh_local,
                     triangle_face_mode: r.cull_mode,
+                    back_material: r.back_material,
                 }
             })
         }

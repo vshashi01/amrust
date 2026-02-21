@@ -60,3 +60,38 @@ impl InstanceFieldDescriptor for UseMaterialData {
         }
     }
 }
+
+/// Back face material for double-sided rendering
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct BackMaterialUniform {
+    pub color: [f32; 3],
+    pub enabled: i32, // -1 = disabled, 1 = enabled
+}
+
+impl BackMaterialUniform {
+    pub const DISABLED: i32 = -1;
+    pub const ENABLED: i32 = 1;
+
+    pub fn new(color: [f32; 3], enabled: bool) -> Self {
+        Self {
+            color,
+            enabled: if enabled {
+                Self::ENABLED
+            } else {
+                Self::DISABLED
+            },
+        }
+    }
+
+    pub fn disabled() -> Self {
+        Self {
+            color: [0.0, 0.0, 0.0],
+            enabled: Self::DISABLED,
+        }
+    }
+
+    pub fn get_size() -> usize {
+        std::mem::size_of::<Self>()
+    }
+}

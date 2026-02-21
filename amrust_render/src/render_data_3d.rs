@@ -2,6 +2,7 @@ use crate::prelude::*;
 
 use crate::{
     clip::{self, ClipPlanes},
+    material::BackMaterialUniform,
     texture,
     transparency::{self, Transparency},
 };
@@ -11,6 +12,7 @@ use std::num::NonZero;
 pub struct RenderDataLocalResources {
     pub transparency: Transparency,
     pub clip_plane: ClipPlanes<1>,
+    pub back_material: wgpu::Buffer,
     pub(crate) uniform_bg: wgpu::BindGroup,
     pub(crate) texture_bg: Option<wgpu::BindGroup>,
 }
@@ -47,13 +49,18 @@ impl RenderDataLocalResources {
         transparency: Transparency,
     ) -> Self {
         let clip_layout = Self::clip_layout(device);
-        // let clip_bind_group =
-        //     clip::create_clip_bind_group::<1, 0>(device, &clip_layout, &clip_plane.buffers);
-        let uniform_bg =
-            create_general_frag_uniform_bg(device, &clip_layout, &clip_plane, &transparency);
+        let back_material_buffer = create_back_material_buffer(device);
+        let uniform_bg = create_general_frag_uniform_bg(
+            device,
+            &clip_layout,
+            &clip_plane,
+            &transparency,
+            &back_material_buffer,
+        );
 
         Self {
             clip_plane,
+            back_material: back_material_buffer,
             uniform_bg,
             texture_bg: None,
             transparency,
@@ -65,6 +72,14 @@ impl RenderDataLocalResources {
         self.clip_plane.write_buffer(queue);
     }
 
+    pub fn update_back_material(&self, queue: &wgpu::Queue, back_material: BackMaterialUniform) {
+        queue.write_buffer(
+            &self.back_material,
+            0,
+            bytemuck::cast_slice(&[back_material]),
+        );
+    }
+
     pub fn new_textured(
         device: &wgpu::Device,
         clip_plane: ClipPlanes<1>,
@@ -73,10 +88,14 @@ impl RenderDataLocalResources {
         transparency: Transparency,
     ) -> Self {
         let clip_layout = Self::clip_layout(device);
-        // let clip_bind_group =
-        //     clip::create_clip_bind_group::<1, 0>(device, &clip_layout, &clip_plane.buffers);
-        let uniform_bg =
-            create_general_frag_uniform_bg(device, &clip_layout, &clip_plane, &transparency);
+        let back_material_buffer = create_back_material_buffer(device);
+        let uniform_bg = create_general_frag_uniform_bg(
+            device,
+            &clip_layout,
+            &clip_plane,
+            &transparency,
+            &back_material_buffer,
+        );
 
         let res_layout = Self::textured_layout(device);
         let resource_bind_group = texture::create_single_texture_bg::<0, 1>(
@@ -89,6 +108,7 @@ impl RenderDataLocalResources {
 
         Self {
             clip_plane,
+            back_material: back_material_buffer,
             uniform_bg,
             texture_bg: Some(resource_bind_group),
             transparency,
@@ -112,10 +132,14 @@ impl RenderDataLocalResources {
         }
 
         let clip_layout = Self::clip_layout(device);
-        // let clip_bind_group =
-        //     clip::create_clip_bind_group::<1, 0>(device, &clip_layout, &clip_plane.buffers);
-        let uniform_bg =
-            create_general_frag_uniform_bg(device, &clip_layout, &clip_plane, &transparency);
+        let back_material_buffer = create_back_material_buffer(device);
+        let uniform_bg = create_general_frag_uniform_bg(
+            device,
+            &clip_layout,
+            &clip_plane,
+            &transparency,
+            &back_material_buffer,
+        );
 
         let res_layout = Self::array_textured_layout(device, NonZero::new(TEXTURE_COUNT).unwrap());
         let resource_bind_group = texture::create_array_texture_bg::<0, 1>(
@@ -127,10 +151,44 @@ impl RenderDataLocalResources {
         );
         Self {
             clip_plane,
+            back_material: back_material_buffer,
             uniform_bg,
             texture_bg: Some(resource_bind_group),
             transparency,
         }
+    }
+}
+
+fn create_back_material_buffer(device: &wgpu::Device) -> wgpu::Buffer {
+    use wgpu::util::DeviceExt;
+    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Back Material Buffer"),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        contents: bytemuck::cast_slice(&[BackMaterialUniform::disabled()]),
+    })
+}
+
+fn create_back_material_bind_group_layout_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    use std::num::NonZero;
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: NonZero::new(BackMaterialUniform::get_size() as wgpu::BufferAddress),
+        },
+        count: None,
+    }
+}
+
+fn create_back_material_bind_group_entry<'a>(
+    binding: u32,
+    buffer: &'a wgpu::Buffer,
+) -> wgpu::BindGroupEntry<'a> {
+    wgpu::BindGroupEntry {
+        binding,
+        resource: buffer.as_entire_binding(),
     }
 }
 
@@ -141,6 +199,8 @@ fn create_general_frag_uniform_bgl(device: &wgpu::Device) -> wgpu::BindGroupLayo
 
     let mut clip_entries = clip::create_clip_bind_group_layout_entries::<1, 1>();
     entries.append(&mut clip_entries);
+
+    entries.push(create_back_material_bind_group_layout_entry(2));
 
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("Mesh Local Fragment Shader Uniform"),
@@ -153,6 +213,7 @@ fn create_general_frag_uniform_bg<'a>(
     layout: &wgpu::BindGroupLayout,
     clip_planes: &'a ClipPlanes<1>,
     transparency: &'a Transparency,
+    back_material_buffer: &'a wgpu::Buffer,
 ) -> wgpu::BindGroup {
     let mut entries: Vec<wgpu::BindGroupEntry> = Vec::new();
 
@@ -163,6 +224,11 @@ fn create_general_frag_uniform_bg<'a>(
 
     let mut clip_entries = clip::create_clip_bind_group_entries::<1, 1>(&clip_planes.buffers);
     entries.append(&mut clip_entries);
+
+    entries.push(create_back_material_bind_group_entry(
+        2,
+        back_material_buffer,
+    ));
 
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("Mesh Local Fragment Uniform"),
