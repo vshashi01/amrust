@@ -48,6 +48,10 @@ pub struct RenderData3d<'a> {
     pub local_resources: &'a RenderDataLocalResources,
     pub triangle_face_mode: Option<TriangleFaceMode>,
     pub back_material: Option<material::BackMaterialUniform>,
+    /// Optional mesh element range (indices for indexed meshes, vertices for non-indexed)
+    pub mesh_element_range: Option<std::ops::Range<u32>>,
+    /// Optional instance range to render
+    pub instance_range: Option<std::ops::Range<u32>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,7 +86,7 @@ mod tests {
         gpu_mesh::{GpuMesh, MeshBuilder},
         instance::InstanceDataBuilder,
         light::{NormalMatrixData, UseLightingData},
-        material::Material,
+        material::{BackMaterialUniform, Material},
         screen_space::SizeInPixel,
         transformation::Transformation,
         transparency::Transparency,
@@ -210,6 +214,8 @@ mod tests {
                 ),
                 cull_mode: None,
                 back_material: None,
+                mesh_element_range: None,
+                instance_range: None,
             };
 
             let _colored_mesh_object_id = render_db.add_object(colored_mesh_object);
@@ -742,6 +748,125 @@ mod tests {
     }
 
     #[test]
+    fn test_box_with_mesh_element_range() {
+        pollster::block_on(async {
+            let renderer = renderer::Renderer::from_new_device().await.unwrap();
+
+            let mut frame_view_data =
+                renderer.create_frame_view_data(TEXTURE_WIDTH, TEXTURE_HEIGHT);
+            frame_view_data.triangle_face_mode = TriangleFaceMode::FrontAndBack;
+            frame_view_data.back_material = Some(BackMaterialUniform::new([1.0, 0.0, 0.0], true));
+
+            frame_view_data
+                .camera
+                .update(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
+            renderer.write_frame_view_data_to_gpu(&frame_view_data);
+
+            let read_buffer =
+                renderer::create_read_buffer(&renderer.device, TEXTURE_WIDTH, TEXTURE_HEIGHT);
+
+            let mut render_db = TestRenderDb::new(&renderer.device);
+            let (_mesh_object_id, _wireframe_object_id) =
+                set_colored_mesh_object_with_mesh_range(&renderer.device, &mut render_db);
+
+            let render_data = render_db.get_renderables().collect::<Vec<_>>();
+            let image_buffer = renderer
+                .render_and_return_as_image_buffer(
+                    &render_data,
+                    &read_buffer,
+                    wgpu::Extent3d {
+                        width: TEXTURE_WIDTH,
+                        height: TEXTURE_HEIGHT,
+                        depth_or_array_layers: 1,
+                    },
+                    &frame_view_data,
+                )
+                .await
+                .unwrap();
+            // Uncomment to save reference image
+            // image_buffer
+            //     .save("tests/data/vertex_color_mesh_with_element_range_actual.png")
+            //     .unwrap();
+
+            let ref_image_data = image::open(PathBuf::from(
+                "tests/data/vertex_color_mesh_with_element_range.png",
+            ))
+            .unwrap()
+            .into_rgba8();
+
+            let ref_image =
+                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &ref_image_data);
+            let test_image =
+                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &image_buffer);
+
+            let error_map = nv_flip::flip(ref_image, test_image, DEFAULT_PIXELS_PER_DEGREE);
+            let pool = nv_flip::FlipPool::from_image(&error_map);
+            if let Some(Ordering::Greater) = pool.mean().partial_cmp(&FLIP_MEAN_ERROR) {
+                println!("Mean error {}", pool.mean());
+                panic!("Something is wrong with mesh element range rendering")
+            }
+        });
+    }
+
+    #[test]
+    fn test_box_with_instance_range() {
+        pollster::block_on(async {
+            let renderer = renderer::Renderer::from_new_device().await.unwrap();
+
+            let mut frame_view_data =
+                renderer.create_frame_view_data(TEXTURE_WIDTH, TEXTURE_HEIGHT);
+            frame_view_data
+                .camera
+                .update(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
+            renderer.write_frame_view_data_to_gpu(&frame_view_data);
+
+            let read_buffer =
+                renderer::create_read_buffer(&renderer.device, TEXTURE_WIDTH, TEXTURE_HEIGHT);
+
+            let mut render_db = TestRenderDb::new(&renderer.device);
+            let (_mesh_object_id, _wireframe_object_id) =
+                set_colored_mesh_object_with_instance_range(&renderer.device, &mut render_db);
+
+            let render_data = render_db.get_renderables().collect::<Vec<_>>();
+            let image_buffer = renderer
+                .render_and_return_as_image_buffer(
+                    &render_data,
+                    &read_buffer,
+                    wgpu::Extent3d {
+                        width: TEXTURE_WIDTH,
+                        height: TEXTURE_HEIGHT,
+                        depth_or_array_layers: 1,
+                    },
+                    &frame_view_data,
+                )
+                .await
+                .unwrap();
+            // Uncomment to save reference image
+            // image_buffer
+            //     .save("tests/data/vertex_color_mesh_with_instance_range_actual.png")
+            //     .unwrap();
+
+            let ref_image_data = image::open(PathBuf::from(
+                "tests/data/vertex_color_mesh_with_instance_range.png",
+            ))
+            .unwrap()
+            .into_rgba8();
+
+            let ref_image =
+                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &ref_image_data);
+            let test_image =
+                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &image_buffer);
+
+            let error_map = nv_flip::flip(ref_image, test_image, DEFAULT_PIXELS_PER_DEGREE);
+            let pool = nv_flip::FlipPool::from_image(&error_map);
+            if let Some(Ordering::Greater) = pool.mean().partial_cmp(&FLIP_MEAN_ERROR) {
+                println!("Mean error {}", pool.mean());
+                panic!("Something is wrong with instance range rendering")
+            }
+        });
+    }
+
+    #[test]
     fn test_box_with_back_material_and_global_clip_plane() {
         pollster::block_on(async {
             let renderer = renderer::Renderer::from_new_device().await.unwrap();
@@ -1265,6 +1390,8 @@ mod tests {
             ),
             cull_mode: None,
             back_material: None,
+            mesh_element_range: None,
+            instance_range: None,
         };
         render_db.add_object(colored_mesh_object)
     }
@@ -1388,6 +1515,8 @@ mod tests {
             ),
             cull_mode: None,
             back_material: None,
+            mesh_element_range: None,
+            instance_range: None,
         };
         let _single_tex_mesh_object_id = render_db.add_object(single_tex_mesh_object);
 
@@ -1405,6 +1534,8 @@ mod tests {
             ),
             cull_mode: None,
             back_material: None,
+            mesh_element_range: None,
+            instance_range: None,
         };
         let _single_tex_mesh_wireframe_object_id =
             render_db.add_object(single_tex_mesh_wireframe_object);
@@ -1532,6 +1663,8 @@ mod tests {
             ),
             cull_mode: None,
             back_material: None,
+            mesh_element_range: None,
+            instance_range: None,
         };
         let _multi_tex_mesh_object_id = render_db.add_object(multi_tex_mesh_object);
 
@@ -1549,6 +1682,8 @@ mod tests {
             ),
             cull_mode: None,
             back_material: None,
+            mesh_element_range: None,
+            instance_range: None,
         };
         let _multi_tex_mesh_wireframe_object_id =
             render_db.add_object(multi_tex_mesh_wireframe_object);
@@ -1614,6 +1749,8 @@ mod tests {
                 None
             },
             back_material: None,
+            mesh_element_range: None,
+            instance_range: None,
         };
         let _colored_mesh_object_id = render_db.add_object(colored_mesh_object);
 
@@ -1631,6 +1768,160 @@ mod tests {
             ),
             cull_mode: None,
             back_material: None,
+            mesh_element_range: None,
+            instance_range: None,
+        };
+        let _colored_mesh_wireframe_object_id = render_db.add_object(colored_mesh_wireframe_object);
+
+        (_colored_mesh_object_id, _colored_mesh_wireframe_object_id)
+    }
+
+    fn set_colored_mesh_object_with_mesh_range(
+        device: &wgpu::Device,
+        render_db: &mut TestRenderDb,
+    ) -> (u32, u32) {
+        let colored_mesh = MeshBuilder::new()
+            .add_vertex_stream(POSITIONS)
+            .add_vertex_stream(COLORS)
+            .add_mesh_index_stream(INDICES)
+            .add_wireframe_index_stream(INDEXED_POSITIONS_BOX_EDGE_INDICES)
+            .build(device);
+        let colored_mesh_id = render_db.add_mesh(colored_mesh);
+
+        let transformations = [
+            Transformation(Mat4::from_translation((0.0, 5.0, 0.0).into())).to_data(),
+            Transformation(Mat4::from_axis_angle(
+                Vec3 {
+                    x: 0.0,
+                    y: 1.0,
+                    z: 0.0,
+                },
+                45.0_f32.to_radians(),
+            ))
+            .to_data(),
+        ];
+
+        let material_colors = [
+            Material::new(0.0, 0.0, 1.0).to_data(),
+            Material::new(0.0, 0.0, 1.0).to_data(),
+        ];
+
+        let colored_mesh_instance_buffer = InstanceDataBuilder::new()
+            .add_instance_stream(&transformations)
+            .add_instance_stream(&material_colors)
+            .build(device);
+
+        // Only render half of the indices (rendering partial mesh)
+        // Box has 36 indices (12 triangles), render only first 18 (6 triangles)
+        let mesh_element_range = Some(0..18);
+
+        let colored_mesh_object = RenderObject {
+            renderable: Renderable3d::ColoredMesh,
+            gpu_mesh_id: colored_mesh_id,
+            instance: colored_mesh_instance_buffer,
+            mesh_local: RenderDataLocalResources::new_colored(
+                device,
+                ClipPlanes::new(device),
+                Transparency::opaque(device),
+            ),
+            cull_mode: None,
+            back_material: None,
+            mesh_element_range: mesh_element_range.clone(),
+            instance_range: None,
+        };
+        let _colored_mesh_object_id = render_db.add_object(colored_mesh_object);
+
+        let colored_mesh_wireframe_object = RenderObject {
+            renderable: Renderable3d::WireframeMesh,
+            gpu_mesh_id: colored_mesh_id,
+            instance: InstanceDataBuilder::new()
+                .add_instance_stream(&transformations)
+                .add_instance_stream(&material_colors)
+                .build(device),
+            mesh_local: RenderDataLocalResources::new_colored(
+                device,
+                ClipPlanes::new(device),
+                Transparency::opaque(device),
+            ),
+            cull_mode: None,
+            back_material: None,
+            mesh_element_range,
+            instance_range: None,
+        };
+        let _colored_mesh_wireframe_object_id = render_db.add_object(colored_mesh_wireframe_object);
+
+        (_colored_mesh_object_id, _colored_mesh_wireframe_object_id)
+    }
+
+    fn set_colored_mesh_object_with_instance_range(
+        device: &wgpu::Device,
+        render_db: &mut TestRenderDb,
+    ) -> (u32, u32) {
+        let colored_mesh = MeshBuilder::new()
+            .add_vertex_stream(POSITIONS)
+            .add_vertex_stream(COLORS)
+            .add_mesh_index_stream(INDICES)
+            .add_wireframe_index_stream(INDEXED_POSITIONS_BOX_EDGE_INDICES)
+            .build(device);
+        let colored_mesh_id = render_db.add_mesh(colored_mesh);
+
+        // Create 5 instances at different positions
+        let transformations = [
+            Transformation(Mat4::from_translation((-4.0, 5.0, 0.0).into())).to_data(),
+            Transformation(Mat4::from_translation((-2.0, 5.0, 0.0).into())).to_data(),
+            Transformation(Mat4::from_translation((0.0, 5.0, 0.0).into())).to_data(),
+            Transformation(Mat4::from_translation((2.0, 5.0, 0.0).into())).to_data(),
+            Transformation(Mat4::from_translation((4.0, 5.0, 0.0).into())).to_data(),
+        ];
+
+        let material_colors = [
+            Material::new(1.0, 0.0, 0.0).to_data(), // Red
+            Material::new(0.0, 1.0, 0.0).to_data(), // Green
+            Material::new(0.0, 0.0, 1.0).to_data(), // Blue
+            Material::new(1.0, 1.0, 0.0).to_data(), // Yellow
+            Material::new(1.0, 0.0, 1.0).to_data(), // Magenta
+        ];
+
+        let colored_mesh_instance_buffer = InstanceDataBuilder::new()
+            .add_instance_stream(&transformations)
+            .add_instance_stream(&material_colors)
+            .build(device);
+
+        // Only render instances 1..4 (middle three instances)
+        let instance_range = Some(1..4);
+
+        let colored_mesh_object = RenderObject {
+            renderable: Renderable3d::ColoredMesh,
+            gpu_mesh_id: colored_mesh_id,
+            instance: colored_mesh_instance_buffer,
+            mesh_local: RenderDataLocalResources::new_colored(
+                device,
+                ClipPlanes::new(device),
+                Transparency::opaque(device),
+            ),
+            cull_mode: None,
+            back_material: None,
+            mesh_element_range: None,
+            instance_range: instance_range.clone(),
+        };
+        let _colored_mesh_object_id = render_db.add_object(colored_mesh_object);
+
+        let colored_mesh_wireframe_object = RenderObject {
+            renderable: Renderable3d::WireframeMesh,
+            gpu_mesh_id: colored_mesh_id,
+            instance: InstanceDataBuilder::new()
+                .add_instance_stream(&transformations)
+                .add_instance_stream(&material_colors)
+                .build(device),
+            mesh_local: RenderDataLocalResources::new_colored(
+                device,
+                ClipPlanes::new(device),
+                Transparency::opaque(device),
+            ),
+            cull_mode: None,
+            back_material: None,
+            mesh_element_range: None,
+            instance_range,
         };
         let _colored_mesh_wireframe_object_id = render_db.add_object(colored_mesh_wireframe_object);
 
@@ -1673,6 +1964,8 @@ mod tests {
             ),
             cull_mode: None,
             back_material: None,
+            mesh_element_range: None,
+            instance_range: None,
         };
         render_db.add_object(colored_mesh_object)
     }
@@ -1729,6 +2022,8 @@ mod tests {
             ),
             cull_mode: None,
             back_material: None,
+            mesh_element_range: None,
+            instance_range: None,
         };
 
         let wireframe_a = RenderObject {
@@ -1742,6 +2037,8 @@ mod tests {
             ),
             cull_mode: None,
             back_material: None,
+            mesh_element_range: None,
+            instance_range: None,
         };
 
         let mesh_b = RenderObject {
@@ -1755,6 +2052,8 @@ mod tests {
             ),
             cull_mode: None,
             back_material: None,
+            mesh_element_range: None,
+            instance_range: None,
         };
 
         let wireframe_b = RenderObject {
@@ -1768,6 +2067,8 @@ mod tests {
             ),
             cull_mode: None,
             back_material: None,
+            mesh_element_range: None,
+            instance_range: None,
         };
 
         let mesh_a_id = render_db.add_object(mesh_a);
@@ -1825,6 +2126,8 @@ mod tests {
             ),
             cull_mode: None,
             back_material: None,
+            mesh_element_range: None,
+            instance_range: None,
         };
         let _colored_mesh_object_id = render_db.add_object(colored_mesh_object);
 
@@ -1842,6 +2145,8 @@ mod tests {
             ),
             cull_mode: None,
             back_material: None,
+            mesh_element_range: None,
+            instance_range: None,
         };
         let _colored_mesh_wireframe_object_id = render_db.add_object(colored_mesh_wireframe_object);
 
@@ -1861,6 +2166,8 @@ mod tests {
             ),
             cull_mode: None,
             back_material: None,
+            mesh_element_range: None,
+            instance_range: None,
         };
 
         let _silhoutte_mesh_object_id = render_db.add_object(silhoutte_mesh_object);
@@ -1929,6 +2236,8 @@ mod tests {
             ),
             cull_mode: None,
             back_material: None,
+            mesh_element_range: None,
+            instance_range: None,
         };
         let _colored_mesh_object_id = render_db.add_object(colored_mesh_object);
 
@@ -1961,6 +2270,8 @@ mod tests {
             ),
             cull_mode: None,
             back_material: None,
+            mesh_element_range: None,
+            instance_range: None,
         };
 
         let _colored_mesh_wireframe_object_id = render_db.add_object(colored_mesh_wireframe_object);
@@ -2008,6 +2319,8 @@ mod tests {
             ),
             cull_mode: None,
             back_material: None,
+            mesh_element_range: None,
+            instance_range: None,
         };
         let _simple_mesh_object_id = render_db.add_object(simple_mesh_object);
 
@@ -2028,6 +2341,8 @@ mod tests {
             ),
             cull_mode: None,
             back_material: None,
+            mesh_element_range: None,
+            instance_range: None,
         };
 
         let _simple_mesh_wireframe_object_id = render_db.add_object(simple_mesh_wireframe_object);
@@ -2073,6 +2388,8 @@ mod tests {
             ),
             cull_mode: None,
             back_material: None,
+            mesh_element_range: None,
+            instance_range: None,
         };
 
         render_db.add_object(simple_mesh_wireframe_object)
@@ -2112,6 +2429,8 @@ mod tests {
             ),
             cull_mode: None,
             back_material: None,
+            mesh_element_range: None,
+            instance_range: None,
         };
 
         render_db.add_object(gizmo_object)
@@ -2142,6 +2461,8 @@ mod tests {
             ),
             cull_mode: None,
             back_material: None,
+            mesh_element_range: None,
+            instance_range: None,
         };
 
         render_db.add_object(simple_mesh_object)
@@ -2154,6 +2475,10 @@ mod tests {
         pub mesh_local: RenderDataLocalResources,
         pub cull_mode: Option<TriangleFaceMode>,
         pub back_material: Option<material::BackMaterialUniform>,
+        /// Optional mesh element range (indices for indexed meshes, vertices for non-indexed)
+        pub mesh_element_range: Option<std::ops::Range<u32>>,
+        /// Optional instance range to render
+        pub instance_range: Option<std::ops::Range<u32>>,
     }
 
     pub struct TestRenderDb {
@@ -2208,6 +2533,8 @@ mod tests {
                     local_resources: &r.mesh_local,
                     triangle_face_mode: r.cull_mode,
                     back_material: r.back_material,
+                    mesh_element_range: r.mesh_element_range.clone(),
+                    instance_range: r.instance_range.clone(),
                 }
             })
         }

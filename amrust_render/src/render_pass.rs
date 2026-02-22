@@ -184,6 +184,8 @@ pub fn surface_3d_render_pass_with_depth<'a>(
             o.local_resources,
             constants::TEXTURE_MESH_PIPELINE_KEY,
             resolve_cull_mode(o, frame_cull_mode),
+            o.mesh_element_range.clone(),
+            o.instance_range.clone(),
         )),
         Renderable3d::ArrayTexturedMesh => Some((
             o.mesh,
@@ -191,11 +193,22 @@ pub fn surface_3d_render_pass_with_depth<'a>(
             o.local_resources,
             constants::ARRAY_TEXTURE_MESH_PIPELINE_KEY,
             resolve_cull_mode(o, frame_cull_mode),
+            o.mesh_element_range.clone(),
+            o.instance_range.clone(),
         )),
         _ => None,
     });
 
-    for (mesh, instance, mesh_local, base_pipeline_key, cull_mode) in single_textured_objects {
+    for (
+        mesh,
+        instance,
+        mesh_local,
+        base_pipeline_key,
+        cull_mode,
+        mesh_element_range,
+        instance_range,
+    ) in single_textured_objects
+    {
         let use_lit = mesh.vertex_stream::<vertex::Normal>().is_some()
             && instance
                 .instance_data_stream::<light::NormalMatrixData>()
@@ -244,7 +257,9 @@ pub fn surface_3d_render_pass_with_depth<'a>(
             let index_buffer = mesh.buffer.slice(index_stream.offset..index_stream.end);
             render_pass.set_index_buffer(index_buffer, index_stream.format);
 
-            render_pass.draw_indexed(0..index_stream.index_count, 0, 0..instance.instance_count);
+            let index_range = mesh_element_range.unwrap_or(0..index_stream.index_count);
+            let inst_range = instance_range.unwrap_or(0..instance.instance_count);
+            render_pass.draw_indexed(index_range, 0, inst_range);
         } else {
             panic!("Mesh does not have an index buffer");
         }
@@ -258,13 +273,24 @@ pub fn surface_3d_render_pass_with_depth<'a>(
                 &o.local_resources,
                 resolve_cull_mode(o, frame_cull_mode),
                 resolve_back_material(o, frame_back_material),
+                o.mesh_element_range.clone(),
+                o.instance_range.clone(),
             ))
         } else {
             None
         }
     });
 
-    for (mesh, instance, mesh_local, cull_mode, back_material) in colored_objects {
+    for (
+        mesh,
+        instance,
+        mesh_local,
+        cull_mode,
+        back_material,
+        mesh_element_range,
+        instance_range,
+    ) in colored_objects
+    {
         // Update back material uniform before drawing
         mesh_local.update_back_material(queue, back_material);
         let use_lit = mesh.vertex_stream::<vertex::Normal>().is_some()
@@ -310,7 +336,9 @@ pub fn surface_3d_render_pass_with_depth<'a>(
             let index_buffer = mesh.buffer.slice(index_stream.offset..index_stream.end);
             render_pass.set_index_buffer(index_buffer, index_stream.format);
 
-            render_pass.draw_indexed(0..index_stream.index_count, 0, 0..instance.instance_count);
+            let index_range = mesh_element_range.unwrap_or(0..index_stream.index_count);
+            let inst_range = instance_range.unwrap_or(0..instance.instance_count);
+            render_pass.draw_indexed(index_range, 0, inst_range);
         } else {
             panic!("Mesh does not have an index buffer");
         }
@@ -324,13 +352,24 @@ pub fn surface_3d_render_pass_with_depth<'a>(
                 &o.local_resources,
                 resolve_cull_mode(o, frame_cull_mode),
                 resolve_back_material(o, frame_back_material),
+                o.mesh_element_range.clone(),
+                o.instance_range.clone(),
             ))
         } else {
             None
         }
     });
 
-    for (mesh, instance, mesh_local, cull_mode, back_material) in simple_objects {
+    for (
+        mesh,
+        instance,
+        mesh_local,
+        cull_mode,
+        back_material,
+        mesh_element_range,
+        instance_range,
+    ) in simple_objects
+    {
         // Update back material uniform before drawing
         mesh_local.update_back_material(queue, back_material);
         let use_lit = mesh.vertex_stream::<vertex::Normal>().is_some()
@@ -369,7 +408,9 @@ pub fn surface_3d_render_pass_with_depth<'a>(
             render_pass.set_vertex_buffer(2, material_buffer);
         }
 
-        render_pass.draw(0..mesh.vertex_count, 0..instance.instance_count);
+        let vertex_range = mesh_element_range.unwrap_or(0..mesh.vertex_count);
+        let inst_range = instance_range.unwrap_or(0..instance.instance_count);
+        render_pass.draw(vertex_range, inst_range);
     }
 
     screen_space_colored_mesh_pass(renderables, render_pipeline_cache, render_pass, true);
@@ -382,13 +423,19 @@ pub fn wireframe_3d_render_pass<'a>(
 ) {
     let wireframe_objects = renderables.iter().filter_map(|o| {
         if let Renderable3d::WireframeMesh = &o.renderable {
-            Some((o.mesh, o.instance, &o.local_resources))
+            Some((
+                o.mesh,
+                o.instance,
+                &o.local_resources,
+                o.mesh_element_range.clone(),
+                o.instance_range.clone(),
+            ))
         } else {
             None
         }
     });
 
-    for (mesh, instance, mesh_local) in wireframe_objects {
+    for (mesh, instance, mesh_local, mesh_element_range, instance_range) in wireframe_objects {
         render_pass.set_pipeline(
             render_pipeline_cache
                 .get(constants::WIREFRAME_MESH_PIPELINE_KEY)
@@ -408,9 +455,13 @@ pub fn wireframe_3d_render_pass<'a>(
             let index_buffer = mesh.buffer.slice(index_stream.offset..index_stream.end);
             render_pass.set_index_buffer(index_buffer, index_stream.format);
 
-            render_pass.draw_indexed(0..index_stream.index_count, 0, 0..instance.instance_count);
+            let index_range = mesh_element_range.unwrap_or(0..index_stream.index_count);
+            let inst_range = instance_range.unwrap_or(0..instance.instance_count);
+            render_pass.draw_indexed(index_range, 0, inst_range);
         } else {
-            render_pass.draw(0..mesh.vertex_count, 0..instance.instance_count);
+            let vertex_range = mesh_element_range.unwrap_or(0..mesh.vertex_count);
+            let inst_range = instance_range.unwrap_or(0..instance.instance_count);
+            render_pass.draw(vertex_range, inst_range);
         }
     }
 
@@ -424,7 +475,13 @@ pub fn silhoutte_pass<'a>(
 ) {
     let silhoutte_objs = renderables.iter().filter_map(|o| {
         if let Renderable3d::SilhouetteMesh = &o.renderable {
-            Some((o.mesh, o.instance, &o.local_resources))
+            Some((
+                o.mesh,
+                o.instance,
+                &o.local_resources,
+                o.mesh_element_range.clone(),
+                o.instance_range.clone(),
+            ))
         } else {
             None
         }
@@ -436,7 +493,7 @@ pub fn silhoutte_pass<'a>(
             .unwrap(),
     );
 
-    for (mesh, instance, mesh_local) in silhoutte_objs {
+    for (mesh, instance, mesh_local, mesh_element_range, instance_range) in silhoutte_objs {
         let position_buffer = mesh.vertex_slice::<vertex::Position3d>();
         let transformation_buffer = instance.vertex_slice::<transformation::TransformationData>();
 
@@ -448,9 +505,13 @@ pub fn silhoutte_pass<'a>(
             let index_buffer = mesh.buffer.slice(index_stream.offset..index_stream.end);
             render_pass.set_index_buffer(index_buffer, index_stream.format);
 
-            render_pass.draw_indexed(0..index_stream.index_count, 0, 0..instance.instance_count);
+            let index_range = mesh_element_range.unwrap_or(0..index_stream.index_count);
+            let inst_range = instance_range.unwrap_or(0..instance.instance_count);
+            render_pass.draw_indexed(index_range, 0, inst_range);
         } else {
-            render_pass.draw(0..mesh.vertex_count, 0..instance.instance_count);
+            let vertex_range = mesh_element_range.unwrap_or(0..mesh.vertex_count);
+            let inst_range = instance_range.unwrap_or(0..instance.instance_count);
+            render_pass.draw(vertex_range, inst_range);
         }
     }
 }
