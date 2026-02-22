@@ -1,6 +1,6 @@
 use crate::prelude::*;
 
-use crate::{TriangleFaceMode, texture};
+use crate::{texture, TriangleFaceMode};
 
 pub struct PipelineBuilder<'a> {
     vertex_source: Option<(wgpu::ShaderSource<'static>, Option<String>)>,
@@ -12,6 +12,7 @@ pub struct PipelineBuilder<'a> {
     primitive_topology: wgpu::PrimitiveTopology,
     texture_format: Option<wgpu::TextureFormat>,
     triangle_face_mode: TriangleFaceMode,
+    sample_count: u32,
 }
 
 impl<'a> PipelineBuilder<'a> {
@@ -26,7 +27,13 @@ impl<'a> PipelineBuilder<'a> {
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
             texture_format: None,
             triangle_face_mode: TriangleFaceMode::FrontOnly,
+            sample_count: 1,
         }
+    }
+
+    pub fn set_sample_count(&mut self, count: u32) -> &mut Self {
+        self.sample_count = count;
+        self
     }
 
     pub fn set_cull_mode(&mut self, triangle_face_mode: TriangleFaceMode) -> &mut Self {
@@ -164,7 +171,7 @@ impl<'a> PipelineBuilder<'a> {
             },
             depth_stencil: self.depth_stencil.clone(),
             multisample: wgpu::MultisampleState {
-                count: 1,
+                count: self.sample_count,
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },

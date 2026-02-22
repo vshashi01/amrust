@@ -84,12 +84,16 @@ pub struct DepthTexture {
 impl DepthTexture {
     pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-    pub fn create_depth_texture(device: &wgpu::Device, size: wgpu::Extent3d) -> Self {
+    pub fn create_depth_texture(
+        device: &wgpu::Device,
+        size: wgpu::Extent3d,
+        sample_count: u32,
+    ) -> Self {
         let desc = wgpu::TextureDescriptor {
             label: Some("Depth Texture"),
             mip_level_count: 1,
             size,
-            sample_count: 1,
+            sample_count,
             dimension: wgpu::TextureDimension::D2,
             format: Self::DEPTH_FORMAT,
             usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::RENDER_ATTACHMENT,

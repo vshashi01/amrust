@@ -21,11 +21,17 @@ use std::{collections::HashMap, num::NonZero};
 pub const MAX_CLIP_PLANE_COUNT: usize = 1;
 
 pub struct RenderTextureData {
+    /// The main texture (resolve target when MSAA enabled, main texture otherwise)
+    /// This is the texture that can be sampled and copied from
     pub texture: wgpu::Texture,
     pub texture_view: wgpu::TextureView,
     pub texture_size: wgpu::Extent3d,
     pub texture_sampler: wgpu::Sampler,
     pub texture_format: wgpu::TextureFormat,
+    /// MSAA render target texture (only present when MSAA is enabled)
+    pub msaa_texture: Option<wgpu::Texture>,
+    /// MSAA render target view (only present when MSAA is enabled)
+    pub msaa_texture_view: Option<wgpu::TextureView>,
 }
 
 pub struct FrameViewData {
@@ -163,6 +169,7 @@ pub struct Renderer {
 
     // properties related to the render surface
     texture_format: wgpu::TextureFormat, //stored for future dynamic render pipeline creation
+    sample_count: u32, // MSAA sample count (1 = off, 4 = on)
 
     // internal rendering resources
     global_bind_groups: Vec<wgpu::BindGroup>,
@@ -203,6 +210,15 @@ impl Renderer {
         queue: wgpu::Queue,
         texture_format: wgpu::TextureFormat,
     ) -> Result<Self, WgpuError> {
+        Self::from_existing_device_and_queue_with_msaa(device, queue, texture_format, false).await
+    }
+
+    pub async fn from_existing_device_and_queue_with_msaa(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        texture_format: wgpu::TextureFormat,
+        enable_msaa: bool,
+    ) -> Result<Self, WgpuError> {
         for features in DEVICE_FEATURES {
             if !device.features().contains(features) {
                 panic!(
@@ -221,10 +237,19 @@ impl Renderer {
             );
         }
 
-        Self::setup_new_renderer(&device, &queue, texture_format)
+        // Determine sample count based on user request
+        // When using existing device, we default to 4x or 1x
+        // For precise control, user should use from_new_device_with_msaa
+        let sample_count = if enable_msaa { 4 } else { 1 };
+
+        Self::setup_new_renderer(&device, &queue, texture_format, sample_count)
     }
 
     pub async fn from_new_device() -> Result<Self, WgpuError> {
+        Self::from_new_device_with_msaa(false).await
+    }
+
+    pub async fn from_new_device_with_msaa(enable_msaa: bool) -> Result<Self, WgpuError> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::VULKAN,
             ..Default::default()
@@ -254,13 +279,33 @@ impl Renderer {
 
         let texture_format = wgpu::TextureFormat::Rgba8UnormSrgb;
 
-        Self::setup_new_renderer(&device, &queue, texture_format)
+        // Determine sample count based on user request and device capabilities
+        let sample_count = if enable_msaa {
+            // Get supported sample counts for the texture format and use the highest
+            let format_features = adapter.get_texture_format_features(texture_format);
+            
+            // WebGPU spec guarantees 1x and 4x are supported by all formats
+            // 2x and 8x may be available with TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+            // We prefer 4x as it's widely supported and offers good quality
+            if format_features.flags.contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4) {
+                4
+            } else if format_features.flags.contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X2) {
+                2
+            } else {
+                1 // Fallback to no MSAA if 4x not supported
+            }
+        } else {
+            1
+        };
+
+        Self::setup_new_renderer(&device, &queue, texture_format, sample_count)
     }
 
     fn setup_new_renderer(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         texture_format: wgpu::TextureFormat,
+        sample_count: u32,
     ) -> Result<Self, WgpuError> {
         let global_bind_group_layout =
             create_global_3d_render_pass_bind_group_layout::<MAX_CLIP_PLANE_COUNT>(device);
@@ -291,6 +336,7 @@ impl Renderer {
             .add_bind_group_layout(&mesh_local_clip_layout)
             .add_bind_group_layout(&mesh_local_textured_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
+            .set_sample_count(sample_count)
             .build(device, constants::TEXTURE_MESH_PIPELINE_KEY);
 
         let standard_textured_vert_shader_source = wgpu::ShaderSource::Wgsl(
@@ -314,6 +360,7 @@ impl Renderer {
             .add_bind_group_layout(&mesh_local_clip_layout)
             .add_bind_group_layout(&mesh_local_textured_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
+            .set_sample_count(sample_count)
             .build(device, constants::TEXTURE_MESH_PIPELINE_KEY_LIT);
 
         let standard_textured_vert_shader_source =
@@ -335,6 +382,7 @@ impl Renderer {
             .add_bind_group_layout(&mesh_local_clip_layout)
             .add_bind_group_layout(&mesh_local_array_textured_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
+            .set_sample_count(sample_count)
             .build(device, constants::ARRAY_TEXTURE_MESH_PIPELINE_KEY);
 
         let standard_textured_vert_shader_source = wgpu::ShaderSource::Wgsl(
@@ -359,6 +407,7 @@ impl Renderer {
             .add_bind_group_layout(&mesh_local_clip_layout)
             .add_bind_group_layout(&mesh_local_array_textured_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
+            .set_sample_count(sample_count)
             .build(device, constants::ARRAY_TEXTURE_MESH_PIPELINE_KEY_LIT);
 
         // No-cull variants for textured meshes
@@ -381,6 +430,7 @@ impl Renderer {
             .add_bind_group_layout(&mesh_local_textured_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
             .set_cull_mode(TriangleFaceMode::FrontAndBack)
+            .set_sample_count(sample_count)
             .build(device, constants::NO_CULL_TEXTURE_MESH_PIPELINE_KEY);
 
         let standard_textured_vert_shader_source = wgpu::ShaderSource::Wgsl(
@@ -405,6 +455,7 @@ impl Renderer {
             .add_bind_group_layout(&mesh_local_textured_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
             .set_cull_mode(TriangleFaceMode::FrontAndBack)
+            .set_sample_count(sample_count)
             .build(device, constants::NO_CULL_TEXTURE_MESH_PIPELINE_KEY_LIT);
 
         let standard_textured_vert_shader_source =
@@ -427,6 +478,7 @@ impl Renderer {
             .add_bind_group_layout(&mesh_local_array_textured_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
             .set_cull_mode(TriangleFaceMode::FrontAndBack)
+            .set_sample_count(sample_count)
             .build(device, constants::NO_CULL_ARRAY_TEXTURE_MESH_PIPELINE_KEY);
 
         let standard_textured_vert_shader_source = wgpu::ShaderSource::Wgsl(
@@ -452,6 +504,7 @@ impl Renderer {
             .add_bind_group_layout(&mesh_local_array_textured_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
             .set_cull_mode(TriangleFaceMode::FrontAndBack)
+            .set_sample_count(sample_count)
             .build(
                 device,
                 constants::NO_CULL_ARRAY_TEXTURE_MESH_PIPELINE_KEY_LIT,
@@ -472,6 +525,7 @@ impl Renderer {
             .add_bind_group_layout(&global_bind_group_layout)
             .add_bind_group_layout(&mesh_local_clip_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
+            .set_sample_count(sample_count)
             .build(device, constants::VERTEX_COLORED_MESH_PIPELINE_KEY);
 
         let colored_vert_shader_source =
@@ -491,6 +545,7 @@ impl Renderer {
             .add_bind_group_layout(&global_bind_group_layout)
             .add_bind_group_layout(&mesh_local_clip_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
+            .set_sample_count(sample_count)
             .build(device, constants::VERTEX_COLORED_MESH_PIPELINE_KEY_LIT);
 
         let solid_source = wgpu::ShaderSource::Wgsl(
@@ -508,6 +563,7 @@ impl Renderer {
             .add_bind_group_layout(&global_bind_group_layout)
             .add_bind_group_layout(&mesh_local_clip_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
+            .set_sample_count(sample_count)
             .build(device, constants::SOLID_COLORED_MESH_PIPELINE_KEY);
 
         let solid_source = wgpu::ShaderSource::Wgsl(
@@ -527,6 +583,7 @@ impl Renderer {
             .add_bind_group_layout(&global_bind_group_layout)
             .add_bind_group_layout(&mesh_local_clip_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
+            .set_sample_count(sample_count)
             .build(device, constants::SOLID_COLORED_MESH_PIPELINE_KEY_LIT);
 
         let colored_vert_shader_source = wgpu::ShaderSource::Wgsl(
@@ -545,6 +602,7 @@ impl Renderer {
             .add_bind_group_layout(&mesh_local_clip_layout)
             .set_topology(wgpu::PrimitiveTopology::LineList)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
+            .set_sample_count(sample_count)
             .build(device, constants::WIREFRAME_MESH_PIPELINE_KEY);
 
         // No-cull variants for colored and solid meshes
@@ -564,6 +622,7 @@ impl Renderer {
             .add_bind_group_layout(&mesh_local_clip_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
             .set_cull_mode(TriangleFaceMode::FrontAndBack)
+            .set_sample_count(sample_count)
             .build(device, constants::NO_CULL_VERTEX_COLORED_MESH_PIPELINE_KEY);
 
         let colored_vert_shader_source =
@@ -584,6 +643,7 @@ impl Renderer {
             .add_bind_group_layout(&mesh_local_clip_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
             .set_cull_mode(TriangleFaceMode::FrontAndBack)
+            .set_sample_count(sample_count)
             .build(
                 device,
                 constants::NO_CULL_VERTEX_COLORED_MESH_PIPELINE_KEY_LIT,
@@ -605,6 +665,7 @@ impl Renderer {
             .add_bind_group_layout(&mesh_local_clip_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
             .set_cull_mode(TriangleFaceMode::FrontAndBack)
+            .set_sample_count(sample_count)
             .build(device, constants::NO_CULL_SOLID_COLORED_MESH_PIPELINE_KEY);
 
         let solid_source = wgpu::ShaderSource::Wgsl(
@@ -625,6 +686,7 @@ impl Renderer {
             .add_bind_group_layout(&mesh_local_clip_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
             .set_cull_mode(TriangleFaceMode::FrontAndBack)
+            .set_sample_count(sample_count)
             .build(
                 device,
                 constants::NO_CULL_SOLID_COLORED_MESH_PIPELINE_KEY_LIT,
@@ -676,6 +738,7 @@ impl Renderer {
             .add_bind_group_layout(&mesh_local_clip_layout)
             .add_bind_group_layout(&mesh_local_textured_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+            .set_sample_count(sample_count)
             .set_blend_state(pipeline::create_alpha_blend_state())
             .build(device, constants::TRANSPARENT_TEXTURE_MESH_PIPELINE_KEY);
 
@@ -695,6 +758,7 @@ impl Renderer {
             .add_bind_group_layout(&mesh_local_clip_layout)
             .add_bind_group_layout(&mesh_local_textured_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+            .set_sample_count(sample_count)
             .set_blend_state(pipeline::create_alpha_blend_state())
             .build(device, constants::TRANSPARENT_TEXTURE_MESH_PIPELINE_KEY_LIT);
 
@@ -717,6 +781,7 @@ impl Renderer {
             .add_bind_group_layout(&mesh_local_clip_layout)
             .add_bind_group_layout(&mesh_local_array_textured_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+            .set_sample_count(sample_count)
             .set_blend_state(pipeline::create_alpha_blend_state())
             .build(
                 device,
@@ -745,6 +810,7 @@ impl Renderer {
                 .add_bind_group_layout(&mesh_local_clip_layout)
                 .add_bind_group_layout(&mesh_local_array_textured_layout)
                 .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+                .set_sample_count(sample_count)
                 .set_blend_state(pipeline::create_alpha_blend_state())
                 .build(
                     device,
@@ -762,6 +828,7 @@ impl Renderer {
             .add_bind_group_layout(&global_bind_group_layout)
             .add_bind_group_layout(&mesh_local_clip_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+            .set_sample_count(sample_count)
             .set_blend_state(pipeline::create_alpha_blend_state())
             .build(
                 device,
@@ -781,6 +848,7 @@ impl Renderer {
             .add_bind_group_layout(&global_bind_group_layout)
             .add_bind_group_layout(&mesh_local_clip_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+            .set_sample_count(sample_count)
             .set_blend_state(pipeline::create_alpha_blend_state())
             .build(
                 device,
@@ -797,6 +865,7 @@ impl Renderer {
             .add_bind_group_layout(&global_bind_group_layout)
             .add_bind_group_layout(&mesh_local_clip_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+            .set_sample_count(sample_count)
             .set_blend_state(pipeline::create_alpha_blend_state())
             .build(
                 device,
@@ -815,6 +884,7 @@ impl Renderer {
             .add_bind_group_layout(&global_bind_group_layout)
             .add_bind_group_layout(&mesh_local_clip_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+            .set_sample_count(sample_count)
             .set_blend_state(pipeline::create_alpha_blend_state())
             .build(
                 device,
@@ -837,6 +907,7 @@ impl Renderer {
             .add_bind_group_layout(&mesh_local_clip_layout)
             .set_topology(wgpu::PrimitiveTopology::LineList)
             .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+            .set_sample_count(sample_count)
             .set_blend_state(pipeline::create_alpha_blend_state())
             .build(device, constants::TRANSPARENT_WIREFRAME_MESH_PIPELINE_KEY);
 
@@ -859,6 +930,7 @@ impl Renderer {
             .add_bind_group_layout(&mesh_local_clip_layout)
             .add_bind_group_layout(&mesh_local_textured_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+            .set_sample_count(sample_count)
             .set_blend_state(pipeline::create_alpha_blend_state())
             .set_cull_mode(TriangleFaceMode::FrontAndBack)
             .build(
@@ -888,6 +960,7 @@ impl Renderer {
                 .add_bind_group_layout(&mesh_local_clip_layout)
                 .add_bind_group_layout(&mesh_local_textured_layout)
                 .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+                .set_sample_count(sample_count)
                 .set_blend_state(pipeline::create_alpha_blend_state())
                 .set_cull_mode(TriangleFaceMode::FrontAndBack)
                 .build(
@@ -918,6 +991,7 @@ impl Renderer {
                 .add_bind_group_layout(&mesh_local_clip_layout)
                 .add_bind_group_layout(&mesh_local_array_textured_layout)
                 .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+                .set_sample_count(sample_count)
                 .set_blend_state(pipeline::create_alpha_blend_state())
                 .set_cull_mode(TriangleFaceMode::FrontAndBack)
                 .build(
@@ -950,6 +1024,7 @@ impl Renderer {
                 .add_bind_group_layout(&mesh_local_clip_layout)
                 .add_bind_group_layout(&mesh_local_array_textured_layout)
                 .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+                .set_sample_count(sample_count)
                 .set_blend_state(pipeline::create_alpha_blend_state())
                 .set_cull_mode(TriangleFaceMode::FrontAndBack)
                 .build(
@@ -972,6 +1047,7 @@ impl Renderer {
             .add_bind_group_layout(&global_bind_group_layout)
             .add_bind_group_layout(&mesh_local_clip_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+            .set_sample_count(sample_count)
             .set_blend_state(pipeline::create_alpha_blend_state())
             .set_cull_mode(TriangleFaceMode::FrontAndBack)
             .build(
@@ -997,6 +1073,7 @@ impl Renderer {
                 .add_bind_group_layout(&global_bind_group_layout)
                 .add_bind_group_layout(&mesh_local_clip_layout)
                 .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+                .set_sample_count(sample_count)
                 .set_blend_state(pipeline::create_alpha_blend_state())
                 .set_cull_mode(TriangleFaceMode::FrontAndBack)
                 .build(
@@ -1019,6 +1096,7 @@ impl Renderer {
             .add_bind_group_layout(&global_bind_group_layout)
             .add_bind_group_layout(&mesh_local_clip_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+            .set_sample_count(sample_count)
             .set_blend_state(pipeline::create_alpha_blend_state())
             .set_cull_mode(TriangleFaceMode::FrontAndBack)
             .build(
@@ -1043,6 +1121,7 @@ impl Renderer {
             .add_bind_group_layout(&global_bind_group_layout)
             .add_bind_group_layout(&mesh_local_clip_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state_transparent())
+            .set_sample_count(sample_count)
             .set_blend_state(pipeline::create_alpha_blend_state())
             .set_cull_mode(TriangleFaceMode::FrontAndBack)
             .build(
@@ -1064,6 +1143,7 @@ impl Renderer {
             .add_bind_group_layout(&global_bind_group_layout)
             .add_bind_group_layout(&mesh_local_clip_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
+            .set_sample_count(sample_count)
             .build(device, constants::MESH_SILHOUETTE_PIPELINE_KEY);
 
         let comp_bind_group_layout = composite::get_composite_pipeline_bind_group_layout(device);
@@ -1076,6 +1156,7 @@ impl Renderer {
             .set_frag_source(comp_frag_shader_source, None)
             .set_texture_format(texture_format)
             .add_bind_group_layout(&comp_bind_group_layout)
+            .set_sample_count(sample_count)
             .build(device, constants::COMPOSITE_PASS_PIPELINE);
 
         let screen_space_vert_source = wgpu::ShaderSource::Wgsl(
@@ -1096,6 +1177,7 @@ impl Renderer {
             .add_bind_group_layout(&global_bind_group_layout)
             .add_bind_group_layout(&mesh_local_clip_layout)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
+            .set_sample_count(sample_count)
             .build(device, constants::SCREEN_SPACE_MESH_PIPELINE_KEY);
 
         let screen_space_vert_source = wgpu::ShaderSource::Wgsl(
@@ -1117,6 +1199,7 @@ impl Renderer {
             .add_bind_group_layout(&mesh_local_clip_layout)
             .set_topology(wgpu::PrimitiveTopology::LineList)
             .set_depth_stencil(pipeline::create_depth_stencil_state())
+            .set_sample_count(sample_count)
             .build(device, constants::SCREEN_SPACE_WIREFRAME_PIPELINE_KEY);
 
         let screen_space_vert_source = wgpu::ShaderSource::Wgsl(
@@ -1138,6 +1221,7 @@ impl Renderer {
                 .add_vertex_buffer_layout(screen_space::SizeInPixel::layout::<13>())
                 .add_bind_group_layout(&global_bind_group_layout)
                 .add_bind_group_layout(&mesh_local_clip_layout)
+                .set_sample_count(sample_count)
                 .build(
                     device,
                     constants::SCREEN_SPACE_MESH_WITHOUT_DEPTH_PIPELINE_KEY,
@@ -1163,6 +1247,7 @@ impl Renderer {
                 .add_bind_group_layout(&global_bind_group_layout)
                 .add_bind_group_layout(&mesh_local_clip_layout)
                 .set_topology(wgpu::PrimitiveTopology::LineList)
+                .set_sample_count(sample_count)
                 .build(
                     device,
                     constants::SCREEN_SPACE_WIREFRAME_WITHOUT_DEPTH_PIPELINE_KEY,
@@ -1352,6 +1437,7 @@ impl Renderer {
             device: device.clone(),
             queue: queue.clone(),
             texture_format,
+            sample_count,
             global_bind_groups: Vec::new(),
             texture_bind_group_layout: mesh_local_textured_layout,
             texture_array_bind_group_layout: mesh_local_array_textured_layout,
@@ -1360,6 +1446,16 @@ impl Renderer {
             composite_frag_uniform,
             render_pipeline_cache,
         })
+    }
+
+    /// Returns the MSAA sample count (1 = off, 2 or 4 = on)
+    pub fn sample_count(&self) -> u32 {
+        self.sample_count
+    }
+
+    /// Returns true if MSAA is enabled (sample_count > 1)
+    pub fn msaa_enabled(&self) -> bool {
+        self.sample_count > 1
     }
 
     pub fn set_highlight_pixels(&mut self, px_thickness: u32) {
@@ -1463,7 +1559,7 @@ impl Renderer {
     ) -> Result<(), WgpuError> {
         let final_texture_data = match &render_mode {
             RenderMode::DrawToBuffer(_, extent3d) => {
-                &create_texture_data(&self.device, *extent3d, self.texture_format)
+                &create_texture_data(&self.device, *extent3d, self.texture_format, self.sample_count)
             }
             RenderMode::DrawToTexture(render_texture_data) => render_texture_data,
         };
@@ -1471,6 +1567,7 @@ impl Renderer {
         let depth_texture = texture::DepthTexture::create_depth_texture(
             &self.device,
             final_texture_data.texture_size,
+            self.sample_count,
         );
 
         let mut encoder = self
@@ -1488,6 +1585,7 @@ impl Renderer {
                 &self.device,
                 final_texture_data.texture_size,
                 final_texture_data.texture_format,
+                self.sample_count,
             ))
         } else {
             None
@@ -1586,10 +1684,19 @@ impl Renderer {
 
         if let RenderMode::DrawToBuffer(buffer, size) = &render_mode {
             let u32_size = std::mem::size_of::<u32>() as u32;
+            // When MSAA is enabled, copy from the resolve target texture
+            let source_texture = if self.sample_count > 1 {
+                // We need to get the resolve target texture, not the view
+                // Since we don't store it separately, we need to access it differently
+                // For now, let's add the COPY_SRC flag to the MSAA texture in create_texture_data
+                &final_texture_data.texture
+            } else {
+                &final_texture_data.texture
+            };
             encoder.copy_texture_to_buffer(
                 wgpu::TexelCopyTextureInfo {
                     aspect: wgpu::TextureAspect::All,
-                    texture: &final_texture_data.texture,
+                    texture: source_texture,
                     mip_level: 0,
                     origin: wgpu::Origin3d::ZERO,
                 },
@@ -1623,13 +1730,26 @@ impl Renderer {
             &self.device,
             final_texture_data.texture_size,
             wgpu::TextureFormat::R8Unorm,
+            self.sample_count,
         );
         {
+            // Use msaa texture view when MSAA is enabled
+            let color_view = if self.sample_count > 1 {
+                selection_mask_tex.msaa_texture_view.as_ref().unwrap()
+            } else {
+                &selection_mask_tex.texture_view
+            };
+            let resolve_target = if self.sample_count > 1 {
+                Some(&selection_mask_tex.texture_view)
+            } else {
+                None
+            };
+            
             let render_pass_desc = wgpu::RenderPassDescriptor {
                 label: Some("Silhoutte Mesh Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &selection_mask_tex.texture_view,
-                    resolve_target: None,
+                    view: color_view,
+                    resolve_target,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                         store: wgpu::StoreOp::Store,
@@ -1661,11 +1781,23 @@ impl Renderer {
 
         // composite of textures
         {
+            // Use msaa texture view when MSAA is enabled
+            let color_view = if self.sample_count > 1 {
+                final_texture_data.msaa_texture_view.as_ref().unwrap()
+            } else {
+                &final_texture_data.texture_view
+            };
+            let resolve_target = if self.sample_count > 1 {
+                Some(&final_texture_data.texture_view)
+            } else {
+                None
+            };
+            
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Composite Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &final_texture_data.texture_view,
-                    resolve_target: None,
+                    view: color_view,
+                    resolve_target,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
@@ -1683,6 +1815,9 @@ impl Renderer {
                     .get(constants::COMPOSITE_PASS_PIPELINE)
                     .unwrap(),
             );
+            // texture_view is already the resolve target when MSAA is enabled
+            // Use texture_view directly for both color and mask
+            
             pass.set_bind_group(
                 0,
                 &composite::create_composite_bind_group(
@@ -1708,11 +1843,23 @@ impl Renderer {
         color_data: &RenderTextureData,
         global_bind_group: &wgpu::BindGroup,
     ) {
+        // Use msaa texture view when MSAA is enabled
+        let color_view = if self.sample_count > 1 {
+            color_data.msaa_texture_view.as_ref().unwrap()
+        } else {
+            &color_data.texture_view
+        };
+        let resolve_target = if self.sample_count > 1 {
+            Some(&color_data.texture_view)
+        } else {
+            None
+        };
+        
         let render_pass_desc = wgpu::RenderPassDescriptor {
             label: Some("Screen Space Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &color_data.texture_view,
-                resolve_target: None,
+                view: color_view,
+                resolve_target,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
@@ -1774,11 +1921,23 @@ impl Renderer {
         // Opaque pass - always runs to clear the screen and depth buffer
         // Render pass is created unconditionally to ensure clear happens
         {
+            // Use msaa texture view when MSAA is enabled
+            let color_view = if self.sample_count > 1 {
+                color_data.msaa_texture_view.as_ref().unwrap()
+            } else {
+                &color_data.texture_view
+            };
+            let resolve_target = if self.sample_count > 1 {
+                Some(&color_data.texture_view)
+            } else {
+                None
+            };
+            
             let render_pass_desc = wgpu::RenderPassDescriptor {
                 label: Some("Opaque Surface Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &color_data.texture_view,
-                    resolve_target: None,
+                    view: color_view,
+                    resolve_target,
                     ops: wgpu::Operations {
                         load: color_load,
                         store: wgpu::StoreOp::Store,
@@ -1824,11 +1983,23 @@ impl Renderer {
 
         // Transparent pass - reads depth but doesn't write, with alpha blending
         if !transparent_renderables.is_empty() {
+            // Use msaa texture view when MSAA is enabled
+            let color_view = if self.sample_count > 1 {
+                color_data.msaa_texture_view.as_ref().unwrap()
+            } else {
+                &color_data.texture_view
+            };
+            let resolve_target = if self.sample_count > 1 {
+                Some(&color_data.texture_view)
+            } else {
+                None
+            };
+            
             let render_pass_desc = wgpu::RenderPassDescriptor {
                 label: Some("Transparent Surface Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &color_data.texture_view,
-                    resolve_target: None,
+                    view: color_view,
+                    resolve_target,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load, // Load from opaque pass
                         store: wgpu::StoreOp::Store,
@@ -1926,29 +2097,77 @@ pub fn create_texture_data(
     device: &wgpu::Device,
     size: wgpu::Extent3d,
     format: wgpu::TextureFormat,
+    sample_count: u32,
 ) -> RenderTextureData {
-    let texture_desc = wgpu::TextureDescriptor {
-        size,
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format,
-        usage: wgpu::TextureUsages::COPY_SRC
-            | wgpu::TextureUsages::RENDER_ATTACHMENT
-            | wgpu::TextureUsages::TEXTURE_BINDING,
-        label: None,
-        view_formats: &[],
-    };
-    let texture = device.create_texture(&texture_desc);
-    let texture_view = texture.create_view(&Default::default());
-    let texture_sampler = device.create_sampler(&Default::default());
-
-    RenderTextureData {
-        texture,
-        texture_view,
-        texture_size: size,
-        texture_sampler,
-        texture_format: format,
+    // For MSAA, we need a multisampled render target and a non-multisampled resolve target
+    if sample_count > 1 {
+        // Multisampled texture for rendering
+        let msaa_texture_desc = wgpu::TextureDescriptor {
+            size,
+            mip_level_count: 1,
+            sample_count,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            label: Some("MSAA Render Target"),
+            view_formats: &[],
+        };
+        let msaa_texture = device.create_texture(&msaa_texture_desc);
+        let msaa_view = msaa_texture.create_view(&Default::default());
+        
+        // Non-multisampled texture for resolve target and sampling
+        let resolve_texture_desc = wgpu::TextureDescriptor {
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING,
+            label: Some("MSAA Resolve Target"),
+            view_formats: &[],
+        };
+        let resolve_texture = device.create_texture(&resolve_texture_desc);
+        let resolve_view = resolve_texture.create_view(&Default::default());
+        let resolve_sampler = device.create_sampler(&Default::default());
+        
+        RenderTextureData {
+            texture: resolve_texture,
+            texture_view: resolve_view,
+            texture_size: size,
+            texture_sampler: resolve_sampler,
+            texture_format: format,
+            msaa_texture: Some(msaa_texture),
+            msaa_texture_view: Some(msaa_view),
+        }
+    } else {
+        // Non-MSAA: single texture
+        let texture_desc = wgpu::TextureDescriptor {
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING,
+            label: None,
+            view_formats: &[],
+        };
+        let texture = device.create_texture(&texture_desc);
+        let view = texture.create_view(&Default::default());
+        let sampler = device.create_sampler(&Default::default());
+        
+        RenderTextureData {
+            texture,
+            texture_view: view,
+            texture_size: size,
+            texture_sampler: sampler,
+            texture_format: format,
+            msaa_texture: None,
+            msaa_texture_view: None,
+        }
     }
 }
 

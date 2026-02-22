@@ -57,16 +57,18 @@ impl RenderService {
         receiver: Receiver<RenderServiceRequest>,
         sender: Sender<RenderServiceResponse>,
     ) -> Self {
-        match Renderer::from_existing_device_and_queue(
+        match Renderer::from_existing_device_and_queue_with_msaa(
             renderer_settings.device.clone(),
             renderer_settings.queue,
             renderer_settings.format,
+            true,
         )
         .await
         {
             // match Renderer::from_new_device(renderer_settings.width, renderer_settings.height).await {
             Ok(renderer) => {
                 //renderer.update_camera(&renderer_settings.initial_camera_data);
+                let sample_count = renderer.sample_count();
                 let frame_view_data = renderer
                     .create_frame_view_data(renderer_settings.width, renderer_settings.height);
                 let render_texture_data = renderer::create_texture_data(
@@ -77,6 +79,7 @@ impl RenderService {
                         depth_or_array_layers: 1,
                     },
                     renderer_settings.format,
+                    sample_count,
                 );
 
                 Self {
@@ -137,6 +140,7 @@ impl RenderService {
                             &self.camera,
                         );
                         self.update_frame_view_data().await;
+
                         self.render_texture_data = renderer::create_texture_data(
                             &self.device,
                             wgpu::Extent3d {
@@ -145,6 +149,7 @@ impl RenderService {
                                 depth_or_array_layers: 1,
                             },
                             self.format,
+                            self.renderer.sample_count(),
                         );
 
                         if let Err(err) = self

@@ -1001,6 +1001,64 @@ mod tests {
     }
 
     #[test]
+    fn test_box_with_vertex_color_and_silhoutte_with_msaa() {
+        pollster::block_on(async {
+            let mut renderer = renderer::Renderer::from_new_device_with_msaa(true).await.unwrap();
+            let mut frame_view_data =
+                renderer.create_frame_view_data(TEXTURE_WIDTH, TEXTURE_HEIGHT);
+            frame_view_data
+                .camera
+                .update(&get_camera_data(TEXTURE_WIDTH, TEXTURE_HEIGHT));
+            renderer.write_frame_view_data_to_gpu(&frame_view_data);
+            renderer.set_highlight_pixels(4);
+
+            let read_buffer =
+                renderer::create_read_buffer(&renderer.device, TEXTURE_WIDTH, TEXTURE_HEIGHT);
+
+            let mut render_db = TestRenderDb::new(&renderer.device);
+            let (_mesh_object_id, _wireframe_object_id, _silhoutte_mesh_object_id) =
+                set_colored_mesh_object_with_silhoutte(&renderer.device, &mut render_db);
+
+            let render_data = render_db.get_renderables().collect::<Vec<_>>();
+            let image_buffer = renderer
+                .render_and_return_as_image_buffer(
+                    &render_data,
+                    &read_buffer,
+                    wgpu::Extent3d {
+                        width: TEXTURE_WIDTH,
+                        height: TEXTURE_HEIGHT,
+                        depth_or_array_layers: 1,
+                    },
+                    &frame_view_data,
+                )
+                .await
+                .unwrap();
+            // Uncomment to save reference image
+            // image_buffer
+            //     .save("tests/data/vertex_color_mesh_with_silhouette_msaa_actual.png")
+            //     .unwrap();
+
+            let ref_image_data = image::open(PathBuf::from(
+                "tests/data/vertex_color_mesh_with_silhouette_msaa.png",
+            ))
+            .unwrap()
+            .into_rgba8();
+
+            let ref_image =
+                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &ref_image_data);
+            let test_image =
+                nv_flip::FlipImageRgb8::with_data(TEXTURE_WIDTH, TEXTURE_HEIGHT, &image_buffer);
+
+            let error_map = nv_flip::flip(ref_image, test_image, DEFAULT_PIXELS_PER_DEGREE);
+            let pool = nv_flip::FlipPool::from_image(&error_map);
+            if let Some(Ordering::Greater) = pool.mean().partial_cmp(&FLIP_MEAN_ERROR) {
+                println!("Mean error {}", pool.mean());
+                panic!("Something is wrong with the Silhoutte MSAA rendering")
+            }
+        });
+    }
+
+    #[test]
     fn test_box_in_screen_space_size_with_depth() {
         pollster::block_on(async {
             let renderer = renderer::Renderer::from_new_device().await.unwrap();
