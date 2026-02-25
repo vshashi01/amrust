@@ -12,7 +12,7 @@ use std::num::NonZero;
 pub struct RenderDataLocalResources {
     pub transparency: Transparency,
     pub clip_plane: ClipPlanes<1>,
-    pub back_material: wgpu::Buffer,
+    pub(crate) back_material: wgpu::Buffer,
     pub(crate) uniform_bg: wgpu::BindGroup,
     pub(crate) texture_bg: Option<wgpu::BindGroup>,
 }

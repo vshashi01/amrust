@@ -15,15 +15,18 @@ use crate::core::services::render_service::{
 };
 use crate::core::types::identifiable::Identifiable;
 use crate::db_view_model::{
-    self, DbViewModel, create_build_items_list, create_object_tree_from_identifiable,
-    create_objects_list, create_scene_tree_items_by_unique_parts,
+    self, DbViewModel, create_build_items_list, create_build_items_list_new,
+    create_object_tree_from_identifiable, create_objects_list,
+    create_scene_tree_items_by_unique_parts,
 };
 use crate::egui_tools::EguiRenderer;
 use crate::features::{clear_db, load_3mf, save_3mf, unload, unzoom_scene};
 use crate::ui::part_list::PartList;
 use crate::ui::toolsheets::Toolsheets;
 use crate::ui::tree_item_viewer::TreeItemViewer;
+use crate::ui::tree_table::TreeTableViewer;
 use crate::ui::viewport::Viewport3D;
+use crate::view_models::build_items::BuildItemsModel;
 // use amrust_lib::widgets::dropped_files::DroppedFilesWidget;
 use amrust_render::camera::{self, CameraData, OrthographicCameraData};
 // use amrust_render::normalized_box::{ORDERED_POSITIONS, ORDERED_POSITIONS_TRI_EDGE_INDICES};
@@ -564,7 +567,7 @@ impl App {
                             let part_list =
                                 create_scene_tree_items_by_unique_parts(&state.db_view_model);
                             let object_list = create_objects_list(&state.db_view_model);
-                            let build_list = create_build_items_list(&state.db_view_model);
+                            let build_list = create_build_items_list_new(&state.db_view_model);
                             (render_objects, part_list, object_list, build_list)
                         }
                         AppMode::Build => {
@@ -575,7 +578,7 @@ impl App {
                                 .collect::<Vec<_>>();
                             let part_list = create_build_items_list(&state.db_view_model);
                             let object_list = create_objects_list(&state.db_view_model);
-                            let build_list = create_build_items_list(&state.db_view_model);
+                            let build_list = create_build_items_list_new(&state.db_view_model);
                             (render_objects, part_list, object_list, build_list)
                         }
                     };
@@ -588,10 +591,11 @@ impl App {
 
                 let part_list = PartList::new(part_list_items);
 
+                let build_model = BuildItemsModel::new(&build_items);
                 let mut toolsheets = Toolsheets::new(
                     part_list,
                     TreeItemViewer::new(object_items, false, true),
-                    TreeItemViewer::new(build_items, false, true),
+                    TreeTableViewer::new(build_model),
                 );
 
                 // Restore selections in toolsheets based on mode

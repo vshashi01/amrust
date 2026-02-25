@@ -477,6 +477,29 @@ pub fn create_build_items_list(db_cache: &DbViewModel) -> Vec<TreeItem<Identifia
         .collect()
 }
 
+pub fn create_build_items_list_new(
+    db_cache: &DbViewModel,
+) -> Vec<(PartInstanceId, &PartInstanceCache)> {
+    db_cache
+        .scene_data
+        .iter()
+        .filter_map(|instance_id| {
+            db_cache
+                .get_part_instance_data(instance_id)
+                .map(|instance_cache| {
+                    // let name = match instance_cache.rep_type {
+                    //     PartRepType::Mesh => format!("Instance: {:?} - Mesh", instance_id),
+                    //     PartRepType::ComposedPart => {
+                    //         format!("Instance: {:?} - Composed Part", instance_id)
+                    //     }
+                    // };
+
+                    (*instance_id, instance_cache)
+                })
+        })
+        .collect()
+}
+
 pub fn create_scene_tree_items_by_unique_parts(
     db_cache: &DbViewModel,
 ) -> Vec<TreeItem<Identifiable>> {

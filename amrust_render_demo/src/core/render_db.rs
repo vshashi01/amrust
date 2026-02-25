@@ -1,7 +1,9 @@
 use amrust_render::{
-    RenderData3d, RenderDataLocalResources, Renderable3d, TriangleFaceMode, clip::ClipPlanes,
-    gpu_mesh::GpuMesh, instance, transparency::Transparency,
+    RenderData3d, RenderDataLocalResources, Renderable3d,
+    gpu_mesh::GpuMesh,
+    instance::{self, GpuInstance},
 };
+use rkyv::collections::btree_map::Range;
 use slotmap::{SlotMap, new_key_type};
 
 pub struct RenderObject {
@@ -9,6 +11,15 @@ pub struct RenderObject {
     pub instance: instance::GpuInstance,
     pub gpu_mesh_id: RenderMeshId,
     pub mesh_local: RenderDataLocalResources,
+}
+
+pub struct RenderObjectNew {
+    pub renderable: Renderable3d,
+    pub mesh: RenderMeshId,
+    pub instance: RenderInstanceId,
+    pub local_render_data: RenderDataLocalResourcesId,
+    pub mesh_range: Option<std::ops::Range<u32>>,
+    pub instance_range: Option<std::ops::Range<u32>>,
 }
 
 new_key_type! {
@@ -19,12 +30,23 @@ new_key_type! {
     pub struct RenderObjectId;
 }
 
+new_key_type! {
+    pub struct RenderInstanceId;
+}
+
+new_key_type! {
+    pub struct RenderDataLocalResourcesId;
+}
+
 pub struct RenderDb {
     // textures: Vec<texture::Texture>,
     meshes: SlotMap<RenderMeshId, GpuMesh>,
+    instances: SlotMap<RenderInstanceId, GpuInstance>,
+    local_render_data: SlotMap<RenderDataLocalResourcesId, RenderDataLocalResources>,
     objects: SlotMap<RenderObjectId, RenderObject>,
     // invisible_objects: HashSet<usize>,
     objects_to_render: Vec<RenderObjectId>,
+    objects_to_render_new: Vec<RenderObjectNew>,
 }
 
 impl RenderDb {
@@ -32,9 +54,12 @@ impl RenderDb {
         Self {
             // textures: vec![],
             meshes: SlotMap::with_key(),
+            instances: SlotMap::with_key(),
+            local_render_data: SlotMap::with_key(),
             objects: SlotMap::with_key(),
             // invisible_objects: HashSet::new(),
             objects_to_render: vec![],
+            objects_to_render_new: vec![],
         }
     }
 
@@ -101,12 +126,27 @@ impl RenderDb {
         self.meshes.insert(mesh)
     }
 
+    pub fn add_instance(&mut self, instance: GpuInstance) -> RenderInstanceId {
+        self.instances.insert(instance)
+    }
+
+    pub fn add_local_render_resource(
+        &mut self,
+        resource: RenderDataLocalResources,
+    ) -> RenderDataLocalResourcesId {
+        self.local_render_data.insert(resource)
+    }
+
     pub fn add_object(&mut self, object: RenderObject) -> RenderObjectId {
         self.objects.insert(object)
     }
 
     pub fn remove_object(&mut self, id: RenderObjectId) -> Option<RenderObject> {
         self.objects.remove(id)
+    }
+
+    pub fn add_render_objects_new(&mut self, objects: Vec<RenderObjectNew>) {
+        self.objects_to_render_new = objects;
     }
 
     // pub fn clear_objects_to_render(&mut self) {

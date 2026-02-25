@@ -1,6 +1,7 @@
 use crate::{
-    core::types::identifiable::Identifiable, ui::part_list::PartList,
-    ui::tree_item_viewer::TreeItemViewer,
+    core::types::identifiable::Identifiable,
+    ui::{part_list::PartList, tree_item_viewer::TreeItemViewer, tree_table::TreeTableViewer},
+    view_models::build_items::BuildItemsModel,
 };
 
 pub struct Toolsheets {
@@ -8,7 +9,7 @@ pub struct Toolsheets {
     pub part_list: PartList,
 
     pub objects_list: TreeItemViewer<Identifiable>,
-    pub build_items_list: TreeItemViewer<Identifiable>,
+    pub build_items_list: TreeTableViewer<BuildItemsModel>,
 
     selected_items_on_part_list: Vec<Identifiable>,
     selection_changed: bool,
@@ -25,7 +26,7 @@ impl Toolsheets {
         // app_mode: AppMode,
         part_list: PartList,
         objects_list: TreeItemViewer<Identifiable>,
-        build_items_list: TreeItemViewer<Identifiable>,
+        build_items_list: TreeTableViewer<BuildItemsModel>,
     ) -> Self {
         Toolsheets {
             // app_mode,
@@ -100,11 +101,27 @@ impl egui_dock::TabViewer for Toolsheets {
                 &mut self.selected_objects,
                 &self.blocked_items_on_part_list,
             ),
-            "Build Items List" => self.build_items_list.core_ui(
-                ui,
-                &mut self.selected_build_items,
-                &self.blocked_items_on_part_list,
-            ),
+            "Build Items List" => {
+                self.build_items_list.model_mut().set_disabled_items(
+                    &self
+                        .blocked_items_on_part_list
+                        .iter()
+                        .filter_map(|i| match i {
+                            Identifiable::Part(_) => None,
+                            Identifiable::PartInstance(part_instance_id) => Some(*part_instance_id),
+                        })
+                        .collect::<Vec<_>>(),
+                );
+                self.build_items_list.ui(ui);
+                // Sync selected items from tree table viewer
+                self.selected_build_items = self
+                    .build_items_list
+                    .model()
+                    .selected_items()
+                    .iter()
+                    .map(|id| Identifiable::PartInstance(*id))
+                    .collect::<Vec<_>>();
+            }
             "Object Tree" => {
                 if let Some(ref mut props) = self.selected_identifiable_properties {
                     props.core_ui(ui, &mut vec![], &[]);

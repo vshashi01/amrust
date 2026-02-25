@@ -6,6 +6,7 @@ mod db_view_model;
 mod egui_tools;
 mod features;
 mod ui;
+mod view_models;
 
 use winit::event_loop::{ControlFlow, EventLoop};
 
