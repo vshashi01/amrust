@@ -1,7 +1,7 @@
 use amrust_render::{
     RenderData3d, RenderDataLocalResources, Renderable3d,
     gpu_mesh::GpuMesh,
-    instance::{self, GpuInstance},
+    instance::{self, GpuInstance, GpuInstanceRange},
 };
 use rkyv::collections::btree_map::Range;
 use slotmap::{SlotMap, new_key_type};
@@ -19,7 +19,7 @@ pub struct RenderObjectNew {
     pub instance: RenderInstanceId,
     pub local_render_data: RenderDataLocalResourcesId,
     pub mesh_range: Option<std::ops::Range<u32>>,
-    pub instance_range: Option<std::ops::Range<u32>>,
+    pub instance_range: Option<GpuInstanceRange>,
 }
 
 new_key_type! {
