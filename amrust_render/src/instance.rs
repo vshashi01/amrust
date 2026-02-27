@@ -12,6 +12,9 @@ pub struct GpuInstance {
     pub instance_count: u32,
 }
 
+#[derive(Debug, Clone)]
+pub struct GpuInstanceRange(pub(crate) std::ops::Range<u32>);
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct InstanceDataStream {
     pub type_id: TypeId,
@@ -42,6 +45,17 @@ impl GpuInstance {
             buffer,
             instance_data_stream: self.instance_data_stream.clone(),
             instance_count: self.instance_count,
+        }
+    }
+
+    pub fn get_instance_range(
+        &self,
+        requested_range: std::ops::Range<u32>,
+    ) -> Option<GpuInstanceRange> {
+        if requested_range.end <= self.instance_count {
+            Some(GpuInstanceRange(requested_range))
+        } else {
+            None
         }
     }
 }

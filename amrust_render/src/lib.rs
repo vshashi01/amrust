@@ -3,7 +3,10 @@ use thiserror::Error;
 mod prelude;
 pub use prelude::*;
 
-use crate::{gpu_mesh::GpuMesh, instance::GpuInstance};
+use crate::{
+    gpu_mesh::GpuMesh,
+    instance::{GpuInstance, GpuInstanceRange},
+};
 
 //export module
 pub mod bounding_box;
@@ -51,7 +54,7 @@ pub struct RenderData3d<'a> {
     /// Optional mesh element range (indices for indexed meshes, vertices for non-indexed)
     pub mesh_element_range: Option<std::ops::Range<u32>>,
     /// Optional instance range to render
-    pub instance_range: Option<std::ops::Range<u32>>,
+    pub instance_range: Option<GpuInstanceRange>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1003,7 +1006,9 @@ mod tests {
     #[test]
     fn test_box_with_vertex_color_and_silhoutte_with_msaa() {
         pollster::block_on(async {
-            let mut renderer = renderer::Renderer::from_new_device_with_msaa(true).await.unwrap();
+            let mut renderer = renderer::Renderer::from_new_device_with_msaa(true)
+                .await
+                .unwrap();
             let mut frame_view_data =
                 renderer.create_frame_view_data(TEXTURE_WIDTH, TEXTURE_HEIGHT);
             frame_view_data
@@ -1946,8 +1951,7 @@ mod tests {
             .build(device);
 
         // Only render instances 1..4 (middle three instances)
-        let instance_range = Some(1..4);
-
+        let instance_range = colored_mesh_instance_buffer.get_instance_range(1..4);
         let colored_mesh_object = RenderObject {
             renderable: Renderable3d::ColoredMesh,
             gpu_mesh_id: colored_mesh_id,
@@ -2536,7 +2540,7 @@ mod tests {
         /// Optional mesh element range (indices for indexed meshes, vertices for non-indexed)
         pub mesh_element_range: Option<std::ops::Range<u32>>,
         /// Optional instance range to render
-        pub instance_range: Option<std::ops::Range<u32>>,
+        pub instance_range: Option<GpuInstanceRange>,
     }
 
     pub struct TestRenderDb {

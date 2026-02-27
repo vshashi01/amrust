@@ -1,8 +1,9 @@
-use crate::{constants, material::BackMaterialUniform, prelude::*};
+use crate::instance::GpuInstanceRange;
 use crate::{
-    light, material, screen_space, transformation, vertex, RenderData3d, Renderable3d,
-    TriangleFaceMode,
+    RenderData3d, Renderable3d, TriangleFaceMode, light, material, screen_space, transformation,
+    vertex,
 };
+use crate::{constants, material::BackMaterialUniform, prelude::*};
 
 use std::collections::HashMap;
 
@@ -258,8 +259,8 @@ pub fn surface_3d_render_pass_with_depth<'a>(
             render_pass.set_index_buffer(index_buffer, index_stream.format);
 
             let index_range = mesh_element_range.unwrap_or(0..index_stream.index_count);
-            let inst_range = instance_range.unwrap_or(0..instance.instance_count);
-            render_pass.draw_indexed(index_range, 0, inst_range);
+            let inst_range = instance_range.unwrap_or(GpuInstanceRange(0..instance.instance_count));
+            render_pass.draw_indexed(index_range, 0, inst_range.0);
         } else {
             panic!("Mesh does not have an index buffer");
         }
@@ -337,8 +338,8 @@ pub fn surface_3d_render_pass_with_depth<'a>(
             render_pass.set_index_buffer(index_buffer, index_stream.format);
 
             let index_range = mesh_element_range.unwrap_or(0..index_stream.index_count);
-            let inst_range = instance_range.unwrap_or(0..instance.instance_count);
-            render_pass.draw_indexed(index_range, 0, inst_range);
+            let inst_range = instance_range.unwrap_or(GpuInstanceRange(0..instance.instance_count));
+            render_pass.draw_indexed(index_range, 0, inst_range.0);
         } else {
             panic!("Mesh does not have an index buffer");
         }
@@ -409,8 +410,8 @@ pub fn surface_3d_render_pass_with_depth<'a>(
         }
 
         let vertex_range = mesh_element_range.unwrap_or(0..mesh.vertex_count);
-        let inst_range = instance_range.unwrap_or(0..instance.instance_count);
-        render_pass.draw(vertex_range, inst_range);
+        let inst_range = instance_range.unwrap_or(GpuInstanceRange(0..instance.instance_count));
+        render_pass.draw(vertex_range, inst_range.0);
     }
 
     screen_space_colored_mesh_pass(renderables, render_pipeline_cache, render_pass, true);
@@ -456,12 +457,12 @@ pub fn wireframe_3d_render_pass<'a>(
             render_pass.set_index_buffer(index_buffer, index_stream.format);
 
             let index_range = mesh_element_range.unwrap_or(0..index_stream.index_count);
-            let inst_range = instance_range.unwrap_or(0..instance.instance_count);
-            render_pass.draw_indexed(index_range, 0, inst_range);
+            let inst_range = instance_range.unwrap_or(GpuInstanceRange(0..instance.instance_count));
+            render_pass.draw_indexed(index_range, 0, inst_range.0);
         } else {
             let vertex_range = mesh_element_range.unwrap_or(0..mesh.vertex_count);
-            let inst_range = instance_range.unwrap_or(0..instance.instance_count);
-            render_pass.draw(vertex_range, inst_range);
+            let inst_range = instance_range.unwrap_or(GpuInstanceRange(0..instance.instance_count));
+            render_pass.draw(vertex_range, inst_range.0);
         }
     }
 
@@ -506,12 +507,12 @@ pub fn silhoutte_pass<'a>(
             render_pass.set_index_buffer(index_buffer, index_stream.format);
 
             let index_range = mesh_element_range.unwrap_or(0..index_stream.index_count);
-            let inst_range = instance_range.unwrap_or(0..instance.instance_count);
-            render_pass.draw_indexed(index_range, 0, inst_range);
+            let inst_range = instance_range.unwrap_or(GpuInstanceRange(0..instance.instance_count));
+            render_pass.draw_indexed(index_range, 0, inst_range.0);
         } else {
             let vertex_range = mesh_element_range.unwrap_or(0..mesh.vertex_count);
-            let inst_range = instance_range.unwrap_or(0..instance.instance_count);
-            render_pass.draw(vertex_range, inst_range);
+            let inst_range = instance_range.unwrap_or(GpuInstanceRange(0..instance.instance_count));
+            render_pass.draw(vertex_range, inst_range.0);
         }
     }
 }
