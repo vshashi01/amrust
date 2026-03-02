@@ -586,7 +586,7 @@ impl App {
                 //update render objects
                 {
                     let mut write_render_db = state.render_db.write_blocking();
-                    write_render_db.set_objects_to_render(&render_objects);
+                    write_render_db.set_render_objects(&render_objects);
                 }
 
                 let part_list = PartList::new(part_list_items);

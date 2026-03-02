@@ -1,19 +1,11 @@
 use amrust_render::{
     RenderData3d, RenderDataLocalResources, Renderable3d,
     gpu_mesh::GpuMesh,
-    instance::{self, GpuInstance, GpuInstanceRange},
+    instance::{GpuInstance, GpuInstanceRange},
 };
-use rkyv::collections::btree_map::Range;
 use slotmap::{SlotMap, new_key_type};
 
 pub struct RenderObject {
-    pub renderable: Renderable3d,
-    pub instance: instance::GpuInstance,
-    pub gpu_mesh_id: RenderMeshId,
-    pub mesh_local: RenderDataLocalResources,
-}
-
-pub struct RenderObjectNew {
     pub renderable: Renderable3d,
     pub mesh: RenderMeshId,
     pub instance: RenderInstanceId,
@@ -27,7 +19,7 @@ new_key_type! {
 }
 
 new_key_type! {
-    pub struct RenderObjectId;
+    pub struct RenderObjectNewId;
 }
 
 new_key_type! {
@@ -43,10 +35,9 @@ pub struct RenderDb {
     meshes: SlotMap<RenderMeshId, GpuMesh>,
     instances: SlotMap<RenderInstanceId, GpuInstance>,
     local_render_data: SlotMap<RenderDataLocalResourcesId, RenderDataLocalResources>,
-    objects: SlotMap<RenderObjectId, RenderObject>,
+    objects_new: SlotMap<RenderObjectNewId, RenderObject>,
     // invisible_objects: HashSet<usize>,
-    objects_to_render: Vec<RenderObjectId>,
-    objects_to_render_new: Vec<RenderObjectNew>,
+    objects_to_render_new: Vec<RenderObjectNewId>,
 }
 
 impl RenderDb {
@@ -56,19 +47,20 @@ impl RenderDb {
             meshes: SlotMap::with_key(),
             instances: SlotMap::with_key(),
             local_render_data: SlotMap::with_key(),
-            objects: SlotMap::with_key(),
+            // objects: SlotMap::with_key(),
+            objects_new: SlotMap::with_key(),
             // invisible_objects: HashSet::new(),
-            objects_to_render: vec![],
+            // objects_to_render: vec![],
             objects_to_render_new: vec![],
         }
     }
 
-    pub fn set_objects_to_render(&mut self, objects: &[RenderObjectId]) {
-        self.objects_to_render.clear();
-        for o in objects {
-            self.objects_to_render.push(*o);
-        }
-    }
+    // pub fn set_objects_to_render(&mut self, objects: &[RenderObjectId]) {
+    //     self.objects_to_render.clear();
+    //     for o in objects {
+    //         self.objects_to_render.push(*o);
+    //     }
+    // }
 
     // returns the texture id and the bind group id
     // pub fn add_texture(
@@ -137,16 +129,19 @@ impl RenderDb {
         self.local_render_data.insert(resource)
     }
 
-    pub fn add_object(&mut self, object: RenderObject) -> RenderObjectId {
-        self.objects.insert(object)
+    pub fn add_object(&mut self, object: RenderObject) -> RenderObjectNewId {
+        self.objects_new.insert(object)
     }
 
-    pub fn remove_object(&mut self, id: RenderObjectId) -> Option<RenderObject> {
-        self.objects.remove(id)
+    pub fn remove_object(&mut self, id: RenderObjectNewId) -> Option<RenderObject> {
+        self.objects_new.remove(id)
     }
 
-    pub fn add_render_objects_new(&mut self, objects: Vec<RenderObjectNew>) {
-        self.objects_to_render_new = objects;
+    pub fn set_render_objects(&mut self, objects: &[RenderObjectNewId]) {
+        self.objects_to_render_new.clear();
+        for object in objects {
+            self.objects_to_render_new.push(*object);
+        }
     }
 
     // pub fn clear_objects_to_render(&mut self) {
@@ -154,9 +149,10 @@ impl RenderDb {
     // }
 
     pub fn clear_all(&mut self) {
-        self.objects.clear();
         self.meshes.clear();
-        self.objects_to_render.clear();
+        self.instances.clear();
+        self.local_render_data.clear();
+        self.objects_to_render_new.clear();
     }
 
     // fn make_object_invisible(&mut self, object_id: usize) {
@@ -174,19 +170,21 @@ impl RenderDb {
     // }
 
     pub fn get_renderables<'a>(&'a self) -> impl Iterator<Item = RenderData3d<'a>> {
-        self.objects.iter().filter_map(|(id, render_object)| {
-            if self.objects_to_render.contains(&id) {
-                let gpu_mesh = self.meshes.get(render_object.gpu_mesh_id).unwrap();
-
+        self.objects_new.iter().filter_map(|(id, object)| {
+            if self.objects_to_render_new.contains(&id)
+                && let Some(mesh) = self.meshes.get(object.mesh)
+                && let Some(instance) = self.instances.get(object.instance)
+                && let Some(local_resources) = self.local_render_data.get(object.local_render_data)
+            {
                 Some(RenderData3d {
-                    renderable: render_object.renderable.clone(),
-                    mesh: gpu_mesh,
-                    instance: &render_object.instance,
-                    local_resources: &render_object.mesh_local,
+                    renderable: object.renderable.clone(),
+                    mesh,
+                    instance,
+                    local_resources,
                     triangle_face_mode: None,
                     back_material: None,
                     mesh_element_range: None,
-                    instance_range: None,
+                    instance_range: object.instance_range.clone(),
                 })
             } else {
                 None

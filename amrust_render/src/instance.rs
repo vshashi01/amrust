@@ -6,6 +6,7 @@ pub trait InstanceFieldDescriptor {
     fn layout<const LOCATION: u32>() -> wgpu::VertexBufferLayout<'static>;
 }
 
+#[derive(Debug, Clone)]
 pub struct GpuInstance {
     pub buffer: wgpu::Buffer,
     pub instance_data_stream: Vec<InstanceDataStream>,

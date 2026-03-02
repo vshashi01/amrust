@@ -5,6 +5,7 @@ mod core;
 mod db_view_model;
 mod egui_tools;
 mod features;
+mod models;
 mod ui;
 mod view_models;
 

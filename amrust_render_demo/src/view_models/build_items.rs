@@ -1,27 +1,18 @@
+use egui::Ui;
+use egui::ahash::{HashSet, HashSetExt};
+use slotmap::{SecondaryMap, SparseSecondaryMap};
+
 use crate::core::types::part::PartId;
 use crate::core::types::part_instance::PartInstanceId;
 use crate::db_view_model::PartInstanceCache;
+use crate::models::view_modes::{LightingMode, MaterialOpacity, ShadingMode};
 use crate::ui::tree_table::model::TreeTableViewModel;
 use crate::ui::tree_table::types::{CellResponse, ColumnConfig, TreeRow};
-use egui::Ui;
-use slotmap::SecondaryMap;
+
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ShadingMode {
-    Shade,
-    ShadeAndWire,
-}
-
-impl ShadingMode {
-    pub fn display_name(&self) -> &'static str {
-        match self {
-            ShadingMode::Shade => "Shade",
-            ShadingMode::ShadeAndWire => "Shade and Wire",
-        }
-    }
-}
+use std::ops::Range;
 
 pub struct BuildItemsModel {
     // Tree data
@@ -34,12 +25,18 @@ pub struct BuildItemsModel {
     // Internal state
     expanded_items: Vec<PartInstanceId>,
     data_map: SecondaryMap<PartInstanceId, Data>,
+
+    // component tracking
+    changed_instances: HashSet<PartInstanceId>,
 }
 
+#[derive(Debug, Clone, Default)]
 pub struct Data {
     name: String,
     visibility: bool,
     shading: ShadingMode,
+    lighting: LightingMode,
+    opacity: MaterialOpacity,
     parent_part: PartId,
 }
 
@@ -53,8 +50,10 @@ impl BuildItemsModel {
                 *id,
                 Data {
                     name: format!("{id}"),
-                    visibility: true,
-                    shading: ShadingMode::ShadeAndWire,
+                    visibility: cache.visible,
+                    shading: cache.shading,
+                    lighting: cache.lighting,
+                    opacity: cache.opacity,
                     parent_part: cache.part_id,
                 },
             );
@@ -66,7 +65,26 @@ impl BuildItemsModel {
             disabled_items: Vec::new(),
             expanded_items: Vec::new(),
             data_map,
+            changed_instances: HashSet::new(),
         }
+    }
+
+    pub fn get_data(&self) -> &SecondaryMap<PartInstanceId, Data> {
+        &self.data_map
+    }
+
+    pub fn get_changed_data(&self) -> impl Iterator<Item = (PartInstanceId, Data)> {
+        self.changed_instances.iter().map(|id| {
+            if let Some(data) = self.data_map.get(*id) {
+                (*id, data.clone())
+            } else {
+                (*id, Default::default())
+            }
+        })
+    }
+
+    pub fn clear_changed(&mut self) {
+        self.changed_instances.clear();
     }
 
     pub fn selected_items(&self) -> &[PartInstanceId] {
@@ -144,10 +162,14 @@ impl BuildItemsModel {
         row: &TreeRow<PartInstanceId>,
     ) -> CellResponse {
         if let Some(data) = self.data_map.get_mut(row.id) {
+            let prev_visibility = data.visibility;
             ui.add_enabled(
                 !self.disabled_items.contains(&row.id),
                 |ui: &mut egui::Ui| ui.checkbox(&mut data.visibility, ""),
             );
+            if prev_visibility != data.visibility {
+                self.changed_instances.insert(row.id);
+            }
         }
 
         CellResponse::None
@@ -159,6 +181,7 @@ impl BuildItemsModel {
         row: &TreeRow<PartInstanceId>,
     ) -> CellResponse {
         if let Some(data) = self.data_map.get_mut(row.id) {
+            let prev_shading_mode = data.shading;
             ui.add_enabled_ui(!self.disabled_items.contains(&row.id), |ui| {
                 let id = ui.id().with(format!("shading_{:?}", row.id));
                 egui::ComboBox::from_id_salt(id)
@@ -175,8 +198,84 @@ impl BuildItemsModel {
                             ShadingMode::ShadeAndWire,
                             ShadingMode::ShadeAndWire.display_name(),
                         );
+                        ui.selectable_value(
+                            &mut data.shading,
+                            ShadingMode::WireOnly,
+                            ShadingMode::WireOnly.display_name(),
+                        );
                     });
             });
+
+            if prev_shading_mode != data.shading {
+                self.changed_instances.insert(row.id);
+            }
+        }
+
+        CellResponse::None
+    }
+
+    fn render_lighting_column(
+        &mut self,
+        ui: &mut Ui,
+        row: &TreeRow<PartInstanceId>,
+    ) -> CellResponse {
+        if let Some(data) = self.data_map.get_mut(row.id) {
+            let prev_lighting = data.lighting;
+            ui.add_enabled_ui(!self.disabled_items.contains(&row.id), |ui| {
+                let id = ui.id().with(format!("lighting_{:?}", row.id));
+                egui::ComboBox::from_id_salt(id)
+                    .width(ui.available_width())
+                    .selected_text(data.lighting.display_name())
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut data.lighting,
+                            LightingMode::Lit,
+                            LightingMode::Lit.display_name(),
+                        );
+                        ui.selectable_value(
+                            &mut data.lighting,
+                            LightingMode::Unlit,
+                            LightingMode::Unlit.display_name(),
+                        );
+                    });
+            });
+
+            if prev_lighting != data.lighting {
+                self.changed_instances.insert(row.id);
+            }
+        }
+
+        CellResponse::None
+    }
+
+    fn render_opacity_column(
+        &mut self,
+        ui: &mut Ui,
+        row: &TreeRow<PartInstanceId>,
+    ) -> CellResponse {
+        if let Some(data) = self.data_map.get_mut(row.id) {
+            let prev_opacity = data.opacity;
+            ui.add_enabled_ui(!self.disabled_items.contains(&row.id), |ui| {
+                let id = ui.id().with(format!("opacity_{:?}", row.id));
+                egui::ComboBox::from_id_salt(id)
+                    .width(ui.available_width())
+                    .selected_text(data.opacity.display_name())
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut data.opacity,
+                            MaterialOpacity::Opaque,
+                            MaterialOpacity::Opaque.display_name(),
+                        );
+                        ui.selectable_value(
+                            &mut data.opacity,
+                            MaterialOpacity::Transparent,
+                            MaterialOpacity::Transparent.display_name(),
+                        );
+                    });
+            });
+            if prev_opacity != data.opacity {
+                self.changed_instances.insert(row.id);
+            }
         }
 
         CellResponse::None
@@ -199,7 +298,7 @@ impl TreeTableViewModel for BuildItemsModel {
     }
 
     fn column_count(&self) -> usize {
-        5
+        7
     }
 
     fn column_config(&self, index: usize) -> ColumnConfig {
@@ -213,10 +312,16 @@ impl TreeTableViewModel for BuildItemsModel {
             2 => ColumnConfig::new("Visible", 60.0)
                 .with_min_width(50.0)
                 .with_max_width(80.0),
-            3 => ColumnConfig::new("Shading", 120.0)
-                .with_min_width(100.0)
-                .with_max_width(200.0),
-            4 => ColumnConfig::new("Unique Part", 200.0),
+            3 => ColumnConfig::new("Shading", 100.0)
+                .with_min_width(80.0)
+                .with_max_width(150.0),
+            4 => ColumnConfig::new("Lighting", 70.0)
+                .with_min_width(60.0)
+                .with_max_width(100.0),
+            5 => ColumnConfig::new("Opacity", 80.0)
+                .with_min_width(70.0)
+                .with_max_width(120.0),
+            6 => ColumnConfig::new("Unique Part", 200.0),
             _ => panic!("Invalid column index"),
         }
     }
@@ -229,7 +334,9 @@ impl TreeTableViewModel for BuildItemsModel {
             1 => self.render_name_column(ui, &row),
             2 => self.render_visibility_column(ui, &row),
             3 => self.render_shading_column(ui, &row),
-            4 => self.render_unique_name(ui, &row),
+            4 => self.render_lighting_column(ui, &row),
+            5 => self.render_opacity_column(ui, &row),
+            6 => self.render_unique_name(ui, &row),
             _ => CellResponse::None,
         }
     }

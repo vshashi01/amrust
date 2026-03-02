@@ -1,12 +1,11 @@
 use anyhow::Result;
 use glam::{Mat4, Vec3};
-use slotmap::basic::Keys;
 use smol::lock::RwLock;
 
 use amrust_render::{
-    RenderDataLocalResources, bounding_box::BoundingBox, clip::ClipPlanes, gpu_mesh::MeshBuilder,
-    instance::InstanceDataBuilder, material::Material, transformation::TransformationData,
-    transparency::Transparency, vertex::Position3d,
+    RenderDataLocalResources, Renderable3d, bounding_box::BoundingBox, clip::ClipPlanes,
+    gpu_mesh::MeshBuilder, instance::InstanceDataBuilder, material::RgbMaterialData,
+    transformation::TransformationData, transparency::Transparency, vertex::Position3d,
 };
 
 use crate::{
@@ -14,7 +13,7 @@ use crate::{
         amrust_db::{Db, EntityChanges},
         app_mode::AppMode,
         interfaces::db_view::DbView,
-        render_db::{RenderMeshId, RenderObject, RenderObjectId},
+        render_db::{RenderMeshId, RenderObject, RenderObjectNewId},
         types::{
             identifiable::Identifiable,
             mesh::Mesh,
@@ -24,6 +23,8 @@ use crate::{
             transformation::Transformation,
         },
     },
+    models::ordered_render_data::OrderedRenderData,
+    models::view_modes::{LightingMode, MaterialOpacity, ShadingMode},
     ui::tree_item_viewer::TreeItem,
 };
 
@@ -31,6 +32,7 @@ use crate::core::render_db::RenderDb;
 use amrust_render::transformation::Transformation as RenderTransformation;
 
 use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -39,8 +41,8 @@ pub struct DbViewModel {
     instance_data: HashMap<PartInstanceId, PartInstanceCache>,
     scene_data: Vec<PartInstanceId>,
 
-    scene_based_render_objects: HashMap<PartId, (RenderObjectId, RenderObjectId)>,
-    unique_parts_based_render_objects: HashMap<PartId, (RenderObjectId, RenderObjectId)>,
+    scene_based_render_objects: HashMap<PartId, Vec<RenderObjectNewId>>,
+    unique_parts_based_render_objects: HashMap<PartId, Vec<RenderObjectNewId>>,
 
     detached_parts: HashSet<PartId>,
     detached_part_instances: HashSet<PartInstanceId>,
@@ -193,7 +195,8 @@ impl DbViewModel {
         render_db: Arc<RwLock<RenderDb>>,
         localized_parts_to_update: Option<&HashSet<PartId>>,
     ) {
-        let mut part_id_to_instance_data = HashMap::<PartId, InstanceData>::new();
+        let mut part_id_to_instance_data =
+            HashMap::<PartId, (RenderMeshId, OrderedRenderData<PartInstanceId>)>::new();
 
         for instance_id in &self.scene_data {
             if let Some(instance_cache) = self.get_part_instance_data(instance_id) {
@@ -215,16 +218,24 @@ impl DbViewModel {
             }
         }
 
-        for (part_id, instance_data) in part_id_to_instance_data {
-            let render_object_id = add_render_object(device, render_db.clone(), &instance_data);
+        for (part_id, (id, mut instances_data)) in part_id_to_instance_data {
+            instances_data.rebucket();
+            let render_object_ids = add_render_object_based_on_buckets(
+                device,
+                render_db.clone(),
+                (id, &instances_data),
+            );
             self.scene_based_render_objects
-                .insert(part_id, render_object_id);
+                .insert(part_id, render_object_ids);
         }
     }
 
     fn process_part_instance_recursive(
         &self,
-        part_id_to_instance_data: &mut HashMap<PartId, InstanceData>,
+        part_id_to_instance_data: &mut HashMap<
+            PartId,
+            (RenderMeshId, OrderedRenderData<PartInstanceId>),
+        >,
         instance_cache: &PartInstanceCache,
         parent_transform: &Transformation,
     ) {
@@ -232,14 +243,18 @@ impl DbViewModel {
         if let Some(part_cache) = self.get_part_data(&instance_cache.part_id) {
             match &part_cache.rep {
                 PartRepCache::Mesh(mesh_cache) => {
-                    part_id_to_instance_data
+                    let (_, data) = part_id_to_instance_data
                         .entry(instance_cache.part_id)
-                        .or_insert(InstanceData {
-                            gpu_mesh_id: mesh_cache.gpu_mesh_id,
-                            transforms: vec![],
-                        })
-                        .transforms
-                        .push(combined_transform);
+                        .or_insert((mesh_cache.gpu_mesh_id, OrderedRenderData::new()));
+
+                    data.insert_instance(
+                        instance_cache.id,
+                        combined_transform,
+                        instance_cache.visible,
+                        instance_cache.opacity,
+                        instance_cache.lighting,
+                        instance_cache.shading,
+                    );
                 }
                 PartRepCache::ComposedPart(composed_cache) => {
                     for component_id in &composed_cache.components {
@@ -256,18 +271,16 @@ impl DbViewModel {
         }
     }
 
-    pub fn get_scene_based_render_object_ids(&self) -> impl Iterator<Item = &RenderObjectId> {
+    pub fn get_scene_based_render_object_ids(&self) -> impl Iterator<Item = &RenderObjectNewId> {
         self.scene_based_render_objects
             .values()
-            .flat_map(|(mesh, wireframe)| [mesh, wireframe])
+            .flat_map(|ids| ids.as_slice())
     }
 
     pub fn get_unique_parts_based_render_object_ids(
         &self,
-    ) -> impl Iterator<Item = &RenderObjectId> {
-        self.unique_parts_based_render_objects
-            .values()
-            .flat_map(|(mesh, wireframe)| [mesh, wireframe])
+    ) -> impl Iterator<Item = &RenderObjectNewId> {
+        self.unique_parts_based_render_objects.values().flatten()
     }
 
     pub fn update_unique_parts_based_render_objects(
@@ -276,8 +289,9 @@ impl DbViewModel {
         render_db: Arc<RwLock<RenderDb>>,
         localized_parts_to_update: Option<&HashSet<PartId>>,
     ) {
-        let mut mesh_to_transforms = HashMap::<PartId, Vec<Transformation>>::new();
+        let mut mesh_to_transforms = HashMap::<PartId, OrderedRenderData<usize>>::new();
 
+        let mut next_index = 1;
         for (part_id, part_cache) in &self.parts_data {
             if let Some(parts_to_process) = localized_parts_to_update {
                 if parts_to_process.contains(part_id) {
@@ -286,6 +300,7 @@ impl DbViewModel {
                         part_id,
                         part_cache,
                         &Transformation(Mat4::IDENTITY),
+                        next_index,
                     );
                 }
             } else {
@@ -294,34 +309,35 @@ impl DbViewModel {
                     part_id,
                     part_cache,
                     &Transformation(Mat4::IDENTITY),
+                    next_index,
                 );
             }
+            next_index += 1;
         }
 
-        for (mesh_part_id, transforms) in mesh_to_transforms {
-            // if !self
-            //     .unique_parts_based_render_objects
-            //     .contains_key(&mesh_part_id)
-            if let Some(part_cache) = self.get_part_data(&mesh_part_id)
+        for (mesh_part_id, instances_data) in &mut mesh_to_transforms {
+            if let Some(part_cache) = self.get_part_data(mesh_part_id)
                 && let PartRepCache::Mesh(mesh_cache) = &part_cache.rep
             {
-                let instance_data = InstanceData {
-                    gpu_mesh_id: mesh_cache.gpu_mesh_id,
-                    transforms,
-                };
-                let render_object_id = add_render_object(device, render_db.clone(), &instance_data);
+                instances_data.rebucket();
+                let render_object_ids = add_render_object_based_on_buckets(
+                    device,
+                    render_db.clone(),
+                    (mesh_cache.gpu_mesh_id, instances_data),
+                );
                 self.unique_parts_based_render_objects
-                    .insert(mesh_part_id, render_object_id);
+                    .insert(*mesh_part_id, render_object_ids);
             }
         }
     }
 
     fn process_part_for_unique_render(
         &self,
-        mesh_to_transforms: &mut HashMap<PartId, Vec<Transformation>>,
+        mesh_to_transforms: &mut HashMap<PartId, OrderedRenderData<usize>>,
         part_id: &PartId,
         part_cache: &PartCache,
         parent_transform: &Transformation,
+        next_index: usize,
     ) {
         match &part_cache.rep {
             PartRepCache::Mesh(_) => {
@@ -333,10 +349,18 @@ impl DbViewModel {
                 };
                 mesh_to_transforms
                     .entry(*part_id)
-                    .or_insert(vec![])
-                    .push(transform_to_use);
+                    .or_insert(OrderedRenderData::new())
+                    .insert_instance(
+                        next_index + 1,
+                        transform_to_use,
+                        true,
+                        MaterialOpacity::Opaque,
+                        LightingMode::Unlit,
+                        ShadingMode::ShadeAndWire,
+                    );
             }
             PartRepCache::ComposedPart(composed_cache) => {
+                let mut next_index = next_index + 1;
                 for component_id in &composed_cache.components {
                     if let Some(instance_cache) = self.get_part_instance_data(component_id) {
                         let combined_transform =
@@ -349,7 +373,9 @@ impl DbViewModel {
                                 &instance_cache.part_id,
                                 component_part_cache,
                                 &combined_transform,
+                                next_index,
                             );
+                            next_index += 1;
                         }
                     }
                 }
@@ -715,142 +741,16 @@ pub struct ComposedPartCache {
 
 #[derive(Debug, Clone)]
 pub struct PartInstanceCache {
+    pub id: PartInstanceId,
     pub part_id: PartId,
     pub transform: Transformation,
     pub rep_type: PartRepType,
+
+    pub lighting: LightingMode,
+    pub opacity: MaterialOpacity,
+    pub shading: ShadingMode,
+    pub visible: bool,
 }
-
-pub struct InstanceData {
-    pub gpu_mesh_id: RenderMeshId,
-    pub transforms: Vec<Transformation>,
-}
-
-// pub async fn update_view_model_from_db(
-//     db: Arc<RwLock<Db>>,
-//     render_db: Arc<RwLock<RenderDb>>,
-//     mut cache: DbViewModel,
-//     device: Arc<wgpu::Device>,
-// ) -> Result<DbViewModel> {
-//     let mut new_part_caches = vec![];
-//     let mut new_part_instance_caches = vec![];
-
-//     {
-//         let read_db = db.read().await;
-
-//         if read_db.is_empty() {
-//             cache.clear();
-//         } else {
-//             let mut parts_that_require_new_render_objects = HashSet::new();
-//             for (id, change) in read_db.get_changed_part_instances() {
-//                 //check if part instance is detached if yes push in detached and dont update cache
-//                 if matches!(change, EntityChanges::Detached) {
-//                     cache.add_detached_part_instance(*id);
-
-//                     if let Some(instance_data) = cache.get_part_instance_data(id)
-//                         && let Some(lala) = read_db.get_changed_parts().get(&instance_data.part_id)
-//                         && matches!(lala, EntityChanges::Detached)
-//                     {
-//                         cache.add_detached_part(instance_data.part_id);
-//                     }
-//                 } else {
-//                     //create new part instance cache
-//                     if let Ok(instance) = read_db.get_part_instance_data(id) {
-//                         // remove from detached (if existed) since it now back in the main db
-//                         cache.remove_detached_part_instance(id);
-
-//                         if let Some(change) = read_db.get_changed_parts().get(&instance.part_id)
-//                             && matches!(change, EntityChanges::Detached)
-//                         {
-//                             cache.add_detached_part(instance.part_id);
-//                         } else if let Ok(part) = read_db.get_part_data(&instance.part_id) {
-//                             // remove from detached (if existed) since it now back in the main db
-//                             cache.remove_detached_part(&instance.part_id);
-
-//                             let rep_type = match &part.get_rep() {
-//                                 PartRep::Mesh(_) => PartRepType::Mesh,
-//                                 PartRep::ComposedPart(_) => PartRepType::ComposedPart,
-//                             };
-//                             parts_that_require_new_render_objects.insert(instance.part_id);
-//                             new_part_instance_caches.push((
-//                                 *id,
-//                                 PartInstanceCache {
-//                                     part_id: instance.part_id,
-//                                     transform: instance.transform,
-//                                     rep_type,
-//                                 },
-//                             ));
-//                         }
-//                     }
-//                 }
-//             }
-
-//             for (id, instance_cache) in new_part_instance_caches {
-//                 cache.insert_part_instance(id, instance_cache);
-//             }
-
-//             let mut parts_to_be_processed = read_db
-//                 .get_changed_parts()
-//                 .keys()
-//                 .copied()
-//                 .collect::<Vec<_>>();
-//             loop {
-//                 if parts_to_be_processed.is_empty() {
-//                     break;
-//                 }
-
-//                 for (id, change) in read_db.get_changed_parts() {
-//                     match change {
-//                         EntityChanges::Added | EntityChanges::Reattached => {
-//                             parts_that_require_new_render_objects.insert(*id);
-
-//                             //create new part cache
-//                             if let Ok(part) = read_db.get_part_data(id)
-//                                 && let Some(part_cache) =
-//                                     create_part_cache(part, &device, render_db.clone())
-//                             {
-//                                 new_part_caches.push((*id, part_cache));
-//                             }
-//                         }
-//                         EntityChanges::Removed => todo!(),
-//                         EntityChanges::Detached => {
-//                             cache.add_detached_part(*id);
-//                         }
-//                     }
-
-//                     if let Some(pos) = parts_to_be_processed
-//                         .iter()
-//                         .position(|to_be_processed_id| to_be_processed_id == id)
-//                     {
-//                         parts_to_be_processed.swap_remove(pos);
-//                     }
-//                 }
-//             }
-
-//             for (id, part_cache) in new_part_caches {
-//                 cache.insert_part(id, part_cache);
-//             }
-
-//             // Update scene data if instances changed
-//             if !read_db.get_changed_part_instances().is_empty()
-//                 && let Ok(scene) = read_db.get_scene()
-//             {
-//                 cache.set_scene_data(scene.instances.clone());
-//             }
-//         }
-//     }
-
-//     // this is dangerous because the moment we release the read lock before changes could have happened?
-//     {
-//         let mut write_db = db.write().await;
-//         write_db.clear_changed_part_instances();
-//         write_db.clear_changed_parts();
-//     }
-
-//     cache.update_scene_based_render_objects(&device, render_db.clone());
-//     cache.update_unique_parts_based_render_objects(&device, render_db.clone());
-
-//     Ok(cache)
-// }
 
 pub async fn update_view_model_from_db_new(
     db: Arc<RwLock<Db>>,
@@ -914,9 +814,14 @@ pub async fn update_view_model_from_db_new(
                     new_part_instance_caches.push((
                         *id,
                         PartInstanceCache {
+                            id: *id,
                             part_id: instance_data.part_id,
                             transform: instance_data.transform,
                             rep_type,
+                            lighting: LightingMode::Unlit,
+                            opacity: MaterialOpacity::Opaque,
+                            shading: ShadingMode::ShadeAndWire,
+                            visible: true,
                         },
                     ));
                 }
@@ -934,7 +839,9 @@ pub async fn update_view_model_from_db_new(
                     EntityChanges::Removed => {
                         cache.parts_data.remove(id);
                         parts_that_require_update.remove(id);
+                        // cache.scene_based_render_objects.remove(id);
                         cache.scene_based_render_objects.remove(id);
+                        // cache.unique_parts_based_render_objects.remove(id);
                         cache.unique_parts_based_render_objects.remove(id);
                     }
                     EntityChanges::Detached => {
@@ -967,12 +874,9 @@ pub async fn update_view_model_from_db_new(
 
             for id in &parts_to_require_render_object_update {
                 cache.scene_based_render_objects.remove(id);
+                // cache.unique_parts_based_render_objects.remove(id);
                 cache.unique_parts_based_render_objects.remove(id);
             }
-
-            // for (id, part_cache) in new_part_caches {
-            //     cache.insert_part(id, part_cache);
-            // }
 
             // Update scene data if instances changed
             if let Ok(scene) = read_db.get_scene() {
@@ -1010,7 +914,7 @@ fn compute_all_meshes_that_need_new_render_object(
     for id in parts_that_require_update {
         if let Some(part_cache) = cache.get_part_data(id) {
             match &part_cache.rep {
-                PartRepCache::Mesh(mesh_cache) => {
+                PartRepCache::Mesh(_) => {
                     //do nothing
                     all_parts_that_require_new_render_object.insert(*id);
                 }
@@ -1073,35 +977,6 @@ fn create_part_cache(
         }),
     }
 }
-
-// pub fn create_build_items_list(
-//     read_db: &DbViewModel,
-// ) -> Result<Vec<TreeItem<Identifiable>>, DbError> {
-//     let scene = read_db.get_scene()?;
-
-//     let mut tree_items = vec![];
-//     for i in &scene.instances {
-//         let part = read_db.get_part_data_from_part_instance(i)?;
-//         let instance_data = read_db.get_part_instance_data(i)?;
-//         let name = match &part.rep {
-//             PartRep::Mesh(_) => format!("Instance: {:?} - Mesh: {:?}", i, instance_data.part_id),
-//             PartRep::ComposedPart(_) => format!(
-//                 "Instance: {:?} - Composed Part: {:?}",
-//                 i, instance_data.part_id
-//             ),
-//         };
-
-//         let item = TreeItem::Leaf {
-//             id: Identifiable::PartInstance(*i),
-//             name,
-//             selectable: true,
-//         };
-
-//         tree_items.push(item);
-//     }
-
-//     Ok(tree_items)
-// }
 
 fn create_mesh_gpu_data(
     device: &wgpu::Device,
@@ -1174,59 +1049,69 @@ fn convert_triangle_indices_to_wireframe_indices(triangles: &[u32]) -> Vec<u32> 
     indices
 }
 
-pub fn add_render_object(
+fn add_render_object_based_on_buckets<T: PartialEq + Eq + Clone + Hash>(
     device: &wgpu::Device,
     render_db: Arc<RwLock<RenderDb>>,
-    data: &InstanceData,
-    //mesh and wireframe
-) -> (RenderObjectId, RenderObjectId) {
-    let transformation_data: Vec<TransformationData> = data
-        .transforms
-        .iter()
-        .map(get_transformation_data)
-        .collect::<Vec<_>>();
-    let material_data = vec![Material::new(1.0, 1.0, 1.0).to_data(); transformation_data.len()];
-    let object = RenderObject {
-        renderable: amrust_render::Renderable3d::ColoredMesh,
-        gpu_mesh_id: data.gpu_mesh_id,
-        instance: InstanceDataBuilder::new()
-            .add_instance_stream(transformation_data.as_slice())
-            .add_instance_stream(material_data.as_slice())
-            .build(device),
-        mesh_local: RenderDataLocalResources::new_colored(
-            device,
-            ClipPlanes::new(device),
-            amrust_render::transparency::Transparency::opaque(device),
-        ),
-    };
-    let colored_object_id = {
-        let mut render_db = render_db.write_blocking();
-        render_db.add_object(object)
-    };
+    (mesh_id, instance_data): (RenderMeshId, &OrderedRenderData<T>),
+) -> Vec<RenderObjectNewId> {
+    let bytes = instance_data.build_data_vectors();
+    let ranges = instance_data.calculate_render_ranges();
 
-    let wireframe_object = RenderObject {
-        renderable: amrust_render::Renderable3d::WireframeMesh,
-        gpu_mesh_id: data.gpu_mesh_id,
-        instance: InstanceDataBuilder::new()
-            .add_instance_stream(transformation_data.as_slice())
-            .add_instance_stream(material_data.as_slice())
-            .build(device),
-        mesh_local: RenderDataLocalResources::new_colored(
-            device,
-            ClipPlanes::new(device),
-            amrust_render::transparency::Transparency::opaque(device),
-        ),
-    };
+    let instance_buffer = InstanceDataBuilder::new()
+        .add_instance_stream::<TransformationData>(bytemuck::cast_slice(&bytes.0))
+        .add_instance_stream::<RgbMaterialData>(bytemuck::cast_slice(&bytes.1))
+        .build(device);
 
-    let wireframe_object = {
-        let mut render_db = render_db.write_blocking();
-        render_db.add_object(wireframe_object)
-    };
+    let mut write_db = render_db.write_blocking();
+    let instance_id = write_db.add_instance(instance_buffer.clone());
 
-    (colored_object_id, wireframe_object)
+    let mut render_ids = Vec::with_capacity(13);
+
+    for (bucket, range) in ranges {
+        let transparency = if bucket.is_transparent() {
+            Transparency::new(device, true, 1, 0.5)
+        } else {
+            Transparency::opaque(device)
+        };
+
+        let local_resources =
+            RenderDataLocalResources::new_colored(device, ClipPlanes::new(device), transparency);
+        let local_resource_id = write_db.add_local_render_resource(local_resources);
+        let instance_range = instance_buffer.get_instance_range(range);
+
+        if bucket.needs_colored() {
+            let object = RenderObject {
+                renderable: Renderable3d::ColoredMesh,
+                mesh: mesh_id,
+                instance: instance_id,
+                local_render_data: local_resource_id,
+                mesh_range: None,
+                instance_range: instance_range.clone(),
+            };
+
+            let mesh_object = write_db.add_object(object);
+            render_ids.push(mesh_object);
+        }
+
+        if bucket.needs_wireframe() {
+            let object = RenderObject {
+                renderable: Renderable3d::WireframeMesh,
+                mesh: mesh_id,
+                instance: instance_id,
+                local_render_data: local_resource_id,
+                mesh_range: None,
+                instance_range,
+            };
+
+            let wireframe_object = write_db.add_object(object);
+            render_ids.push(wireframe_object);
+        }
+    }
+
+    render_ids
 }
 
-fn add_bounding_box_wireframe(
+/* fn add_bounding_box_wireframe(
     device: &wgpu::Device,
     render_db: Arc<RwLock<RenderDb>>,
     bbox: &BoundingBox,
@@ -1254,11 +1139,7 @@ fn add_bounding_box_wireframe(
     };
 
     render_db.add_object(wireframe_object)
-}
-
-fn get_transformation_data(transformation: &Transformation) -> TransformationData {
-    TransformationData(transformation.0.to_cols_array_2d())
-}
+} */
 
 #[cfg(test)]
 mod test {
