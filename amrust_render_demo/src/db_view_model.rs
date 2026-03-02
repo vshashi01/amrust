@@ -153,6 +153,77 @@ impl DbViewModel {
         self.selected_identifiables.clear();
     }
 
+    /// Apply property changes from BuildItemsModel to instance caches.
+    /// Returns the set of affected PartIds for incremental render updates.
+    pub fn apply_instance_property_changes(
+        &mut self,
+        changes: &[(PartInstanceId, crate::view_models::build_items::Data)],
+    ) -> HashSet<PartId> {
+        let mut affected_parts = HashSet::new();
+
+        for (instance_id, data) in changes {
+            let part_id_opt = if let Some(cache) = self.instance_data.get_mut(instance_id) {
+                // Only update if values actually changed
+                let changed = cache.visible != data.visibility
+                    || cache.shading != data.shading
+                    || cache.lighting != data.lighting
+                    || cache.opacity != data.opacity;
+
+                if changed {
+                    cache.visible = data.visibility;
+                    cache.shading = data.shading;
+                    cache.lighting = data.lighting;
+                    cache.opacity = data.opacity;
+                    affected_parts.insert(cache.part_id);
+                    Some(cache.part_id)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            // Check if this is a ComposedPart and collect descendant mesh parts
+            // This is done outside the mutable borrow above
+            if let Some(part_id) = part_id_opt {
+                if let Some(part_cache) = self.get_part_data(&part_id) {
+                    if let PartRepCache::ComposedPart(composed_cache) = &part_cache.rep {
+                        self.collect_descendant_mesh_parts(composed_cache, &mut affected_parts);
+                    }
+                }
+            }
+        }
+
+        affected_parts
+    }
+
+    /// Recursively collect all mesh PartIds from a ComposedPart's descendants
+    fn collect_descendant_mesh_parts(
+        &self,
+        composed_cache: &ComposedPartCache,
+        affected_parts: &mut HashSet<PartId>,
+    ) {
+        for component_id in &composed_cache.components {
+            if let Some(instance_cache) = self.get_part_instance_data(component_id) {
+                if let Some(part_cache) = self.get_part_data(&instance_cache.part_id) {
+                    match &part_cache.rep {
+                        PartRepCache::Mesh(_) => {
+                            // This is a mesh part - add it
+                            affected_parts.insert(instance_cache.part_id);
+                        }
+                        PartRepCache::ComposedPart(nested_composed_cache) => {
+                            // Nested composed part - recurse
+                            self.collect_descendant_mesh_parts(
+                                nested_composed_cache,
+                                affected_parts,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     pub fn get_all_identifiables(&self) -> impl Iterator<Item = Identifiable> {
         self.parts_data
             .keys()
@@ -189,7 +260,7 @@ impl DbViewModel {
             )
     }
 
-    fn update_scene_based_render_objects(
+    pub fn update_scene_based_render_objects(
         &mut self,
         device: &wgpu::Device,
         render_db: Arc<RwLock<RenderDb>>,
@@ -219,6 +290,15 @@ impl DbViewModel {
         }
 
         for (part_id, (id, mut instances_data)) in part_id_to_instance_data {
+            // Clean up old render objects for this part
+            if let Some(old_ids) = self.scene_based_render_objects.remove(&part_id) {
+                let mut write_db = render_db.write_blocking();
+                for old_id in old_ids {
+                    write_db.remove_object(old_id);
+                }
+            }
+
+            // Create new render objects with updated instance data
             instances_data.rebucket();
             let render_object_ids = add_render_object_based_on_buckets(
                 device,
@@ -228,6 +308,17 @@ impl DbViewModel {
             self.scene_based_render_objects
                 .insert(part_id, render_object_ids);
         }
+
+        // Update the render list with all current objects
+        let all_render_ids: Vec<RenderObjectNewId> = self
+            .scene_based_render_objects
+            .values()
+            .flatten()
+            .cloned()
+            .collect();
+        render_db
+            .write_blocking()
+            .set_render_objects(&all_render_ids);
     }
 
     fn process_part_instance_recursive(

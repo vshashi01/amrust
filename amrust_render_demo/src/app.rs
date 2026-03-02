@@ -674,6 +674,34 @@ impl App {
                 toolsheets.clear_selection_changed();
             }
 
+            // Sync property changes from BuildItemsModel to DbViewModel
+            if let Some(ref mut toolsheets) = state.toolsheets {
+                let changed_data: Vec<_> = toolsheets
+                    .build_items_list
+                    .model_mut()
+                    .get_changed_data()
+                    .collect();
+
+                if !changed_data.is_empty() {
+                    // Apply changes to DbViewModel and get affected parts
+                    let affected_parts = state
+                        .db_view_model
+                        .apply_instance_property_changes(&changed_data);
+
+                    // Incremental update of render objects for affected parts only
+                    if !affected_parts.is_empty() {
+                        state.db_view_model.update_scene_based_render_objects(
+                            &state.device,
+                            state.render_db.clone(),
+                            Some(&affected_parts),
+                        );
+                    }
+
+                    // Clear change tracking
+                    toolsheets.build_items_list.model_mut().clear_changed();
+                }
+            }
+
             if let Some(ref mut toolsheets) = state.toolsheets {
                 toolsheets.set_blocked_entities(
                     &state

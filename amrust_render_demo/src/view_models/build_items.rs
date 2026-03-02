@@ -1,5 +1,5 @@
-use egui::Ui;
 use egui::ahash::{HashSet, HashSetExt};
+use egui::Ui;
 use slotmap::{SecondaryMap, SparseSecondaryMap};
 
 use crate::core::types::part::PartId;
@@ -33,10 +33,10 @@ pub struct BuildItemsModel {
 #[derive(Debug, Clone, Default)]
 pub struct Data {
     name: String,
-    visibility: bool,
-    shading: ShadingMode,
-    lighting: LightingMode,
-    opacity: MaterialOpacity,
+    pub visibility: bool,
+    pub shading: ShadingMode,
+    pub lighting: LightingMode,
+    pub opacity: MaterialOpacity,
     parent_part: PartId,
 }
 
