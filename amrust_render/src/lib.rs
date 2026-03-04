@@ -18,6 +18,7 @@ pub mod material;
 pub mod normalized_axis_gizmo;
 pub mod normalized_box;
 pub mod render_data_3d;
+pub mod render_graph;
 pub mod renderer;
 pub mod screen_space;
 pub mod texture;
@@ -135,7 +136,9 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            // image_buffer.save("tests/data/wireframe_mesh.png").unwrap();
+            // image_buffer
+            //     .save("tests/data/wireframe_mesh_actual.png")
+            //     .unwrap();
 
             let ref_image_data = image::open(PathBuf::from("tests/data/wireframe_mesh.png"))
                 .unwrap()
@@ -1154,7 +1157,7 @@ mod tests {
                 .await
                 .unwrap();
             // image_buffer
-            //     .save("tests/data/screen_space_boxes_without_depth.png")
+            //     .save("tests/data/screen_space_boxes_without_depth_actual.png")
             //     .unwrap();
 
             let ref_image_data = image::open(PathBuf::from(

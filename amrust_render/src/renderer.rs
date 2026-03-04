@@ -1,10 +1,13 @@
 use image::{ImageBuffer, Rgba};
+use wgpu::Extent3d;
 
 use crate::camera::{CameraData, CameraUniform};
 use crate::clip::ClipPlanes;
 use crate::composite::CompositeFragUniform;
 use crate::light::{LightData, LightUniform};
+use crate::render_graph::{CompositeUniforms, PassContext, RenderGraph, ResourceId, TextureDesc};
 use crate::screen_space::{self, ScreenSpace, ScreenSpaceUniform};
+use crate::texture::DepthTexture;
 use crate::{Renderable3d, clip, composite, constants, light, prelude::*};
 
 use crate::{
@@ -35,7 +38,7 @@ pub struct RenderTextureData {
 }
 
 pub struct FrameViewData {
-    bind_group: wgpu::BindGroup,
+    pub(crate) bind_group: wgpu::BindGroup,
     pub camera: Camera,
     pub screen_space_data: ScreenSpace,
     pub clip_planes: ClipPlanes<MAX_CLIP_PLANE_COUNT>,
@@ -169,7 +172,7 @@ pub struct Renderer {
 
     // properties related to the render surface
     texture_format: wgpu::TextureFormat, //stored for future dynamic render pipeline creation
-    sample_count: u32, // MSAA sample count (1 = off, 4 = on)
+    sample_count: u32,                   // MSAA sample count (1 = off, 4 = on)
 
     // internal rendering resources
     global_bind_groups: Vec<wgpu::BindGroup>,
@@ -283,13 +286,19 @@ impl Renderer {
         let sample_count = if enable_msaa {
             // Get supported sample counts for the texture format and use the highest
             let format_features = adapter.get_texture_format_features(texture_format);
-            
+
             // WebGPU spec guarantees 1x and 4x are supported by all formats
             // 2x and 8x may be available with TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
             // We prefer 4x as it's widely supported and offers good quality
-            if format_features.flags.contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4) {
+            if format_features
+                .flags
+                .contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4)
+            {
                 4
-            } else if format_features.flags.contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X2) {
+            } else if format_features
+                .flags
+                .contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X2)
+            {
                 2
             } else {
                 1 // Fallback to no MSAA if 4x not supported
@@ -1557,142 +1566,52 @@ impl Renderer {
         views: &[RenderView<'a, 'fv>],
         render_mode: RenderMode<'rm>,
     ) -> Result<(), WgpuError> {
-        let final_texture_data = match &render_mode {
-            RenderMode::DrawToBuffer(_, extent3d) => {
-                &create_texture_data(&self.device, *extent3d, self.texture_format, self.sample_count)
-            }
-            RenderMode::DrawToTexture(render_texture_data) => render_texture_data,
+        let size = match &render_mode {
+            RenderMode::DrawToBuffer(_, extent3d) => extent3d,
+            RenderMode::DrawToTexture(render_texture_data) => &render_texture_data.texture_size,
         };
 
-        let depth_texture = texture::DepthTexture::create_depth_texture(
-            &self.device,
-            final_texture_data.texture_size,
-            self.sample_count,
-        );
+        let (graph, output_resource) = match &render_mode {
+            RenderMode::DrawToBuffer(buffer, extent3d) => {
+                let (graph, resource) =
+                    build_buffer_graph(extent3d.width, extent3d.height, self.texture_format, 1);
+                (graph, Some((resource, buffer)))
+            }
+            RenderMode::DrawToTexture(render_texture_data) => {
+                let (graph, _) = build_texture_graph(render_texture_data, 1);
 
+                (graph, None)
+            }
+        };
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
-        let any_silhouette = views.iter().any(|v| {
-            v.render_data
-                .iter()
-                .any(|d| matches!(d.renderable, Renderable3d::SilhouetteMesh))
-        });
-
-        let intermediate_color_data = if any_silhouette {
-            Some(create_texture_data(
-                &self.device,
-                final_texture_data.texture_size,
-                final_texture_data.texture_format,
-                self.sample_count,
-            ))
-        } else {
-            None
-        };
-
         for (view_index, view) in views.iter().enumerate() {
-            let has_silhouette = view
-                .render_data
-                .iter()
-                .any(|d| matches!(d.renderable, Renderable3d::SilhouetteMesh));
+            let ctx = PassContext {
+                device: &self.device,
+                queue: &self.queue,
+                pipeline_cache: &self.render_pipeline_cache,
+                frame_view_data: view.frame_view_data,
+                renderables: view.render_data,
+                global_bind_groups: &self.global_bind_groups,
+                composite_uniforms: CompositeUniforms::default(),
+            };
 
-            if has_silhouette {
-                let color_data = intermediate_color_data.as_ref().unwrap();
-
-                // standard render pass into intermediate texture
-                self.main_render_pass(
-                    view,
-                    &depth_texture,
-                    &mut encoder,
-                    color_data,
-                    view.frame_view_data,
-                    wgpu::LoadOp::Clear(view.clear_color),
-                );
-
-                // screen space pass without depth
-                if view.render_data.iter().any(|d| {
-                    if let Renderable3d::ScreenSpaceWireframeMesh { depth_testing, .. } =
-                        d.renderable
-                    {
-                        !depth_testing
-                    } else if let Renderable3d::ScreenSpaceColoredMesh { depth_testing, .. } =
-                        d.renderable
-                    {
-                        !depth_testing
-                    } else {
-                        false
-                    }
-                }) {
-                    self.screen_space_render_pass(
-                        view,
-                        &mut encoder,
-                        color_data,
-                        &view.frame_view_data.bind_group,
-                    );
-                }
-
-                // mask render pass for selected meshes + composite into final
-                self.silhouette_and_composite_mask(
-                    view,
-                    final_texture_data,
-                    &depth_texture,
-                    &mut encoder,
-                    color_data,
-                    view.frame_view_data,
-                );
-            } else {
-                let color_load = if view_index == 0 {
-                    wgpu::LoadOp::Clear(view.clear_color)
-                } else {
-                    wgpu::LoadOp::Load
-                };
-
-                // standard render pass directly into final texture
-                self.main_render_pass(
-                    view,
-                    &depth_texture,
-                    &mut encoder,
-                    final_texture_data,
-                    view.frame_view_data,
-                    color_load,
-                );
-
-                // screen space pass without depth
-                if view.render_data.iter().any(|d| {
-                    if let Renderable3d::ScreenSpaceWireframeMesh { depth_testing, .. } =
-                        d.renderable
-                    {
-                        !depth_testing
-                    } else if let Renderable3d::ScreenSpaceColoredMesh { depth_testing, .. } =
-                        d.renderable
-                    {
-                        !depth_testing
-                    } else {
-                        false
-                    }
-                }) {
-                    self.screen_space_render_pass(
-                        view,
-                        &mut encoder,
-                        final_texture_data,
-                        &view.frame_view_data.bind_group,
-                    );
-                }
-            }
+            graph
+                .execute_view(&self.device, &self.queue, &ctx, view.rect)
+                .expect("Execute view shouldnt fail");
         }
 
-        if let RenderMode::DrawToBuffer(buffer, size) = &render_mode {
+        if let Some((color_tex, buffer)) = &output_resource {
             let u32_size = std::mem::size_of::<u32>() as u32;
-            // When MSAA is enabled, copy from the resolve target texture
-            let source_texture = if self.sample_count > 1 {
-                // We need to get the resolve target texture, not the view
-                // Since we don't store it separately, we need to access it differently
-                // For now, let's add the COPY_SRC flag to the MSAA texture in create_texture_data
-                &final_texture_data.texture
-            } else {
-                &final_texture_data.texture
-            };
+
+            let source_texture = graph
+                .get_resource(*color_tex)
+                .unwrap()
+                .as_texture()
+                .unwrap()
+                .get_texture(&self.device);
             encoder.copy_texture_to_buffer(
                 wgpu::TexelCopyTextureInfo {
                     aspect: wgpu::TextureAspect::All,
@@ -1716,6 +1635,174 @@ impl Renderer {
 
         Ok(())
     }
+
+    //         async fn render_views_internal<'a, 'fv, 'rm>(
+    //         &self,
+    //         views: &[RenderView<'a, 'fv>],
+    //         render_mode: RenderMode<'rm>,
+    //     ) -> Result<(), WgpuError> {
+    //         let final_texture_data = match &render_mode {
+    //             RenderMode::DrawToBuffer(_, extent3d) => &create_texture_data(
+    //                 &self.device,
+    //                 *extent3d,
+    //                 self.texture_format,
+    //                 self.sample_count,
+    //             ),
+    //             RenderMode::DrawToTexture(render_texture_data) => render_texture_data,
+    //         };
+
+    //         let depth_texture = texture::DepthTexture::create_depth_texture(
+    //             &self.device,
+    //             final_texture_data.texture_size,
+    //             self.sample_count,
+    //         );
+
+    //         let mut encoder = self
+    //             .device
+    //             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+
+    //         let any_silhouette = views.iter().any(|v| {
+    //             v.render_data
+    //                 .iter()
+    //                 .any(|d| matches!(d.renderable, Renderable3d::SilhouetteMesh))
+    //         });
+
+    //         let intermediate_color_data = if any_silhouette {
+    //             Some(create_texture_data(
+    //                 &self.device,
+    //                 final_texture_data.texture_size,
+    //                 final_texture_data.texture_format,
+    //                 self.sample_count,
+    //             ))
+    //         } else {
+    //             None
+    //         };
+
+    //         for (view_index, view) in views.iter().enumerate() {
+    //             let has_silhouette = view
+    //                 .render_data
+    //                 .iter()
+    //                 .any(|d| matches!(d.renderable, Renderable3d::SilhouetteMesh));
+
+    //             if has_silhouette {
+    //                 let color_data = intermediate_color_data.as_ref().unwrap();
+
+    //                 // standard render pass into intermediate texture
+    //                 self.main_render_pass(
+    //                     view,
+    //                     &depth_texture,
+    //                     &mut encoder,
+    //                     color_data,
+    //                     view.frame_view_data,
+    //                     wgpu::LoadOp::Clear(view.clear_color),
+    //                 );
+
+    //                 // screen space pass without depth
+    //                 if view.render_data.iter().any(|d| {
+    //                     if let Renderable3d::ScreenSpaceWireframeMesh { depth_testing, .. } =
+    //                         d.renderable
+    //                     {
+    //                         !depth_testing
+    //                     } else if let Renderable3d::ScreenSpaceColoredMesh { depth_testing, .. } =
+    //                         d.renderable
+    //                     {
+    //                         !depth_testing
+    //                     } else {
+    //                         false
+    //                     }
+    //                 }) {
+    //                     self.screen_space_render_pass(
+    //                         view,
+    //                         &mut encoder,
+    //                         color_data,
+    //                         &view.frame_view_data.bind_group,
+    //                     );
+    //                 }
+
+    //                 // mask render pass for selected meshes + composite into final
+    //                 self.silhouette_and_composite_mask(
+    //                     view,
+    //                     final_texture_data,
+    //                     &depth_texture,
+    //                     &mut encoder,
+    //                     color_data,
+    //                     view.frame_view_data,
+    //                 );
+    //             } else {
+    //                 let color_load = if view_index == 0 {
+    //                     wgpu::LoadOp::Clear(view.clear_color)
+    //                 } else {
+    //                     wgpu::LoadOp::Load
+    //                 };
+
+    //                 // standard render pass directly into final texture
+    //                 self.main_render_pass(
+    //                     view,
+    //                     &depth_texture,
+    //                     &mut encoder,
+    //                     final_texture_data,
+    //                     view.frame_view_data,
+    //                     color_load,
+    //                 );
+
+    //                 // screen space pass without depth
+    //                 if view.render_data.iter().any(|d| {
+    //                     if let Renderable3d::ScreenSpaceWireframeMesh { depth_testing, .. } =
+    //                         d.renderable
+    //                     {
+    //                         !depth_testing
+    //                     } else if let Renderable3d::ScreenSpaceColoredMesh { depth_testing, .. } =
+    //                         d.renderable
+    //                     {
+    //                         !depth_testing
+    //                     } else {
+    //                         false
+    //                     }
+    //                 }) {
+    //                     self.screen_space_render_pass(
+    //                         view,
+    //                         &mut encoder,
+    //                         final_texture_data,
+    //                         &view.frame_view_data.bind_group,
+    //                     );
+    //                 }
+    //             }
+    //         }
+
+    //         if let RenderMode::DrawToBuffer(buffer, size) = &render_mode {
+    //             let u32_size = std::mem::size_of::<u32>() as u32;
+    //             // When MSAA is enabled, copy from the resolve target texture
+    //             let source_texture = if self.sample_count > 1 {
+    //                 // We need to get the resolve target texture, not the view
+    //                 // Since we don't store it separately, we need to access it differently
+    //                 // For now, let's add the COPY_SRC flag to the MSAA texture in create_texture_data
+    //                 &final_texture_data.texture
+    //             } else {
+    //                 &final_texture_data.texture
+    //             };
+    //             encoder.copy_texture_to_buffer(
+    //                 wgpu::TexelCopyTextureInfo {
+    //                     aspect: wgpu::TextureAspect::All,
+    //                     texture: source_texture,
+    //                     mip_level: 0,
+    //                     origin: wgpu::Origin3d::ZERO,
+    //                 },
+    //                 wgpu::TexelCopyBufferInfo {
+    //                     buffer,
+    //                     layout: wgpu::TexelCopyBufferLayout {
+    //                         offset: 0,
+    //                         bytes_per_row: Some(u32_size * size.width),
+    //                         rows_per_image: Some(size.height),
+    //                     },
+    //                 },
+    //                 *size,
+    //             );
+    //         }
+
+    //         self.queue.submit(Some(encoder.finish()));
+
+    //         Ok(())
+    // }
 
     fn silhouette_and_composite_mask<'a, 'fv>(
         &self,
@@ -1744,7 +1831,7 @@ impl Renderer {
             } else {
                 None
             };
-            
+
             let render_pass_desc = wgpu::RenderPassDescriptor {
                 label: Some("Silhoutte Mesh Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1792,7 +1879,7 @@ impl Renderer {
             } else {
                 None
             };
-            
+
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Composite Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1817,7 +1904,7 @@ impl Renderer {
             );
             // texture_view is already the resolve target when MSAA is enabled
             // Use texture_view directly for both color and mask
-            
+
             pass.set_bind_group(
                 0,
                 &composite::create_composite_bind_group(
@@ -1854,7 +1941,7 @@ impl Renderer {
         } else {
             None
         };
-        
+
         let render_pass_desc = wgpu::RenderPassDescriptor {
             label: Some("Screen Space Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1932,7 +2019,7 @@ impl Renderer {
             } else {
                 None
             };
-            
+
             let render_pass_desc = wgpu::RenderPassDescriptor {
                 label: Some("Opaque Surface Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1994,7 +2081,7 @@ impl Renderer {
             } else {
                 None
             };
-            
+
             let render_pass_desc = wgpu::RenderPassDescriptor {
                 label: Some("Transparent Surface Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2114,7 +2201,7 @@ pub fn create_texture_data(
         };
         let msaa_texture = device.create_texture(&msaa_texture_desc);
         let msaa_view = msaa_texture.create_view(&Default::default());
-        
+
         // Non-multisampled texture for resolve target and sampling
         let resolve_texture_desc = wgpu::TextureDescriptor {
             size,
@@ -2131,7 +2218,7 @@ pub fn create_texture_data(
         let resolve_texture = device.create_texture(&resolve_texture_desc);
         let resolve_view = resolve_texture.create_view(&Default::default());
         let resolve_sampler = device.create_sampler(&Default::default());
-        
+
         RenderTextureData {
             texture: resolve_texture,
             texture_view: resolve_view,
@@ -2158,7 +2245,7 @@ pub fn create_texture_data(
         let texture = device.create_texture(&texture_desc);
         let view = texture.create_view(&Default::default());
         let sampler = device.create_sampler(&Default::default());
-        
+
         RenderTextureData {
             texture,
             texture_view: view,
@@ -2287,4 +2374,213 @@ pub fn create_read_buffer(device: &wgpu::Device, width: u32, height: u32) -> wgp
     };
 
     device.create_buffer(&output_buffer_desc)
+}
+
+fn build_texture_graph(
+    target_texture: &RenderTextureData,
+    sample_count: u32,
+) -> (RenderGraph, ResourceId) {
+    let mut graph = RenderGraph::new();
+
+    let color_tex = graph.import_texture(
+        "Color texture",
+        target_texture.texture.clone(),
+        target_texture.texture_view.clone(),
+    );
+
+    let depth_tex = graph.create_texture(
+        "Depth Texture",
+        TextureDesc {
+            format: DepthTexture::DEPTH_FORMAT,
+            size: target_texture.texture_size,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
+            sample_count,
+            transient: true,
+        },
+    );
+
+    add_pass(
+        &mut graph,
+        color_tex,
+        depth_tex,
+        wgpu::Color {
+            r: 0.1,
+            g: 0.2,
+            b: 0.3,
+            a: 1.0,
+        },
+    );
+
+    graph
+        .compile()
+        .expect("Graph compilation shouldnt fail for texture graph!");
+    (graph, color_tex)
+}
+
+fn build_buffer_graph(
+    width: u32,
+    height: u32,
+    texture_format: wgpu::TextureFormat,
+    sample_count: u32,
+) -> (RenderGraph, ResourceId) {
+    let mut graph = RenderGraph::new();
+
+    let color_tex = graph.create_texture(
+        "Color texture",
+        TextureDesc {
+            format: texture_format,
+            size: Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::TEXTURE_BINDING,
+            sample_count,
+            transient: true,
+        },
+    );
+
+    let depth_tex = graph.create_texture(
+        "Depth Texture",
+        TextureDesc {
+            format: DepthTexture::DEPTH_FORMAT,
+            size: Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
+            sample_count,
+            transient: true,
+        },
+    );
+
+    add_pass(
+        &mut graph,
+        color_tex,
+        depth_tex,
+        wgpu::Color {
+            r: 0.1,
+            g: 0.2,
+            b: 0.3,
+            a: 1.0,
+        },
+    );
+
+    graph
+        .compile()
+        .expect("Graph compilation shouldnt fail for buffer!");
+    (graph, color_tex)
+}
+
+fn add_pass(
+    graph: &mut RenderGraph,
+    color_texture: ResourceId,
+    depth_texture: ResourceId,
+    background_color: wgpu::Color,
+) {
+    graph
+        .add_pass("opaque")
+        .clear_color(color_texture, background_color)
+        .clear_depth(depth_texture, 1.0)
+        .execute(|pass, ctx| {
+            let opaque = ctx
+                .renderables
+                .iter()
+                .filter(|r| !r.local_resources.transparency.enabled)
+                .cloned()
+                .collect::<Vec<_>>();
+            pass.set_bind_group(0, &ctx.frame_view_data.bind_group, &[]);
+
+            if !opaque.is_empty() {
+                render_pass::surface_3d_render_pass_with_depth(
+                    &opaque,
+                    ctx.pipeline_cache,
+                    pass,
+                    ctx.frame_view_data.triangle_face_mode,
+                    ctx.frame_view_data.back_material,
+                    ctx.queue,
+                );
+
+                render_pass::wireframe_3d_render_pass(&opaque, ctx.pipeline_cache, pass);
+            }
+        });
+
+    graph
+        .add_pass("transparent")
+        .load_color(color_texture)
+        .load_depth(depth_texture, true)
+        .execute(|pass, ctx| {
+            let transparent = ctx
+                .renderables
+                .iter()
+                .filter(|r| r.local_resources.transparency.enabled)
+                .cloned()
+                .collect::<Vec<_>>();
+            pass.set_bind_group(0, &ctx.frame_view_data.bind_group, &[]);
+
+            if !transparent.is_empty() {
+                render_pass::transparent_mesh_pass(
+                    &transparent,
+                    ctx.pipeline_cache,
+                    pass,
+                    ctx.frame_view_data.triangle_face_mode,
+                    ctx.frame_view_data.back_material,
+                    ctx.queue,
+                );
+            }
+        });
+
+    graph
+        .add_pass("Screen Space mesh with Depth Testing")
+        .load_color(color_texture)
+        .execute(|pass, ctx| {
+            let screen_spaced_surface_without_depth = ctx
+                .renderables
+                .iter()
+                .filter(|r| {
+                    matches!(
+                        r.renderable,
+                        Renderable3d::ScreenSpaceColoredMesh {
+                            depth_testing: false,
+                            ..
+                        },
+                    )
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+
+            pass.set_bind_group(0, &ctx.frame_view_data.bind_group, &[]);
+            render_pass::screen_space_colored_mesh_pass(
+                &screen_spaced_surface_without_depth,
+                ctx.pipeline_cache,
+                pass,
+                false,
+            );
+
+            let screen_spaced_wireframe_without_depth = ctx
+                .renderables
+                .iter()
+                .filter(|r| {
+                    matches!(
+                        r.renderable,
+                        Renderable3d::ScreenSpaceWireframeMesh {
+                            depth_testing: false,
+                            ..
+                        },
+                    )
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+
+            pass.set_bind_group(0, &ctx.frame_view_data.bind_group, &[]);
+            render_pass::screen_space_wireframe_pass(
+                &screen_spaced_wireframe_without_depth,
+                ctx.pipeline_cache,
+                pass,
+                false,
+            );
+        });
 }
